@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from typing import List, Optional, Sequence
 
-MODES = ["uniform", "data_size", "quality"]
+# Data-size weighting is the FedAvg default in the FedSciML paper/SRS.
+MODES = ["data_size", "uniform", "quality"]
 
 
 def compute_weights(

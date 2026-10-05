@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -18,7 +19,9 @@ from .weights import save_state_dict
 
 class RunStorage:
     def __init__(self, root: str | Path, problem: str, aggregator: str) -> None:
-        run_id = time.strftime("%Y%m%d-%H%M%S")
+        # Include a short random suffix so two runs started in the same second do
+        # not collide and append metrics into the same directory.
+        run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
         self.root = Path(root)
         self.dir = self.root / problem / aggregator / run_id
         self.dir.mkdir(parents=True, exist_ok=True)

@@ -120,6 +120,31 @@ def test_round_engine() -> None:
         )
 
 
+def test_completed_clients_must_reregister() -> None:
+    """Regression: clients from a completed run should not stall the next run."""
+    print("\n=== completed-client cleanup ===")
+    with tempfile.TemporaryDirectory() as tmp:
+        fed = federation(tmp)
+        fed.start_run(
+            RunStartRequest(problem="poisson", aggregator="fedavg", total_rounds=1, local_epochs=1)
+        )
+        fed.register(ClientRegistration(client_id="c1", problem="poisson", n_samples=100))
+        fed.register(ClientRegistration(client_id="c2", problem="poisson", n_samples=100))
+        for cid in ("c1", "c2"):
+            state = bytes_to_state_dict(fed.get_global_bytes(1))
+            perturbed = {k: v + 0.01 for k, v in state.items()}
+            fed.submit_update(cid, 1, 100, 0.5, state_dict_to_bytes(perturbed))
+
+        check(fed.status().phase == "complete", "first run completes")
+        fed.start_run(
+            RunStartRequest(problem="poisson", aggregator="fedavg", total_rounds=1, local_epochs=1)
+        )
+        check(fed.run.expected == [], "completed clients are not auto-selected for a new run")
+        fed.register(ClientRegistration(client_id="c1", problem="poisson", n_samples=100))
+        fed.register(ClientRegistration(client_id="c2", problem="poisson", n_samples=100))
+        check(set(fed.run.expected) == {"c1", "c2"}, "re-registered clients join the new run")
+
+
 def test_weighting_robustness() -> None:
     """Regression: a near-zero local loss produced a ~1e12 weight."""
     print("\n=== weighting robustness ===")
@@ -140,6 +165,7 @@ def main() -> int:
     test_registration_guard()
     test_reproducibility()
     test_round_engine()
+    test_completed_clients_must_reregister()
     test_weighting_robustness()
     print("\n" + "=" * 60)
     if failures:

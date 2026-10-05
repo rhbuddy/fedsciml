@@ -9,10 +9,12 @@ process; aggregation cost is small relative to client training.
 
 from __future__ import annotations
 
+import math
+import random
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 import numpy as np
 import torch
@@ -36,6 +38,8 @@ from .weights import (
     state_dict_to_bytes,
 )
 
+MIN_CLIENTS_PER_ROUND = 2
+
 
 @dataclass
 class ClientRecord:
@@ -47,12 +51,12 @@ class ClientRecord:
 
 @dataclass
 class RunState:
-    phase: str = "idle"                     # idle | collecting | complete
+    phase: str = "idle"  # idle | collecting | complete
     round: int = 0
     total_rounds: int = 0
     problem: str = ""
     aggregator: str = "fedavg"
-    weighting: str = "uniform"
+    weighting: str = "data_size"
     local_epochs: int = 0
     learning_rate: float = 0.0
     aggregator_params: Dict[str, Any] = field(default_factory=dict)
@@ -69,6 +73,9 @@ class Federation:
     def __init__(self, results_dir: Optional[str] = None, seed: Optional[int] = None) -> None:
         self._lock = threading.RLock()
         self.clients: Dict[str, ClientRecord] = {}
+        # Clients that completed the previous run are kept visible for status, but
+        # are not auto-selected for a new run unless they explicitly register again.
+        self._completed_clients: Set[str] = set()
         self.run = RunState()
         self.server_opt = aggregators.ServerOptimizerState()
         self.results_dir = results_dir or settings.results_dir
@@ -84,8 +91,9 @@ class Federation:
         with self._lock:
             # Reject a client whose problem differs from the active run: it would be
             # added to `expected`, never produce a compatible update, and stall the
-            # round for everyone else.
-            if self.run.phase in ("collecting", "complete") and reg.problem != self.run.problem:
+            # round for everyone else. Do this only while collecting; after a run is
+            # complete, clients for a different next problem must be able to register.
+            if self.run.phase == "collecting" and reg.problem != self.run.problem:
                 raise ValueError(
                     f"Run is on problem '{self.run.problem}'; client '{reg.client_id}' "
                     f"registered for '{reg.problem}'. Refusing to add it to the round."
@@ -94,13 +102,18 @@ class Federation:
             self.clients[reg.client_id] = ClientRecord(
                 registration=reg, registered_at=time.time(), last_seen_at=time.time()
             )
-            # A client that arrives during an unfinished round joins that round.
+            self._completed_clients.discard(reg.client_id)
+            # A client that arrives during an unfinished round joins that round,
+            # but only before any update has been accepted. Once collection has
+            # started, changing the expected set would make completion ambiguous.
             if (
                 self.run.phase == "collecting"
+                and reg.problem == self.run.problem
                 and reg.client_id not in self.run.expected
                 and not self.run.updates
             ):
                 self.run.expected.append(reg.client_id)
+                self.run.expected.sort()
             return ClientInfo(
                 client_id=reg.client_id,
                 problem=reg.problem,
@@ -119,16 +132,24 @@ class Federation:
         if ttl <= 0:
             return
         now = time.time()
-        for client_id in [
+        stale = [
             cid for cid, record in self.clients.items()
             if record.last_seen_at and now - record.last_seen_at > ttl
-        ]:
+        ]
+        for client_id in stale:
             del self.clients[client_id]
+            self._completed_clients.discard(client_id)
+            if self.run.phase == "collecting" and client_id not in self.run.updates:
+                self.run.expected = [cid for cid in self.run.expected if cid != client_id]
 
-    def live_client_ids(self) -> List[str]:
+    def live_client_ids(self, problem: Optional[str] = None) -> List[str]:
         with self._lock:
             self.reap_stale()
-            return sorted(self.clients)
+            return sorted(
+                cid for cid, record in self.clients.items()
+                if cid not in self._completed_clients
+                and (problem is None or record.registration.problem == problem)
+            )
 
     def is_registered(self, client_id: str) -> bool:
         """True if this client has completed /clients/register at least once."""
@@ -155,12 +176,9 @@ class Federation:
 
             # Validate up-front: a bad aggregator/weighting used to raise deep inside
             # aggregation(), which left the run stuck in "collecting" forever.
-            if req.aggregator.lower() not in aggregators.ALL_AGGREGATORS:
-                raise ValueError(
-                    f"Unknown aggregator '{req.aggregator}'. "
-                    f"Options: {aggregators.ALL_AGGREGATORS}"
-                )
-            if req.weighting not in weighting.MODES:
+            aggregator_name = aggregators.canonical_name(req.aggregator)
+            weighting_name = (req.weighting or "data_size").lower().strip()
+            if weighting_name not in weighting.MODES:
                 raise ValueError(
                     f"Unknown weighting '{req.weighting}'. Options: {weighting.MODES}"
                 )
@@ -169,8 +187,32 @@ class Federation:
             if int(req.local_epochs) < 1:
                 raise ValueError("local_epochs must be >= 1")
 
+            if req.expected_clients:
+                requested_clients = sorted(set(req.expected_clients))
+                unknown = [cid for cid in requested_clients if cid not in self.clients]
+                if unknown:
+                    raise ValueError(f"expected_clients contains unregistered client(s): {unknown}")
+                wrong_problem = [
+                    cid for cid in requested_clients
+                    if self.clients[cid].registration.problem != req.problem
+                ]
+                if wrong_problem:
+                    raise ValueError(
+                        f"expected_clients registered for a different problem: {wrong_problem}"
+                    )
+                completed = [cid for cid in requested_clients if cid in self._completed_clients]
+                if completed:
+                    raise ValueError(
+                        f"expected_clients must re-register before a new run: {completed}"
+                    )
+                expected = requested_clients
+            else:
+                # Do not carry idle clients from a different problem into the new run.
+                expected = self.live_client_ids(req.problem)
+
             # Reproducibility (NFR-REP-1): seed before building the global model so
             # its random initialization is identical for a given seed.
+            random.seed(self.seed)
             torch.manual_seed(self.seed)
             np.random.seed(self.seed % (2**32))
 
@@ -181,26 +223,28 @@ class Federation:
             self._global_bytes = state_dict_to_bytes(model.state_dict())
             self._global_sha = sha256_hex(self._global_bytes)
 
-            expected = list(req.expected_clients) if req.expected_clients else sorted(self.clients)
             self.run = RunState(
                 phase="collecting",
                 round=1,
                 total_rounds=int(req.total_rounds),
                 problem=req.problem,
-                aggregator=req.aggregator,
-                weighting=req.weighting,
+                aggregator=aggregator_name,
+                weighting=weighting_name,
                 local_epochs=int(req.local_epochs),
                 learning_rate=float(req.learning_rate),
                 aggregator_params=dict(req.aggregator_params),
                 expected=expected,
                 round_started_at=time.time(),
             )
-            self.storage = RunStorage(self.results_dir, req.problem, req.aggregator)
+            self.storage = RunStorage(self.results_dir, req.problem, aggregator_name)
             self.storage.write_config(
                 {
                     **req.model_dump(),
+                    "aggregator": aggregator_name,
+                    "weighting": weighting_name,
                     "n_parameters": count_parameters(model),
                     "seed": self.seed,
+                    "min_clients_per_round": MIN_CLIENTS_PER_ROUND,
                 }
             )
             return self.status()
@@ -208,6 +252,7 @@ class Federation:
     def stop_run(self) -> RunStatus:
         with self._lock:
             self.run.phase = "complete"
+            self._completed_clients.update(self.run.expected)
             if self.storage and self._global_model is not None:
                 self.storage.log_round({"event": "stopped", "round": self.run.round})
             return self.status()
@@ -220,7 +265,7 @@ class Federation:
 
             self.clients[client_id].last_seen_round = self.run.round
             self.clients[client_id].last_seen_at = time.time()
-            self.reap_stale()          # after refreshing ourselves
+            self.reap_stale()  # after refreshing ourselves
             self._maybe_timeout()
 
             if self.run.phase == "idle":
@@ -244,7 +289,18 @@ class Federation:
                     status="wait",
                     round=self.run.round,
                     total_rounds=self.run.total_rounds,
-                    message="Not selected for this round (joined late). Waiting for the next round.",
+                    message="Not selected for this round (joined late or different problem). Waiting for the next round.",
+                )
+
+            if len(self.run.expected) < MIN_CLIENTS_PER_ROUND:
+                return AssignmentResponse(
+                    status="wait",
+                    round=self.run.round,
+                    total_rounds=self.run.total_rounds,
+                    message=(
+                        f"Waiting for at least {MIN_CLIENTS_PER_ROUND} clients before training; "
+                        f"currently have {len(self.run.expected)}."
+                    ),
                 )
 
             if client_id in self.run.updates:
@@ -304,13 +360,28 @@ class Federation:
                     status="wait", round=self.run.round, message="Update not applicable."
                 )
 
-            # Validate the payload deserializes and matches the global shapes.
+            if len(self.run.expected) < MIN_CLIENTS_PER_ROUND:
+                return AssignmentResponse(
+                    status="wait",
+                    round=self.run.round,
+                    message=f"Need at least {MIN_CLIENTS_PER_ROUND} clients before accepting updates.",
+                )
+
+            if int(n_samples) <= 0:
+                return AssignmentResponse(status="error", message="Client update has no samples")
+            if not math.isfinite(float(local_loss)):
+                return AssignmentResponse(status="error", message="Client update has non-finite local_loss")
+
+            # Validate the payload deserializes, is finite, and matches the global shapes.
             try:
                 state = bytes_to_state_dict(data)
                 expected_shapes = {k: tuple(v.shape) for k, v in self._global_model.state_dict().items()}
                 got_shapes = {k: tuple(v.shape) for k, v in state.items()}
                 if got_shapes != expected_shapes:
                     raise ValueError("state_dict keys/shapes do not match the global model")
+                for key, tensor in state.items():
+                    if not torch.isfinite(tensor.detach().to("cpu", torch.float32)).all().item():
+                        raise ValueError(f"state_dict tensor '{key}' contains NaN/Inf")
             except Exception as exc:  # noqa: BLE001
                 return AssignmentResponse(status="error", message=f"Invalid weight payload: {exc}")
 
@@ -330,7 +401,7 @@ class Federation:
     # -------------------------------------------------------------- aggregation
     def _maybe_timeout(self) -> None:
         """Advance with the updates received so far if the round has timed out."""
-        if self.run.phase != "collecting" or not self.run.updates:
+        if self.run.phase != "collecting" or len(self.run.updates) < MIN_CLIENTS_PER_ROUND:
             return
         timeout = settings.round_timeout_seconds
         if timeout <= 0 or self.run.round_started_at <= 0:
@@ -342,18 +413,30 @@ class Federation:
         if self.run.phase != "collecting":
             return
         missing = [c for c in self.run.expected if c not in self.run.updates]
-        if self.run.expected and not missing:
+        if self.run.expected and not missing and len(self.run.updates) >= MIN_CLIENTS_PER_ROUND:
             self._aggregate()
 
     def force_aggregate(self) -> RunStatus:
         """Operator override: aggregate using whatever updates have arrived."""
         with self._lock:
-            if self.run.phase == "collecting" and self.run.updates:
+            if self.run.phase == "collecting" and len(self.run.updates) >= MIN_CLIENTS_PER_ROUND:
                 self._aggregate()
+            elif self.run.phase == "collecting" and self.storage:
+                self.storage.log_round(
+                    {
+                        "event": "force_aggregate_skipped",
+                        "round": self.run.round,
+                        "reason": f"need at least {MIN_CLIENTS_PER_ROUND} updates",
+                        "n_updates": len(self.run.updates),
+                    }
+                )
             return self.status()
 
     def _aggregate(self) -> None:
         order = [c for c in self.run.expected if c in self.run.updates]
+        if len(order) < MIN_CLIENTS_PER_ROUND:
+            raise ValueError(f"Need at least {MIN_CLIENTS_PER_ROUND} client updates to aggregate")
+
         states = [bytes_to_state_dict(self.run.updates[c]) for c in order]
         n_samples = [self.run.update_meta[c]["n_samples"] for c in order]
         losses = [self.run.update_meta[c]["local_loss"] for c in order]
@@ -389,15 +472,17 @@ class Federation:
 
         if self.run.round >= self.run.total_rounds:
             self.run.phase = "complete"
+            self._completed_clients.update(order)
             if self.storage:
                 self.storage.save_model(self._global_model.state_dict())
         else:
             self.run.round += 1
             self.run.updates = {}
             self.run.update_meta = {}
-            # Only clients that are actually still polling are expected next round,
-            # otherwise one dead participant would stall the whole run.
-            self.run.expected = self.live_client_ids()
+            # Only clients on this problem that are actually still polling are
+            # expected next round; otherwise a dead or mismatched participant would
+            # stall the run.
+            self.run.expected = self.live_client_ids(self.run.problem)
             self.run.round_started_at = time.time()
 
     # ------------------------------------------------------------------- status
@@ -405,7 +490,7 @@ class Federation:
         with self._lock:
             self.reap_stale()
             return RunStatus(
-                phase=self.run.phase,           # type: ignore[arg-type]
+                phase=self.run.phase,  # type: ignore[arg-type]
                 round=self.run.round,
                 total_rounds=self.run.total_rounds,
                 problem=self.run.problem,
@@ -420,5 +505,3 @@ class Federation:
     def metrics(self) -> List[Dict[str, Any]]:
         with self._lock:
             return list(self.run.metrics)
-
-
