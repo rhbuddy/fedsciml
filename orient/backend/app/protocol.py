@@ -77,7 +77,8 @@ class RunStartRequest(BaseModel):
     total_rounds: int = 10
     local_epochs: int = 5
     learning_rate: float = 1e-3
-    weighting: str = Field(default="uniform", description="uniform | data_size | quality")
+    # FedAvg in the paper/SRS is data-size proportional by default.
+    weighting: str = Field(default="data_size", description="uniform | data_size | quality")
     aggregator_params: Dict[str, Any] = Field(default_factory=dict)
     expected_clients: Optional[List[str]] = None
 
@@ -88,7 +89,7 @@ class RunStatus(BaseModel):
     total_rounds: int = 0
     problem: str = ""
     aggregator: str = ""
-    weighting: str = "uniform"
+    weighting: str = "data_size"
     registered_clients: List[str] = Field(default_factory=list)
     expected_clients: List[str] = Field(default_factory=list)
     submitted_clients: List[str] = Field(default_factory=list)

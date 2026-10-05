@@ -37,7 +37,7 @@ orient/
 │   ├── app/
 │   │   ├── api.py               #   FastAPI routes
 │   │   ├── orchestrator.py      #   Federation state + round engine
-│   │   ├── aggregators.py       #   fedavg fedprox fedadam fedagrad fedyogi
+│   │   ├── aggregators.py       #   fedavg fedprox fedadam fedadagrad fedyogi
 │   │   │                        #   median trimmed_mean krum
 │   │   ├── weighting.py         #   uniform | data_size | quality
 │   │   ├── models.py            #   pure-PyTorch model factory (MLP, DeepONet)
@@ -242,10 +242,10 @@ global model's relative L2 error per round. Artifacts land in
 
 | Name | Family | Model | Data | Ground truth |
 |---|---|---|---|---|
-| `gramacy_lee` | supervised | MLP `[1,32,32,32,1]` | `x_train, y_train` | `sin(10πx)/(2x) + (x−1)⁴`, x∈[0.5,2.5] |
-| `schaffer` | supervised | MLP `[2,48,48,48,1]` | `x_train, y_train` | Schaffer N.2 on [−2,2]² |
+| `gramacy_lee` | supervised | MLP `[1,64,64,64,1]` | `x_train, y_train` | `sin(10πx)/(2x) + (x−1)⁴`, x∈[0.5,2.5] |
+| `schaffer` | supervised | MLP `[2,64,64,64,1]` | `x_train, y_train` | Schaffer N.2 on [−2,2]² |
 | `poisson` | **pinn** | MLP `[1,20,20,20,1]` + hard-constraint transform | `x_train` (collocation) | `u(x)=x+(1/8)sin8x+Σ(1/i)sin(ix)` on [0,π] |
-| `antiderivative` | **operator** | DeepONet (50 sensors, [64,64] branch/trunk) | `branch_train, trunk_train, y_train` | truncated Fourier series |
+| `antiderivative` | **operator** | DeepONet (50 sensors, [40,40] ReLU branch/trunk) | `branch_train, trunk_train, y_train` | truncated Fourier series |
 
 `poisson` reproduces the paper's setup: `u(0)=0` and `u(π)=π` are enforced
 *exactly* by the output transform `u = x + tanh(x)·tanh(π−x)·ŷ`, so the loss is
@@ -255,7 +255,7 @@ the pure PDE residual `−u″ − f`.
 
 | Group | Algorithms |
 |---|---|
-| Standard | `fedavg`, `fedprox`, `fedadam`, `fedagrad`, `fedyogi` |
+| Standard | `fedavg`, `fedprox`, `fedadam`, `fedadagrad`, `fedyogi` |
 | Byzantine-robust | `median`, `trimmed_mean`, `krum` (multi‑Krum) |
 
 Weighting: `uniform` · `data_size` (the paper's default) · `quality`.
@@ -267,7 +267,7 @@ All operate purely on `state_dict` tensors, so they are architecture-agnostic.
 > The server logs a warning when this is violated.
 > Generate enough clients with `python examples/make_datasets.py --clients 5`.
 >
-> **Tuning.** The server-adaptive methods (`fedadam`/`fedagrad`/`fedyogi`) take a
+> **Tuning.** The server-adaptive methods (`fedadam`/`fedadagrad`/`fedyogi`) take a
 > step of roughly `server_lr` per round, so they need **more rounds** and a larger
 > `server_lr` than plain averaging to make progress; they also oscillate more.
 

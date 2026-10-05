@@ -94,6 +94,8 @@ def load_bundle(path: str | Path, problem: Optional[str] = None) -> DatasetBundl
             raise ValueError(f"Array '{name}' is empty (shape {array.shape}).")
         if not np.issubdtype(array.dtype, np.number):
             raise ValueError(f"Array '{name}' must be numeric, got dtype {array.dtype}.")
+        if not np.isfinite(array).all():
+            raise ValueError(f"Array '{name}' contains NaN/Inf values.")
 
     if "branch_train" in arrays and "y_train" in arrays:
         if arrays["branch_train"].shape[0] != arrays["y_train"].shape[0]:

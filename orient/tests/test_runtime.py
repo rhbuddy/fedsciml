@@ -87,7 +87,7 @@ def test_aggregators() -> None:
     prox = aggregate("fedprox", states, weights, global_state, {"mu": 0.01}).state_dict
     check(torch.allclose(prox["w"], torch.tensor([3.0, 3.0])), "fedprox server step = fedavg")
 
-    for name in ("fedadam", "fedagrad", "fedyogi"):
+    for name in ("fedadam", "fedadagrad", "fedyogi"):
         # Server-adaptive methods take a *normalized* step of size ~server_lr, so a
         # single round only moves partway from the global model toward the client
         # mean. Iterate to check they actually converge onto it.

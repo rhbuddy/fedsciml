@@ -79,7 +79,8 @@ class GramacyLee1D(Problem):
             family="mlp",
             input_dim=1,
             output_dim=1,
-            params={"layer_sizes": [1, 32, 32, 32, 1], "activation": "tanh"},
+            # Paper/SRS Table 4 default: width 64, depth 3, tanh.
+            params={"layer_sizes": [1, 64, 64, 64, 1], "activation": "tanh"},
         )
 
     def sample_dataset(self, n: int, seed: int = 0) -> Dict[str, np.ndarray]:
@@ -126,7 +127,8 @@ class Schaffer2D(Problem):
             family="mlp",
             input_dim=2,
             output_dim=1,
-            params={"layer_sizes": [2, 48, 48, 48, 1], "activation": "tanh"},
+            # Paper/SRS Table 4 default: width 64, depth 3, tanh.
+            params={"layer_sizes": [2, 64, 64, 64, 1], "activation": "tanh"},
         )
 
     def sample_dataset(self, n: int, seed: int = 0) -> Dict[str, np.ndarray]:
@@ -247,9 +249,10 @@ class Antiderivative(Problem):
             input_dim=self.N_SENSORS,
             output_dim=1,
             params={
-                "branch_sizes": [self.N_SENSORS, 64, 64],
-                "trunk_sizes": [1, 64, 64],
-                "activation": "tanh",
+                # Paper/SRS Table 4 default: width 40, depth 2, ReLU.
+                "branch_sizes": [self.N_SENSORS, 40, 40],
+                "trunk_sizes": [1, 40, 40],
+                "activation": "relu",
             },
         )
 
