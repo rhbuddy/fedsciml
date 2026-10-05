@@ -1,0 +1,10 @@
+{
+  "problem": "gramacy_lee",
+  "n_samples": 2000,
+  "domain": {
+    "interval": [
+      0.5,
+      0.9
+    ]
+  }
+}

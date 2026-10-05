@@ -1,0 +1,2953 @@
+CONVERGENCE RATE OF DEEPONETS FOR LEARNING OPERATORS ARISING
+FROM ADVECTION-DIFFUSION EQUATIONS
+BEICHUAN DENG AND YEONJONG SHIN AND LU LU AND ZHONGQIANG ZHANG AND GEORGE EM
+
+arXiv:2102.10621v2 [math.AP] 17 Mar 2021
+
+KARNIADAKIS
+
+Abstract. We present convergence analysis of operator learning in [Chen and Chen 1995] and [Lu et al.
+2020], where continuous operators are approximated by a sum of products of branch and trunk networks.
+In this work, we consider the rates of learning solution operators from both linear and nonlinear advectiondiffusion equations with or without reaction. We find that the convergence rates depend on the architecture
+of branch networks as well as the smoothness of inputs and outputs of solution operators.
+
+1. Introduction
+Neural networks have been widely explored for solving differential equations, e.g., in [3, 8, 26, 27, 15]
+and many subsequent papers. In these works, solutions to differential equations are approximated by neural
+networks. Neural networks are thought of as alternatives to splines, orthogonal polynomials, or hp-finite
+elements bases. One key advantage of neural networks is the capacity to approximate arbitrary continuous
+functions on compact domains. However, training neural networks are performed for differential equations
+with fixed inputs, such as initial conditions, boundary conditions, forcing, and coefficients. If one input is
+changed, the training process has to be repeated. It is difficult to obtain outputs in real-time for multiphysics
+systems that require various sets.
+To overcome this difficulty, one can use operator learning, in which a fixed-weighted/pre-trained network
+approximates a continuous operator from the input(s) to the output(s), see, e.g., [7, 17, 18, 33]. In the seminal
+work [7], the authors approximate a continuous nonlinear operator by a network, which is a summation of
+products of two two-layer networks with fixed weights. The idea is to approximate the basis expansions
+of operators in separable Banach spaces. Let G(·) be the operator of interest, which is represented using a
+P
+Schauder basis {ek } in the Banach space by G(u)(y) = k ck (G(u))ek (y), where ck (·) is a linear functional.
+Then, the Schauder basis ek is approximated by a two-layer network (called trunk network in [18]). The
+functional ck (G(u)) can be approximated by a two-layer network (called a branch network in [18]) as ck (G(u))
+can be first approximated by a continuous function ck (G(`(um ))) with `(um ) being an approximation of u.
+In [2], the idea of operator learning has been extended to parameterized multiple operators. In [18], the
+two-layer networks are replaced by multi-layer networks (see also Theorem 2.1 below), where the networks
+are named DeepONets. In [18], many numerical examples of learning both explicit and implicit operators
+are presented, demonstrating the efficiency of DeepONets. The implicit operators include solution operators
+from nonlinear ordinary differential equations and advection-diffusion-reaction equations.
+A similar operator learning approach was developed for dynamical systems in [32, 33]. In [17], a different
+way to construct the networks is proposed for solution operators from partial differential equations. Instead
+of summations of products of neural networks, feedforward multi-layer networks are used where nonlinear
+kernels are applied in layers to accommodate infinite-dimensional inputs. In [10], some theoretical results
+Date: March 18, 2021.
+1
+
+2
+
+DENG ET AL.
+
+have been presented on how to use convolutional neural networks for operator learning, but no computational
+experiments were performed.
+A neural network operator learning method includes two steps: a) solve the given differential equation
+numerically with various inputs or collect observation data and train the network (offline), b) update the
+training results with the corresponding new inputs without re-training (online). Since the network resulting
+from a) has fixed weights, Step b) can be done efficiently as only evaluations are needed. However, the cost
+of Step a) is high. It is unclear how the cost depends on the training data, e.g., the number of inputs and
+the number of points/parameters needed to represent one input.
+In this work, we focus on the dependence on the number of points/parameters needed to represent
+one input (approximation theory only) while we do not consider training/optimization error for neuron
+networks. Specifically, we discuss the convergence in the number of branch and trunk networks and the sizes
+of each branch and trunk network in DeepONets, and the parameterization of the input u, see Theorem 2.1
+for the networks in DeepONets. The main difficulty of the analysis for [7, 18] is that the approximation
+ck (G(`(um ))) is a high dimensional function (m is large) in general. Although there are a few theoretical
+results for approximating high-dimensional continuous functions, they are not sufficient to show the operator
+learning’s superiority. If such functions are only Lipschitz continuous, one may encounter the curse of
+dimensionality as the convergence rate is of the form (·)−1/m , see, e.g., [20] and Theorem 3.3 in this work.
+If such functions are analytic, we may break the curse of dimensionality; see, e.g., [24] for high dimensional
+functions. Unfortunately, these functions (functionals) are not analytic in most cases, and only limited
+smoothness can be assumed, see, e.g., [5, 4, 20, 30, 31].
+Instead of investigating the smoothness only, we observe that many solution operators from differential
+equations admit special structures such that no so-called curse of dimensionality (concerning the nominal
+dimension m) can occur. For example, we show in Section 4 that one may use rational functions and ReLU
+neural networks to approximate solution operators from Burgers and linear advection-diffusion equations.
+Consequently, realistic convergence rates are obtained without curse of dimensionality for um (nominal
+dimension m), see e.g., in Theorems 4.3 and 4.11. We also design branch networks with special structures
+for solution operators from linear advection-diffusion-reaction equations. The designed branch networks
+admit “blessed presentations” [21]. The key idea is to use a finite difference scheme to approximate a
+solution and utilize an appropriate iterative solver to represent the numerical solution explicitly; see Section
+4.6. A different approach of proving the convergence rates of DeepONets for analytic operators is presented
+in [16] using reproducing Hilbert spaces.
+The rest of the paper is organized as follows. In Section 2, we present an universal approximation theorem
+for operators and discuss the ideas of deriving convergence rates. We also present the main results of the
+work in this section and present the proofs in Sections 4 and 5. In Section 3, we present a generic convergence
+rate where the operator is assumed to be Hölder continuous. In Section 4, we present the proofs for Burgers
+and steady-state linear advection-diffusion equations. We show that the branch networks are approximated
+by deep ReLU (rectified linear unit) neural networks via rational polynomials. In the appendix, we present
+some key technical lemmas and theorems needed in our proofs.
+2. Main results
+In this work, a convergence rate is described by the necessary capacity of the neural network to achieve
+the given accuracy ε. Let N (x; θ) be a neural network, where x denotes the input(s) and θ denotes the
+parameters (weights and biases). We will use the following notations to describe the network capacity unless
+otherwise specified:
+
+CONVERGENCE RATE OF DEEPONETS
+
+3
+
+a) The size of N is the total number of nonzero parameters (weights and biases), denoted by |θ|.
+b) The width of N is the number of neurons in each layer, denoted by NN .
+c) The depth of N is the number of layers, denoted by LN .
+In this section, we present the universal approximation theorem from [18] and discuss issues in proving
+convergence rates for DeepONets. We also present the main results of this work.
+Theorem 2.1 ([18]). Let K1 ⊂ Rd1 be a compact set. Let V be a compact set in C(K1 ), K2 ⊂ Rd be a
+compact set and Y = C(K2 ). Assume that G : V → Y is a nonlinear continuous operator. Then for any
+ > 0, there are positive integers p and m, neural networks f N (·; θ(k) ) and g N (·; Θ(k) ), xj ∈ K1 , k = 1, . . . , p,
+j = 1, . . . , m, such that
+(2.1)
+
+|G(u)(y) − GN (um )| < ,
+
+GN (um ) =
+
+p
+X
+k=1
+
+g N (um ; Θ(k) ) f N (y; θ(k) )
+|
+{z
+} | {z }
+branch
+
+trunk
+
+>
+
+holds for all u ∈ V and y ∈ K2 , where um = (u(x1 ), u(x2 ), · · · , u(xm )) . The neural networks f N and g N
+can be any class of functions that satisfy a classical universal approximation theorem of continuous functions
+on compact sets.
+Remark 2.2. Here C(K1 ) can be replaced by Lp (K1 ), p ≥ 1 and C(K2 ) can be replaced by Lq (K2 ),
+q ≥ 1. But um should be replaced by averaged values um = (uh (x1 ), . . . , uh (xm ))> , where uh (xi ) =
+R
+u(t) dt/µ(B(xi , h) ∩ K) while µ is the Lebesgue measure and B(xi , h) is the ball centered at xi
+B(xi ,h)∩K
+with radius h. More generally, these spaces can be replaced by separable Banach spaces.
+When the networks f N and g N have two layers, the theorem is proved in [7]. If more layers are involved,
+the proof is based on the universal approximation theorem for continuous functions on compact sets and the
+fact that two-layer networks in [7] are continuous on compact sets, see [18].
+Theorem 2.1 covers neural networks including feed-forward neural networks with non-polynomial activation functions (e.g., [13]), radial basis network [6], convolutional neural networks, ResNets and more. The
+only requirement is that the networks admit the universal approximation of continuous functions on compact
+sets.
+Remark 2.3. It is possible to extend Theorem 2.1 to discontinuous operators that can be approximated by
+continuous operators, e.g., in [29] for functionals. The condition of compact set in Rd may be also replaced
+by Rd if the input/output function decays fast enough at infinity.
+2.1. Framework of analysis. First of all, G : V → Y is approximated by an operator Gm,p : Vm → Yp ,
+where Vm ⊂ V and Yp ⊂ Y are both finite-dimensional subspaces. Assume that the domains of K1 and K2
+are cubes or balls, where approximations with convergence rates are well studied. If they are not cubes or
+balls, we use the Tietze-Urysohn-Brouwer extension theorem to extend the operator such that domains of
+input and output are cubes or balls (denoted by D). We denote the resulting operator (with also extension
+of V and image) by G(u) if no confusion arises. Second, we apply universal approximation theorem for
+continuous function on compact sets – there exist neural networks that can approximate the possibly highdimensional function Gm,p (um ) sufficiently well – to obtain the existence of neural network and analyze the
+convergence rate with respect to the size of branch networks further.
+Remark 2.4. How to choose the spaces V , Vm , Y and Yp is essential to determine the convergence rate. Here
+are some typical choices of these spaces. It is important to choose the best possible choices to parameterize
+the input and output as they determine the dimensionality of the input and output of the operator Gm,p (um ).
+However, we only consider two choices of piecewise polynomials and truncated Fourier space in this work.
+
+4
+
+DENG ET AL.
+
+Table 1. Here RKHS refers to reproducing Kernel Hilbert space.
+V or Y
+Lp
+Lq
+RKHS
+
+Vm or Yp
+piecewise polynomials
+truncated Fourier space
+truncated RKHS (first N term of the basis)
+
+Ref.
+this work
+[17]
+[16]
+
+Below is one way to obtain such Gm,p , using piecewise constant interpolation and orthonormal expansion.
+0
+G(Im,x
+u) (piecewise constant interpolation)
+Z
+p
+X
+0
+≈
+G(Im,x
+u) ek (y) dy ek (y), (K2 ⊂ D, spectral expansion)
+
+G(u) ≈
+
+≈
+
+(2.2)
+
+=
+
+k=1 D
+p Z
+X
+
+
+
+0
+u)(y) ek (y) dy ek (y)
+In,y G(Im,x
+
+k=1 D
+p
+X n
+X
+k=1
+
+0
+G(Im,x
+u)(yi )
+
+i=1
+
+(interpolation)
+
+Z
+
+
+ek (y)φi (y) dy ek (y) =: Gm,p (um ).
+|D
+{z
+}
+ck
+i
+
+Here, um = (u(x1 ), · · · , u(xm ))> , and yi , φi are quadrature points and basis functions with respect to In,y .
+0
+Observe that G(Im,x
+u)(yi ) is continuous with respect to um , on [−M, M ]m , M = max1≤i≤m supu∈V |u(xi )|.
+Then by the universal approximation theorem, we have the following uniform approximation
+(2.3)
+
+sup
+
+sup
+
+u∈V um ∈[−M,M ]m
+
+0
+G(Im,x
+u)(yi ) − g N (um ; Θyi ) < .
+
+Since the basis ek (y) can be well approximated by a neural network f N (y; θ(k) ), the convergence can be
+Pp
+0
+established. Another way to obtain Gm,p (um ) is using interpolations only: G(u) ≈ k=1 G(Im,x
+u)(yk )φk (y).
+When the operator G is Hölder continuous, we show the convergence rate of the DeepONets in Theorem
+3.3. While for analytic operators, exponential convergence can be obtained [16]. We remark that the Hölder
+continuity leads to slow convergence rates. Moreover, many solution operators may not be analytic. In
+addition to the smoothness of the operators, the structure of the approximate or analytic solution is also
+important to the convergence rates of DeepONets for these operators. For solution operators from Burgers
+equations and steady linear advection-reaction-diffusion equations, we show better convergence rates below.
+We will observe that the rate of convergence will heavily depend on the nature of the problem and the
+0
+formulation to obtain G(Im,x
+u)(yi ), analytically or numerically.
+In what follows, we consider that the input is piecewise constant or linear. By the assumption of Hölder
+α
+0
+0
+continuity (3.1), G(v) − G(Im,x
+v) Y ≤ C v − Im,x
+v X , where α = 1 holds for examples below with corresponding X and Y in these examples.
+2.2. 1D Burgers equation. Consider the 1-D Burgers equation with periodic boundary condition
+(
+ut + uux = κuxx , (x, t) ∈ R × (0, ∞), κ > 0,
+(2.4)
+u(x − π, t) = u(x + π, t), u(x, 0) = u0 (x).
+Let M0 , M1 > 0. Define
+(2.5) S = S(M0 , M1 ) := {v ∈ W 1,∞ (−π, π) : kvkL∞ ≤ M0 , k∂x vkL∞ ≤ M1 , v̄ :=
+
+Z π
+v(s) ds = 0}.
+−π
+
+CONVERGENCE RATE OF DEEPONETS
+
+5
+
+Pm−1
+We consider u0 ∈ S to be a piecewise linear function, i.e., u(x, 0) = u0 (x) =
+j=0 u0,j Lj (x), where
+−π = x0 < x1 < · · · < xm = π, u0,j = u0 (xj ), and Lj (x) is the piecewise linear nodal basis supported on
+the sub-interval [xj−1 , xj+1 ), hj = xj − xj−1 and max1≤j≤m hj ≤ h. Let u0,m = (u0,0 , u0,1 , · · · , u0,m−1 )> .
+Here is the main result on the convergence rate of DeepONets approximating the solution operator of the
+1-D Burgers equation with periodic boundary condition (2.4).
+Theorem 2.5 (1D Burgers equation with periodic boundary). Let u0 ∈ S be a piecewise linear
+function. Let G(u0 ) be the solution operator of the Burgers equation (2.4). Then, there exist ReLU branch
+networks g N (u0,m ; |Θ(i) |)of size |Θ(i) | = O(m2 ln(m)) for i = 1, · · · , p, and ReLU trunk networks f N (x; θ(k) )
+having width NfN = 3 and depth LfN = 1, k = 1, · · · , p, such that
+
+− 12 + 
+kG(u0 ) − GN (u0,m )kL∞ ≤ C p−1 + m−1 + Θ(i)
+,
+where GN (u0,m ) is of the form in (2.1),  > 0 is arbitrarily small and C > 0 is independent of m, p, |Θ(i) |
+and the initial condition u0 .
+Remark 2.6. If the initial condition u0 (x) has the average ū0 6= 0, we write the solution u(x, t) := v(x −
+ū0 t, t) + ū0 , where v satisfies the Burgers equation (2.4) with the initial condition of zero average u0 − ū0 .
+If the Burgers equation is equipped with Dirichlet boundary condition, or with a forcing term, or in two
+dimensions, similar conclusions still hold. See Section 4 for details.
+2.3. 1D advection-diffusion equations. Consider the following 1D advection-diffusion equation with
+Dirichlet boundary condition:
+(
+−uxx + a(x)ux = f (x), x ∈ (0, L), 0 < L < ∞,
+(2.6)
+u(0) = u(L) = 0.
+where a(x), f (x) ∈ L∞ (0, L). Since u(x) depends linearly on f (x), we are mainly concerned that how u(x)
+depends on a(x). Hence, we set a(x) as the only input to the operator only and fix f (x). Let M0 > 0. Define
+(2.7)
+
+Σ = Σ(M0 ) := {a(x) ∈ L∞ (0, L) : kakL∞ ≤ M0 }.
+
+Pm
+Suppose that a ∈ S is piecewise constant, i.e., a(x) = j=1 aj χj (x), where 0 = x0 < x1 < · · · < xm = L,
+and χi (x) is the characteristic function on the sub-interval (xj−1 , xj ), i.e., χi (x) = 1 if x ∈ (xj−1 , xj ) and is
+otherwise 0. Let am = (a1 , · · · , am )> .
+Here is the main result on convergence rate of DeepONets for the problem (2.6), whose proof can be
+obtained by using Lemma 4.10 and following the idea of the proof of Theorem 2.5.
+Theorem 2.7 (1D advection-diffusion with Dirichlet boundary condition). Let a ∈ Σ be piecewise
+constant. For any given f ∈ L∞ , let G f (a) be the solution operator given by (4.14) . Then, there exist
+ReLU branch networks gfN (am ; Θ(i) ) of size |Θ(i) | = m4 ln(m) for i = 1, · · · , p, and ReLU trunk networks
+f N (x; θ(k) ) of width NfN = 3 and depth LfN = 1, k = 1, · · · , p, such that
+G f (a) − GNf (am )
+
+L∞
+
+
+− 41 + 
+,
+≤ C p−1 + m−1 + Θ(i)
+
+where GNf (am ) is of the form in (2.1),  > 0 is arbitrarily small and C > 0 is independent of m, p, |Θ(i) | and
+a(x).
+
+6
+
+DENG ET AL.
+
+2.4. 2D advection-reaction-diffusion equations. Consider the following 2-D advection-reaction-diffusion
+equation with a given boundary condition
+(
+−∆u + a · ∇u + a3 (x, y)u = f, in Ω ⊂ Rd ,
+(2.8)
+Bu = 0, on ∂Ω,
+where a = [a1 (x, y), a2 (x, y)], Ω is a rectangular domain and B is one of the Dirichlet, Neumann or Robin
+boundary operator. Herein, we consider a finite difference discretization in order to obtain a numerical
+solution UN ∈ Rm . Suppose that S is the matrix resulting from a central finite difference scheme for −∆
+and Dx for partial derivative a1 ∂x and Dy for partial derivative a2 ∂y and Λ for a3 Id (Id refers to the identity
+operator). We then write the matrix as follows
+
+
+m
+m
+m
+
+
+
+X
+X
+X
+S + Dx + Dy + Λ Um := S + h
+ai1 Ai1 + h
+h2 al3 Al3 UN = F,
+aj2 Aj2 +
+i=1
+
+j=1
+
+l=1
+√
+
+m
+
+where aki denotes the value of ai (x, y), i = 1, 2, 3, at the k-th node of {(xj1 , yj2 )}j1 ,j2 =1 associated with
+the finite difference scheme, and every Aki is a rank-1 matrix, i = 1, 2, 3 and k = 1, · · · , m. Let am
+1 =
+1
+m >
+m
+1
+m >
+m
+1
+m >
+(a1 , · · · , a1 ) , a2 = (a2 , · · · , a2 ) and a3 = (a3 , · · · , a3 ) . The theorem below states the convergence
+rate of DeepONets approximating the solution operator of 2D advection-reaction-diffusion equation (2.8).
+The detailed discussion is presented in Section 4 for a = 0 or a3 = 0.
+Theorem 2.8 (2D advection-diffusion-reaction with classical boundary conditions). For any given
+f ∈ L∞ , let G f (a1 , a2 , a3 ) be the solution operator of Equation (2.8). Then, there exist a branch network
+m
+m
+2
+g N (am
+1 , a2 , a3 ; Θ) having width Ng N = O(m ln(m)) and depth Lg N = O(m ln(m)), and ReLU trunk networks f N (x; θ(k) ) having width NfN = O(1) and depth LfN = O(1), k = 1, · · · , p (we take p = m), such
+that
+
+
+r
+− 1 +
+m
+m
+−1+
+G f (a1 , a2 , a3 ) − GNF (am
++ m− 2 + NgN LgN 3
+,
+1 , a2 , a3 ) L∞ ≤ C m
+m
+m
+F
+(am
+where GN
+1 , a2 , a3 ) is the DeepONets of the form in (2.1),  > 0 is arbitrarily small and C > 0 is
+independent of m, NgN , LgN , Nf N , Lf N , a1 , a2 and a3 . Here r is the convergence order of central finite
+difference schemes for Equation (2.8) and s is the regularity index of u with given f and ai , i = 1, 2, 3.
+
+Remark 2.9. The error estimates of DeepONets depend on the dimension of the physical space of the PDE,
+i.e., the dimension d where Ω ⊂ Rd . If the regularity of the solution 
+u is limited and piecewise constant/linear
+
+s
+
+r
+
+interpolation is used, then the error of the deepONets is bounded by p− d +m− d +error from branch , where
+s is the regularity index of the analytical solution u.
+The branch network we construct from a finite difference solution has the size O(m3 ln(m)) in Theorem 2.8
+while the branch network we derived from the analytical solution in Theorem 2.7 has the size O(m4 ln(m)).
+This is due to the different structures of the networks. In Theorem 2.7, we use a generic ReLU network
+while in Theorem 2.8 we use a blessed representation as in [21]. The blessed representation has a structure
+similar to an iterative solver of the linear system. See Section 4 for more details.
+Remark 2.10 (General domains). In this work, we consider regular domains such as periodic domains or
+rectangular domains. The methodology developed for the advection-diffusion-reaction equations on rectangles
+can be extended to irregular domains as the properties we use in the proof are sparsity of the finite difference
+matrices, the iterative solver based on Sherman-Morrison’s formula, and the matrix S is invertible; see details
+in Section 4.
+
+CONVERGENCE RATE OF DEEPONETS
+
+7
+
+3. Error of operator approximation: general case
+In this section, we present a general framework of convergence analysis for approximating Hölder continuous operators by DeepONets. Below is the definition of a Hölder continuous operator.
+Definition 3.1. Let X and Y be Banach spaces. The operator G : X → Y is called Hölder continuous on
+a bounded subset S ⊂ X, if
+α
+
+kG(u) − G(v)kY ≤ C ku − vkX ,
+
+(3.1)
+
+∀u, v ∈ S,
+
+0 < α ≤ 1,
+
+where C > 0 depends only on S and the norms of u and v and the operator G.
+There are many classes of operators, which are Hölder or Lipschitz continuous, especially solution operators
+from integral and differential equations. Various operators have been shown to satisfy Hölder continuity in
+the Appendix of [18]. For readers’ convenience, we present an example below.
+Example 3.2 ([12]). Consider the following equation
+∂t u + divf (u) = 0,
+
+x ∈ Rd ,
+
+u(x, 0) = u0 (x).
+
+The solution operator u = G(u0 , f ) is Lipschitz continuous. That is, if ∂t v + divg(v) = 0, x ∈ Rd , and
+v(0, x) = v0 (x), then
+ku(t) − v(t)kL1 ≤ ku0 − v0 kL1 + t min {TV(u0 ), TV(v0 )} kf − gkC 1 ,
+
+t > 0.
+
+Here u0 , v0 ∈ S = {u ∈ BV(Rd ) ∩ L1 (Rd ) : TV(u) ≤ M } for some M > 0, f and g ∈ C 1 (R, Rd ) which
+satisfies the entropy condition, where BV is the space of functions of bounded variation and TV is the total
+variation.
+In order to analyze the convergence rate, we split the error into two parts in the following way
+(3.2)
+
+kG(u) − GN (um )kY ≤ kG(u) − Gm,p (um )kY + kGm,p (um ) − GN (um )kY .
+
+where Gm,p (um ) is a finite dimensional operator from Vm to Yp , see, e.g, (2.2). The first step is to find
+an appropriate operator Gm,p . One choice is the Bochner-Riesz means of Fourier series of a function f (x),
+denoted by
+γ
+BR
+(f ; y) =
+
+X
+|k|≤R
+
+(1 −
+
+p
+2
+X
+|k| γ b
+>
+)
+f
+exp(iπk
+x)
+:=
+ci (f )ei (y),
+k
+R2
+i=1
+
+R>0
+
+and γ ≥ 0,
+
+Pd
+2
+2
+where k = (k1 , k2 , . . . , kd ), |k| = i=1 |ki | , fbk ’s are the Fourier coefficients of f , and ci (f ) can be considered
+γ
+as linear functionals of f . The truncation error of BR
+may be described by the first-order and second-order
+q
+modulus of continuity of f in L ; see definitions below.
+ω1 (f ; t)q = sup|h|≤t kf (· + h) − f (·)kLq ,
+
+t ≥ 0,
+
+ω2 (f ; t)q = sup|h|≤t kf (· + h) + f (· − h) − 2f (·)kLq ,
+
+t ≥ 0.
+
+Then we can obtain the formulation of Gm,p (um ) according to the calculation in (2.2):
+
+
+γ
+0
+(3.3)
+Gm,p (um ) = BR
+G(Im
+u); y ,
+1
+
+0
+where Im
+is the piecewise constant interpolation that satisfies (C is a generic constant and h ∼ m− d ):
+
+(3.4)
+
+kIm u − ukX ≤ Ch kukV , ∀u ∈ V.
+
+Note that (3.4) implies the stability of interpolation, i.e., kIm ukX . kukV , ∀u ∈ V . If we further consider
+the neural network GN (um ) to be (2.1), then we have the following error estimate.
+
+8
+
+DENG ET AL.
+
+Theorem 3.3. Assume that the conditions in Theorem 2.1, (3.1) and (3.4) hold. Let Y = Lq (K2 ), where
+1 ≤ q ≤ ∞, K2 ∈ Rd is compact. Then
+(3.5)
+
+kG(u) − GN (um )kY
+
+≤
+
+kG(u) − Gm,p (um )kY + kGm,p (um ) − GN (um )kY ,
+
+where Gm,p (um ) is defined in (3.3) and
+kG(u) − Gm,p (um )kY
+kGm,p (um ) − GN (um )kY
+
+≤ Chα + Cω2 (G(Im u), p−1/d )q ,
+ √
+
+1
+−2α/m −2α/m
+≤ C p mNgN
+LgN
++ p exp(−|θ(k) | 1+d ) ,
+
+where the constant C is independent of m, p and NgN is the number of neurons in each layer of the branch
+network, |θ(k) | is the size of the trunk network, and LgN is the numbers of layers of the branch network.
+Theorem 3.3 is obtained by applying the triangular inequality, the Hölder continuity (3.1), and Theorems
+A.1 and B.1 and B.4. The proof is presented in Section 5.
+Remark 3.4 (Complexity). Let ε > 0 be the error tolerance. According to Theorem 3.3, in order to make
+d
+d
+d
+the total error kG(u) − GN (um )kY < ε, we need to set m = Ch−d ∼ ε− α , p ∼ ε− 2 , NgN · LgN ∼ ε− ε and
+
+d+1
+1
+.
+|θ(k) | ∼ d+2
+2 ln( ε )
+The term ck (G(Im u)) in the error estimate in Theorem 3.3 is problematic as the dimensionality of the
+function (of um ) is usually high if only Hölder continuity is assumed. For high dimensional functions being
+approximated by neural networks, special architectures of neural networks are available; see, e.g., [22] and
+[34] for Hölder continuous functions using Kolmogorov-Arnold Superposition. However, the convergence rate
+is similar. For linear operators, we obtain much better results.
+3.1. Linear operators. If G is linear, we can simplify the error estimates for the branch. By the linearity
+of G and the functional ck , ck (G(Im u)) is linear in u(xl ) as
+m
+m
+X
+X
+u(xl )ck (G(Ll (x)),
+u(xl )Ll (x)) =
+ck (G(Im u)) = ck (G(
+l=1
+
+l=1
+
+where the Ll (x) is the interpolation basis, e.g., piecewise constant or piecewise polynomials. In this case,
+DeepONets can be written as
+GN (um ) =
+
+(3.6)
+
+p X
+m
+X
+
+ckl u(xl )f N (y; θ(k) ).
+
+k=1 l=1
+
+If a deep network is employed to approximate the linear functions of (u(x1 ), . . . , u(xm )), then we can apply
+the fact that z = max (z, 0) − max (−z, 0) for any z ∈ R and obtain that
+(3.7)
+
+GN (um ) =
+
+p 
+X
+k=1
+
+ReLU
+
+m
+X
+l=1
+
+m
+X
+
+
+ckl u(xl ) − ReLU −
+ckl u(xl ) f N (y; θ(k) ) .
+| {z }
+l=1
+
+trunk
+
+Here ReLU(·) = max(0, ·).
+Theorem 3.5. Under the same assumptions as in Theorem 3.3, there exists a network GN (um ) of the form
+in (2.1) for a linear operator G such that
+
+
+1
+1
+(3.8)
+kG(u) − GN (um )kY ≤ C h + ω2 (G(Im u), p−1/d )q + exp(− |θ(k) | 1+d ) ,
+2
+where |θ(k) | is of the size (2 ln p)1+d and the same notations are used as in Theorem 3.3.
+
+CONVERGENCE RATE OF DEEPONETS
+
+9
+
+Remark 3.6 (Complexity). Let ε > 0. According to Theorem 3.5, we need to set m = Ch−d ∼ ε−d ,
+
+d+1
+d
+1
+p ∼ ε− 2 , and |θ(k) | ∼ d+2
+ln(
+)
+to have kG(u) − GN (um )kY < ε. Furthermore, if G(Im u) is smooth
+2
+ε
+Pp
+enough such that k=1 |ck (G(Im u))| ≤ C for some constant C independent of p, then the error estimate for
+the trunk network (3.5) can be refined to be
+γ
+BR
+G(Im u) − GeN (Im u)
+
+which implies that |θ(k) | is of order
+
+
+
+≤ C max
+Y
+
+1≤k≤p
+
+ek − f N (·; θ(k) )
+
+,
+Y
+
+d+1
+ln( 1ε )
+.
+
+4. Error bounds for solution operators for Burgers and advection-diffusion equations
+In this section, we present convergence analysis of DeepONets for two classes of solution operators: one is
+from Burgers equations, and the other is from advection-diffusion-reaction equations. In both cases, we use
+a semi-analytic approach to construct Gm,p , the finite dimensional operator approximating the operator G;
+see e.g., (2.2). For Burgers equations, we use the Cole-Hopf transformation (e.g., in [1]) to obtain analytical
+solutions and then parameterize the input (initial condition). For linear advection-diffusion equations, we
+use an analytical formulation to obtain a solution in 1D before any parameterization of the input (advection
+coefficients). We apply finite difference schemes to obtain an approximating solution in 2D. We show that
+formulations of the resulting approximate solutions are essential to obtain realistic convergence rates of
+DeepONets with respect to the sizes of branch networks.
+For presentation, we only consider initial condition(s) or the advection coefficients to be the input(s) of the
+solution operator. We also assume that the input is piecewise linear/constant function(s). For general input
+functions, one may obtain the error estimates immediately by combining the main results in this section,
+the operator’s Hölder continuity, and the piecewise linear or constant interpolation error.
+4.1. 1D Burgers equation with periodic boundary conditions (2.4). Define xlj = x0j + 2πl, j =
+0, 1, · · · , m, for each l ∈ Z. Then {xlj }m
+j=0 form a partition of [−π + 2πl, π + 2πl). For simplicity, we denote
+xj = x0j . To make sure that v0 (x) in (4.1) is 2π-periodic, we require that the initial condition has zero mean
+Rπ
+in a period ū0 := −π u0 (s)ds = 0. Then, by the Cole-Hopf transformation, the solution to (2.4) can be
+written as
+(
+vt = κvxx ,
+−2κvx
+
+
+Rx
+, where
+(4.1)
+u=
+1
+v
+v(x, 0) = v0 (x) = exp − 2κ
+u
+(s)ds
+.
+0
+−π
+Since 0 < exp(− πkuκ0 k∞ ) ≤ v0 (x) ≤ exp( πkuκ0 k∞ ), the solution u can be written explicitly as
+R
+∂x K(x, y, t)v0 (y)dy
+(4.2)
+u(x) = G(u0 )(x) := −2κ RR
+, x = (x, t),
+K(x, y, t)v0 (y)dy
+R
+
+
+2
+1
+where K(x, y, t) = √4πκt
+exp − (x−y)
+is the heat kernel. It can be readily checked that u(x)|[−π,π)×[0,∞)
+4κt
+is the unique solution to (2.4).
+We may obtain Gm,p in two steps. The first step is to approximate G by Gm , which is chosen to be a
+>
+rational function with respect to the initial condition v0 . Define Vm := V(u
+ 0,m ) = (V0 , V1 , · · · , Vm−1 ) ,
+u
+
++u
+
+where V0 = 1 and Vj = exp(− 0,j 4κ0,j−1 hj ), j = 1, · · · , m − 1. Define Gm = G̃m ◦ V as:
+Gm (u0,m ; x)
+
+(4.3)
+
+= G̃m (Vm ; x)
+R
+1
+0
+−2κ R ∂x K(x, y, t)(Im
+v0 )(y)dy
+v00 c10 (x) + v10 c11 (x) + · · · + vm−1
+c1m−1 (x)
+R
+=
+=
+,
+0
+0 v )(y)dy
+v00 c20 (x) + v10 c21 (x) + · · · + vm−1
+c2m−1 (x)
+K(x, y, t)(Im
+0
+R
+
+10
+
+DENG ET AL.
+
+0
+1
+where Im
+f and Im
+f be the piecewise constant interpolation and piecewise linear interpolation of f on each
+Qj
+sub-interval [xj−1 , xj ), respectively, and vj0 = v0 (xj ) = i=0 Vi , and for j1 = 1, · · · , m − 1, j2 = 0, · · · , m − 1,
+and
+Z xm  X
+h Z x1  X
+ x −y
+i
+ y−x
+1
+m−1
+1
+c0 (x) = −2κ
+∂x K(x, y + 2πl, t)
+dy +
+dy ,
+∂x K(x, y + 2πl, t)
+x1 − x0
+xm − xm−1
+x0
+xm−1
+l∈Z
+l∈Z
+Z xj1 +1  X
+i
+h Z xj1  X
+ x
+ y−x
+j1 +1 − y
+j1 −1
+dy ;
+dy +
+c1j1 (x) = −2κ
+∂x K(x, y + 2πl, t)
+∂x K(x, y + 2πl, t)
+xj1 − xj1 −1
+xj1 +1 − xj1
+xj1
+xj1 −1
+l∈Z
+l∈Z
+Z xj2 +1  X
+
+c2j2 (x) =
+K(x, y + 2πl, t) dy.
+xj2
+
+l∈Z
+
+Hence, for any x, G̃m is a rational function with respect to Vm , where the numerator and the denominator
+are both m-th degree m-variable polynomials with m terms. Then we have the following error estimate.
+Theorem 4.1. Suppose that u0 ∈ S is a piecewise linear function. Let G(u0 )(x) and Gm (u0,m ; x) be
+defined in (4.2) and (4.3), respectively. Suppose h is small enough. Then there is a uniform constant
+C=2
+
+M02
+κ + M1
+
+, such that for any x = (x, t) ∈ (−π, π) × (0, +∞), we have
+G(u0 )(x) − Gm (u0,m ; x) ≤ Ch.
+
+In order to approximate Gm by a neural network, it is important to realize that a rational function can
+be approximated by a ReLU network according to the following theorem.
+Theorem 4.2 ([36]). Let ε ∈ (0, 1] and nonnegative integer k be given. Let p : [0, 1]d → [−1, 1] and
+q : [0, 1]d → [2−k , 1] be polynomials of degree ≤ r, each with ≤ s monomials. Then there exists a ReLU
+network f of size (number of total neurons)
+
+
+1
+(4.4)
+O k 7 ln( )3 + min{srk ln(sr/ε), sdk 2 ln(dsr/ε)2 }
+ε
+such that
+p(x)
+(4.5)
+≤ ε.
+sup f (x) −
+q(x)
+x∈[0,1]d
+Combining Theorem 4.1 and Theorem 4.2 readily leads to Theorem 4.3, which is used to show the error
+estimate for branch networks.
+Theorem 4.3. Let u0 ∈ S be a piecewise linear function. Let G(u0 ) be the solution operator of the Burgers
+equation (2.4). Then there exist a ReLU network g N (u0,m ; Θ) of size |Θ| = O(m2 ln(m)) and a uniform
+constant C = C(κ, M0 , M1 ), such that for any x ∈ [−π, π) × (0, ∞), there exists a set of parameters Θx , s.t.
+G(u0 )(x) − g N (u0,m ; Θx ) ≤ G(u0 )(x) − Gm (u0,m ; x) + Gm (u0,m ; x) − g N (u0,m ; Θx ) ≤ Ch.
+Pm−1
+Remark 4.4. Let u0 (x) = i=0 ui Li (x) be a piecewise function, where m is a fixed number and m 6= m
+generally. According to the asymptotic result in Theorem 4.3, we still need m → ∞ to guarantee convergence.
+However, since m  m when m → ∞, one can combine like terms (in terms of ui ) in (4.3), so that there
+are only m variables as the inputs of the rational function Gm . Then by (4.4) again, the size of the network
+can be reduced to m · O(m ln(m)2 ), where d = m, s = m and r = m. The same remark can be applied to all
+of the examples in this section.
+Theorem 2.5 follows from the above theorems. The detailed proofs of Theorem 4.1, Theorem 4.3 and
+Theorem 2.5 are presented in Section 5.
+
+CONVERGENCE RATE OF DEEPONETS
+
+11
+
+Remark 4.5. Solution operators from a large class of such PDEs can be considered. Many nonlinear PDEs
+can be converted to linear problems by some transformations, such as the Cole-Hopf transformation, the
+hyperbolic ansatz, and the improved tanh-coth method, see, e.g., [1, 25].
+4.2. 1D Burgers equation with Dirichlet boundary condition. Consider the Burgers equation with
+Dirichlet boundary condition u(a, t) = F0 (t) and u(b, t) = F1 (t) where −∞ < a < b < ∞. As in [28], the
+Burgers equation can be transformed into the heat equation with the Neumann/Robin boundary condition
+by the Cole-Hopf transformation, i.e.,
+
+
+
+ vt = κvxx , x ∈ (a, b),
+
+Rx
+−2κvx
+1
+(4.6)
+u=
+u0 (s)ds ,
+, where
+v(x, 0) = v0 (x) = exp − 2κ
+a
+
+v
+
+ 2κv (a, t) + F (t)v(a, t) = 2κv (b, t) + F (t)v(b, t) = 0,
+x
+
+0
+
+x
+
+1
+
+which admits a solution of the following form
+Z
+Z t
+Z t
+v(x, t) =
+K(x − y, t)φ0 (y) dy −
+K(x − a, t − s)Ψ1 (s) ds +
+K(x − b, t − s)Ψ2 (s) ds,
+0
+
+R
+
+0
+
+where Ψ1 (t) and Ψ2 (t) depend linearly on the initial condition v0 (or {vj0 }m−1
+j=0 ), see [28] for details. The
+construction of Gm in this case is similar to (4.3). and hence, similar results to those in Section 4.1 can be
+obtained.
+4.3. 1D Burgers equations with forcing. Consider the following Burgers equation with a forcing term
+ut + uux = κuxx + f (x, t), x ∈ R,
+
+(4.7)
+
+with initial condition u0 (x). By the Cole-Hopf transformation, we obtain a linear heat equation:
+(
+Rx
+1
+vt = κvxx − F (x, t)v, F (x, t) = 2κ
+f (y, t)dy, x ∈ R,
+−2κvx
+−∞ 
+Rx
+(4.8)
+u=
+, where
+1
+v
+v(x, 0) = v0 (x) = exp − 2κ −∞ u0 (s)ds .
+Rt
+Assume that F (x, t) has a lower bound and 0 supx |F (x, t)| ds < ∞. By the Feynman-Kac formula,
+Z t
+√
+√
+
+(4.9)
+v(x, t) = E[exp −
+F (x + 2κBs , s) ds v0 (x + 2κBt )],
+0
+
+where Bt is a standard Brownian motion with B0 = 0. And by a direct calculation, we have
+Z t
+Z t
+√
+√
+√
+√
+
+−1
+vx = E[
+exp −
+F (x + 2κBs , s) ds [u0 (x + 2κBt ) +
+f (x + 2κBs , s) ds]v0 (x + 2κBt )].
+2κ
+0
+0
+Suppose that u0 (x) is a piecewise linear polynomial and f (x, t) can be well approximated by piecewise linear
+PI
+PJ
+or piecewise constant polynomials, i.e., u0 (x) = i=1 u0,i Li (x), f (x, t) = j=1 f (xj , tj )ej (x, t). Denote
+√
+√
+R t∗ R x ∗
+R x∗ + 2κBt∗
+ẽ∗j = 0 −∞ ej (y + 2κBs , s) dy ds and L̃∗i = −∞
+Li (y) dy. Then
+v(x∗ , t∗ )
+
+= E[exp −
+
+J
+X
+f (xj , tj )
+j=1
+
+=
+
+2κ
+
+ẽ∗j −
+
+I
+X
+u0,i
+i=1
+
+2κ
+
+
+L̃∗i ] + O(hx + ht )
+
+N
+J
+I
+
+X
+X
+1 X
+f (xj , tj ) ∗
+u0,i ∗
+exp −
+ẽj (ωl ) −
+L̃i (ωl ) + O(N −1/2 ) + O(hx + ht ).
+N
+2κ
+2κ
+j=1
+i=1
+l=1
+
+Here ẽ∗j (ωl ) (L̃∗i (ωl )) is a realization of ẽ∗j (L̃∗i ) at one trajectory. Similarly, we have
+Z t∗
+J
+I
+X
+√
+√
+1
+f (xj , tj ) ∗ X u0,i ∗ 
+∗
+vx (x , t ) = − E[exp −
+ẽj −
+L̃i (u0 (x + 2κBt∗ ) +
+f (x∗ + 2κBs ), s) ds]
+2κ
+2κ
+2κ
+0
+j=1
+i=1
+∗
+
+∗
+
++O(hx + ht )
+
+12
+
+DENG ET AL.
+J
+I
+I
+J
+X
+X
+1
+f (xj , tj ) ∗ X u0,i ∗  X
+∗
+= − E[exp −
+ẽj −
+L̃ (
+u0,i Li +
+f (xj , tj )ē∗j ]
+2κ
+2κ
+2κ i i=1
+j=1
+i=1
+j=1
+
++O(hx + ht )
+= E[exp −
+
+J
+X
+f (xj , tj )
+j=1
+
+=
+
+2κ
+
+ẽ∗j −
+
+I
+X
+u0,i
+
+
+L̃∗i ×
+
+2κ
+PJ
+exp( j=1 f (xj , tj )ē∗j ht ) − 1 
+
+i=1
+
+PI u L∗i
+exp( i=1 0,i
+2κ hx ) − 1)
+] + O(hx + ht )
++
+hx
+ht
+N
+J
+I
+X
+1 X
+f (xj , tj ) ∗ X u0,i ∗ 
+exp −
+ẽj −
+L̃ (ωl ) ×
+N
+2κ
+2κ i
+j=1
+i=1
+l=1
+PJ
+PI u L∗i
+exp( j=1 f (xj , tj )ē∗j ht ) − 1 
+exp( i=1 0,i
+2κ hx ) − 1)
++
+(ωl )
+hx
+ht
++O(hx ) + O(ht ) + O(N −1/2 )
+
+√
+√
+R t∗
+Here L∗i = Li (x∗ + 2κBt∗ ), ē∗j = 0 f (x∗ + 2κBs ), s) ds.
+Combining the above estimates and by Lemma 5.2, we have
+1 vx (x∗ , t∗ )
+2κ v(x∗ , t∗ )
+P
+P
+u
+L∗
+∗
+
+i
+PJ f (xj ,tj ) ∗ PI u0,i ∗ 
+exp( J
+hx )−1)
+exp( Ii=1 0,i
+N
+j=1 f (xj ,tj )ēj ht )−1
+2κ
++
+(ωl )
+1 X exp − j=1 2κ ẽj − i=1 2κ L̃i (ωl )
+hx
+ht
+
+= −
+PN 
+PJ f (xj ,tj ) ∗
+PI u0,i ∗
+2κ
+ẽj (ωl ) − i=1 2κ L̃i (ωl )
+l=1
+l=1 exp −
+j=1
+2κ
+u(x∗ , t∗ ) = −
+
++O(N −1/2 ) + O(hx + ht ).
+PJ f (xj ,tj ) ∗
+ẽj (ωl )
+Similar to the treatments of Burgers equation without forcing term, we replace exp − j=1 2κ
+QJ
+PJ f (xj ,tj ) ∗
+with j=1 (1− j=1 2κ ẽj (ωl )), which leads to an error of O(hx +ht ). The solution becomes a summation
+of N rational polynomials, each of which has N terms in the denominator with all the term of order I + J,
+J = Ix × It and I = Ix . Then by Theorem 4.2 and similar to the proof of Theorem 4.3, we have a ReLU
+network of size O(N (I + J)2 ln(I + J)/) to approximate u.
+Taking  ≃ Ix−1 ≃ It−1 ≈ N −1/2 . Then the network size is O(−6 ln(−3 )). If we do not introduce the
+discretization in t, then J = I = Ix and the network size can be reduced to O(−4 ln(−2 )). If we use
+alternative numerical integration methods, e.g., quasi-Monte Carlo methods, then N = −1 and the network
+size can be reduced to O(−3 ln(−2 )).
+R
+Remark 4.6. The condition we need in the Cole-Hopf transformation is R exp(−x2 ) |v0 (x)| dx < ∞, which
+can be satisfied when u0 (x) is a piecewise linear polynomial as assumed. Here  > 0.
+4.4. 2D Burgers equation. Consider the 2D Burgers equation with periodic boundary condition:
+
+(4.10)
+
+
+ut + uux + vuy − κ (uxx + uyy ) = 0, (x, y) ∈ (−π, π) × (−π, π),
+
+
+
+
+
+vt + uvx + vvy − κ (vxx + vyy ) = 0, (x, y) ∈ (−π, π) × (−π, π),
+
+
+
+ u(x − π, y) = u(x + π, y), u(x, y − π) = u(x, y + π),
+
+v(x − π, y) = v(x + π, y), v(x, y − π) = v(x, y + π),
+
+
+
+
+
+u(x, y, 0) = u0 (x, y),
+
+
+
+v(x, y, 0) = v0 (x, y).
+
+CONVERGENCE RATE OF DEEPONETS
+
+13
+
+where u0 and v0 satisfy the consistent condition ∂y u0 = ∂x v0 = w0 , i.e., they are of the forms
+Z y
+Z x
+u0 (x, y) =
+w0 (x, s)ds + ũ0 (x) and v0 (x, y) =
+w0 (r, y)dr + ṽ0 (y).
+−π
+
+−π
+
+Then we may apply the Cole-Hopf transformation, see e.g., [9],
+u = G u (u0 , v0 ) := −2κ
+
+(4.11)
+
+φx
+,
+φ
+
+v = G v (u0 , v0 ) := −2κ
+
+φy
+,
+φ
+
+where
+(
+
+φt − κ∆φ = 0, 
+
+1
+φ0 (x, y) = exp − 2κ
+
+hR
+
+Rx
+Ry
+x Ry
+w (s, r)drds + −π ũ0 (s)ds + −π ṽ0 (r)dr
+−π −π 0
+
+i
+.
+
+Define
+S = S(M0 , M1 ) := {(u0 , v0 ) ∈ W 1,∞ × W 1,∞ : kφ0 kL∞ ≤ M0 , k∇φ0 kL∞ ≤ M1 }.
+0
+1
+Let Im
+and Im
+be the piecewise constant interpolation at the left bottom corner and bilinear interpolation on
+√
+each rectangular element [xj1 −1 , xj1 ) × [xj2 −1 , xj2 ), j1 , j2 = 1, 2, · · · , m, respectively. Denote x = (x, y)>
+and s = (s, r)> . Then we define
+R R
+1
+φ0 )(s)dsdr
+2κ R R ∂x K(x, s, t)(Im
+u
+Gm (um,0 , vm,0 ; x, t) := − R R
+,
+0
+K(x, s, t)(Im φ0 )(s)dsdr
+R R
+R R
+1
+φ0 )(s)dsdr
+2κ R R ∂y K(x, s, t)(Im
+v
+(4.12)
+Gm (um,0 , vm,0 ; x, t) := − R R
+.
+0
+K(x, s, t)(Im φ0 )(s)dsdr
+R R
+
+
+2
+1
+where K(x, s, t) = 4πκt
+exp − |x−s|
+is the 2-D heat kernel. Then we may derive the following results
+4κt
+
+similar to the 1-D case (2.4).
+u
+,
+Lemma 4.7. Let (u0 , v0 ) ∈ S. Let G u , G v be the solution operators for (4.10) defined in (4.11), and Gm
+v
+Gm be defined in (4.12). Suppose h = maxj |xj − xj−1 | is small enough. Then there is a uniform constant
+C = C(κ, M0 , M1 ), s.t. for any (x, t) ∈ (−π, π)2 × (0, ∞), we have
+u
+v
+G u (u0 , v0 )(x, t) − Gm
+(u0,m , v0,m ; x, t) + G v (u0 , v0 )(x, t) − Gm
+(u0,m , v0,m ; x, t) ≤ Ch.
+
+Lemma 4.8. Let (u0 , v0 ) ∈ S. Let G u , G v be the solution operators for (4.10) defined in (4.11). Then
+exist ReLU networks guN (u0,m , v0,m ; Θu ) of size |Θu | = O(m2 ln(m)) and gvN (u0,m , v0,m ; Θv ) of size |Θv | =
+O(m2 ln(m)) and a uniform constant C = C(κ, M0 , M1 ), such that for any (x, t) ∈ (−π, π)2 × (0, ∞), there
+(x,t)
+(x,t)
+exist parameters Θu
+and Θv , s.t.
+G u (u0 , v0 )(x, t) − guN (u0,m , v0,m ; Θ(x,t)
+) + G v (u0 , v0 )(x, t) − gvN (u0,m , v0,m ; Θ(x,t)
+) ≤ Ch.
+u
+v
+u
+v
+Proof. Observe that Gm
+and Gm
+are rational functions with respect to φ0 (xj1 , xj2 ) with r = m and s = m
+and k is a constant (using the notation in Theorem 4.2). The conclusion then follows from Theorem 4.2. 
+
+Theorem 4.9. Let (u0 , v0 ) ∈ S. Let G u , G v be the solution operators for (4.10). Then exist ReLU branch
+(i)
+(i)
+(i)
+(i)
+networks guN (u0,m , v0,m ; Θu ) and gvN (u0,m , v0,m ; Θv ) of sizes |Θu |, |Θv | = O(m2 ln(m)), i = 1, · · · , p,
+respectively, and ReLU trunk networks f N (x; θ(k) ) of size O(1), k = 1, · · · , p, such that
+kG u (u0 , v0 ) − GNu (u0,m , v0,m )kL∞ + kG v (u0 , v0 ) − GNv (u0,m , v0,m )kL∞
+ 1
+− 21 +
+− 21 + 
+1
++ Θ(i)
+,
+≤ C p− 2 + m− 2 + Θ(i)
+u
+v
+where GNv (u0,m , v0,m ) and GNu (u0,m , v0,m ) are of the form in (2.1),  > 0 is arbitrarily small and C > 0 is
+(i)
+(i)
+independent of m, p, |Θu |, |Θv |, u0 and v0 .
+
+14
+
+DENG ET AL.
+
+4.5. 1D steady advection-diffusion equation with Dirichlet boundary condition. First, we transform (2.6) into the divergence form:
+
+ Z x
+(4.13)
+a(s)ds ,
+−∂x (A(x)∂x u) = A(x)f (x), where A(x) := exp −
+0
+−1
+
+and 0 < exp(−Lkak∞ ) ≤ A(x), A (x) ≤ exp(Lkak∞ ). Notice that the analytic solution to (4.13) can be
+found by the following steps: a) integrate both sides, which generates a constant C to be determined, b)
+divide both sides by −A(x) and integrate again, c) determine C by using the boundary condition. If we
+define the two operators:
+Z x
+Z x
+A+ (g)(x) :=
+A(y)g(y)dy, A− (g)(x) :=
+A−1 (y)g(y)dy,
+0
+
+0
+
+then for any given f (x), the analytic solution u(x) can be given by the following expression symbolically:
+
+
+
+A− (1)(x) 
+u(x) = G f (a)(x) := − A− ◦ A+ (f )(x) +
+(4.14)
+A− ◦ A+ (f )(L),
+A− (1)(L)
+AN (1)(x)
+
+where 1(x) = 1 is the constant function. Clearly, A± (1) is linear w.r.t. A±1 (x) and 0 ≤ AN− (1)(L) ≤ 1 is
+−
+increasing with respect to x. Define
+
+
+
+
+AN
+− (1)(x)
+N
+f
+N
+N
+A
+Gm
+(am ; x) := − AN
+◦
+A
+(4.15)
+(f )(L),
+−
++
+− ◦ A+ (f )(x) +
+AN
+− (1)(L)
+where am = (a1 , · · · , am )> and
+AN
++ (g)(x) :=
+
+Z x
+0
+
+0
+Im
+(Ag)(y)dy,
+
+AN
+− (g)(x) :=
+
+Z x
+
+0
+Im
+(A−1 g)(y)dy,
+
+0
+
+0
+the piecewise constant interpolation of f on each subinterval [xi−1 , xi ). Notice that
+and
+
+ Im f represents
+N
+N
+A− ◦ A+ (f ) is bilinear w.r.t. A(x)
+A(y) and f (x). Then we can prove the following Lemmas.
+
+Lemma 4.10. Let h > 0 be small enough. There is a constant C = C(M0 ) > 0 such that
+f
+kG f (a)(·) − Gm
+(am ; ·)kL∞ (0,L) ≤ Ch.
+
+Theorem 4.11. Let a ∈ Σ be piecewise constant. For any given f , let G f (a) be the solution operator to the
+advection-diffusion equation (2.6). Then there exist ReLU networks gfN (am ; Θ) of size |Θ| = m4 ln(m) and
+a uniform constant C = C(M0 ), such that for any x ∈ [0, L], there exists a set of parameters Θx , s.t.
+f
+f
+G f (a)(x) − gfN (am ; Θx ) ≤ G f (a)(·) − Gm
+(am ; x) + Gm
+(am ; x) − gfN (am ; Θx ) ≤ Ch.
+
+Finally, Theorem 2.7 follows from Theorem 4.11 and similar arguments in the proof of Theorem 2.5.
+Remark 4.12. The analysis in this subsection also works for the variable coefficient second order differential
+equation −∂x (a(x)∂x u) = f (x), where f (x) ∈ L∞ ([0, L]) and 0 < m ≤ a(x) ≤ M .
+4.6. 2D steady reaction-diffusion equations. Consider the 2D steady reaction-diffusion equation with
+a classical boundary condition:
+(
+−∆u(x, y) + a(x, y)u(x, y) = f (x, y), in Ω,
+(4.16)
+Bu(x, y) = 0, on ∂Ω,
+where Ω is a rectangular domain and B can be the Dirichlet, Neumann or Robin boundary operator. Define
+S = S(C0 ) = {a(x, y) ∈ L∞ (Ω) : 0 ≤ a(x, y) ≤ C0 },
+
+C0 > 0.
+
+Suppose f (x, y) ∈ L∞ and a(x, y) ∈ S. Similar to the case of Equation (2.6), we only consider a(x, y) as
+the input to the solution operator and denote u(x, y) = G f (a(x, y)). Instead of using analytical solutions,
+
+CONVERGENCE RATE OF DEEPONETS
+
+15
+
+we use numerical solutions such as those from central finite difference schemes for (4.16). Assume that the
+linear system associated with the central finite difference scheme is of the form
+
+
+(4.17)
+S + Λ UN = F,
+where S is the stiffness matrix, Λ is the diagonal matrix depending on the variable coefficient a(x, y), F is
+Pm
+the discretized right hand side, and UN is the vector of numerical solution. We may write Λ = i=1 Λi ,
+m
+− 12
+where Λi = h2 ai Ii , Ii = ei e>
+i , and ei ∈ R is the i-th unit vector, ai is the i-th diagonal entry of Λ, h ∼ m
+is the mesh size of the numerical scheme. Then (4.17) can be written as
+
+
+(4.18)
+
+S+
+
+m
+X
+
+
+h2 ai Ii UN = F.
+
+i=1
+>
+
+Let am = [a1 , · · · , am ] . Then the numerical solution operator can be defined as
+m
+
+−1
+X
+F
+F.
+UN = GN
+(am ) := S +
+h2 ai Ii
+i=1
+
+Define the exact solution of u at grid points associated with the finite difference schemes by
+(4.19)
+
+U = [u(x1 , y1 ), · · · , u(x1 , y√m ), u(x2 , y1 ), · · · , u(x√m , y√m )]> ∈ Rm .
+
+We assume that for the central difference scheme used above for Equation (4.16), there exist constants C > 0
+and 0 < r ≤ 2, such that
+(4.20)
+
+r
+
+kU − UN kl∞ ≤ Chr ∼ m− 2 .
+
+See e.g., [14] for more details of the specific value of r.
+In the following text, we apply Sherman-Morrison’s formula to represent UN and then construct a blessed
+representation [21] for branch networks. Recall the Sherman-Morrison formula
+(4.21)
+
+(A + uv > )−1 = A−1 −
+
+A−1 uv > A−1
+,
+1 + v > A−1 u
+
+where A ∈ Rm×m is invertible, u, v ∈ Rm such that 1 + v > A−1 u 6= 0. Since each matrix h2 ai Ii has rank one,
+(4.21) can be applied to find the recurrence formula of (S + Λ)−1 explicitly. Define T0 := S −1 , and Tk :=
+
+−1
+Pk
+S + i=1 h2 ai Ii
+for k = 1, · · · , m. Thus, Tm = (S + Λ)−1 . Define the map Gk : R × Rm×m → Rm×m
+by
+α
+Gk (α, M ) := M −
+M e k e>
+k = 1, 2, · · · , m, 1 + α(e>
+k M,
+k M ek ) 6= 0.
+1 + α(e>
+k M ek )
+By the Sherman-Morrison formula, we have
+
+−1
+−1
+(4.22) Tk = Tk−1
++ h2 ak Ik
+= Tk−1 −
+
+h2 ak
+2
+Tk−1 ek e>
+k Tk−1 = Gk (h ak , Tk−1 ).
+1 + h2 ak (e>
+T
+e
+)
+k−1
+k
+k
+
+Then (S + Λ)−1 = Tm can be written as
+(4.23)
+
+Tm = Gm (h2 am , Gm−1 (h2 am−1 , Gm−1 (· · · G1 (h2 a1 , T0 ) · · · ))).
+
+According to [21], we may utilize the compositional structure of this discrete operator to overcome the
+curse of dimensionality (in m). The neural network can be written as NG := NGm ◦ NGm−1 ◦ · · · ◦ NG1 ,
+where NGk is a neural network approximating Gk , k = 1, 2, · · · , m. The structure of NG is presented in
+Figure 1. The network NG follows the same compositional structure in (4.23). Let T1N = NG1 (h2 a1 , T0 ) and
+N
+TkN = NGk (h2 ak , Tk−1
+), k = 2, · · · , m. The next question is how to construct each of NGk . Even though
+
+16
+
+DENG ET AL.
+
+Figure 1. The structure of NG is presented in this figure, where am serves as the input,
+N
+T0 = S −1 is independent of a(x, y) and can be pre-calculated, and the matrix Tm
+is the
+N
+output. Then, U is evaluated by (4.27).
+every Gk has m2 + 1 inputs and m2 outputs, it is extremely sparse as the following analysis shows that every
+output depends on 5 inputs only. Let (Tk )ij be the entry in the i-th row and j-th column of Tk . Then
+(4.24)
+
+(Tk )ij
+
+h2 ak
+(Tk−1 )ij −
+(Tk−1 )ik (Tk−1 )kj
+1 + h2 ak (Tk−1 )kk
+
+
+= R h2 ak , (Tk−1 )ij , (Tk−1 )kk , (Tk−1 )ik , (Tk−1 )kj ,
+
+=
+
+where the rational function R is defined by:
+(4.25)
+
+y = R(x1 , x2 , x3 , x4 , x5 ) := x2 −
+
+x1 x4 x5
+x2 + x1 x2 x3 − x1 x4 x5
+=
+.
+1 + x1 x3
+1 + x1 x3
+
+In the neural network NGk , we can identify the variables of each functional that calculates (Tk )ij , i, j =
+1, · · · , m and approximating the rational function R. By the facts that |x1 x3 |  1 and that a(x, y) is
+bounded and Theorem 4.2, there is a ReLU network NR (x1 , x2 , x3 , x4 , x5 ; θ) of size |θ| = O(ln(ε−1 )), s.t.
+(4.26)
+
+|R(x1 , x2 , x3 , x4 , x5 ) − NR (x1 , x2 , x3 , x4 , x5 ; θ)| ≤ ε.
+
+Let us estimate the number of parameters in the network NG . Suppose that NR has LR layers and NR
+neurons in each layer and NR LR = O(ln(ε−1 )) by Theorem 4.2. To obtain each (TkN )ij , it requires m2 NR
+neurons in the first layer of NGk as shown in Figure 2. Then, the network NG has mLR layers as each NGk
+has LR layers. Denote
+(4.27)
+
+N
+g N (am ) := Tm
+F = UN .
+
+Then we have the following theorem on the error estimate of the branch network.
+Theorem 4.13 (Convergence rate of branch networks using blessed representations). Let a(x, y) ∈ S. Let
+F
+G f (a), GN
+(a
+) be the analytic solution operator, numerical solution operator to (4.16), respectively. Let
+√m
+m
+{(xj1 , yj2 )}j1 ,j2 =1 be the set of nodes associated with the numerical scheme and U be given by (4.19). Then
+there exist a generic constant C and a blessed network g N (am ) (4.27) with width NgN = O(m2 ln(m)) and
+depth LgN = O(m ln(m)), such that
+
+
+r
+kU − g N (am )kl∞ ≤ C m− 2 + m−1 ,
+where r is the convergence order of the finite difference scheme used to construct the network.
+Next, the error estimate of DeepONets approximating the solution operator of (4.16) can be done using
+the idea of proof of Theorem 2.5 and Remark 2.9.
+
+CONVERGENCE RATE OF DEEPONETS
+
+17
+
+NR
+R
+Figure 2. The structure of NGk , k = 1, · · · , m, where {ωi }N
+i=1 and {bj }j=1 are weights
+2
+
+and biases of the first layer of NR , respectively, and each Wk,ij ∈ R5×m is a sparse matrix
+which has 5 nonzero elements.
+Theorem 4.14. For any given f ∈ L∞ , let G f (a) be the solution operator and GNf (am ) be the DeepONets
+network. Then, there exist a branch network g N (am ; Θ) of width NgN = O(m2 ln(m)) and depth LgN =
+O(m ln(m)), and ReLU trunk networks f N (x; θ(k) ) of size |θ(k) | = O(1), k = 1, · · · , p, such that
+
+
+r
+− 1 +
+G f (a) − GNF (am ) L∞ ≤ C m− 2 + NgN LgN 3
+,
+where  > 0 is arbitrarily small and C > 0 is independent of m, NgN , LgN and a(x, y). Here GNf (am ) =
+g N (am ; Θ)(f N (x; θ(2) ), . . . , f N (x; θ(p) ))> .
+Proof. Notice that a and f ∈ L∞ implies u ∈ W 2,∞ . Hence, the interpolation error is h2 ∼ m−1 . The rest
+of proof follows the proof of Theorem 2.8.
+
+4.7. 2D steady advection-diffusion equations. Consider the 2D steady advection-diffusion equation
+with a given boundary condition:
+(
+−∆u + a · ∇u = f, in Ω,
+(4.28)
+Bu = 0, on ∂Ω,
+where a = [a1 (x, y), a2 (x, y)] and B can be the Dirichlet, Neumann or Robin boundary operator. Following
+the idea in the previous section, we consider a finite difference discretization for (4.28) in order to obtain a
+linear system. For example, we apply the central difference scheme to discretize the partial derivatives and
+√
+√
+denote the corresponding 1-D differential matrix by D ∈ R m× m , i.e., (D)ij = ±1 when i = j ∓ 1, and
+(D)ij = 0 otherwise, then we have:
+
+
+(4.29)
+S + Dx + Dy UN = F,
+where S is the stiffness matrix, Dx = Λ1 (I√m×√m ⊗ D) and Dy = Λ2 (D ⊗ I√m×√m ), where ⊗ denotes the
+Kronecker product for matrices and Λk are diagonal matrices whose diagonal entries are values of ak (x, y)
+at each node, k = 1, 2, respectively. Hence, we can rewrite (4.29) as
+m
+m
+
+
+X
+X
+ej UN = F,
+(4.30)
+S+h
+ai1 ei R̂i + h
+aj2 ej R
+i=1
+
+j=1
+
+18
+
+DENG ET AL.
+
+ei ∈ R1×m is the i-th row of (I√m×√m ⊗ D) and (D ⊗ I√m×√m ), respectively. Then, define
+where R̂i , R
+−1
+T0 := S and
+ 
+−1
+
+ S + Pk hai1 ei R̂i
+,
+k = 1 · · · , m,
+i=1
+
+−1
+Tk :=
+P
+P
+k−m
+j
+
+i
+e
+ S+ m
+, k = m + 1, · · · , 2m,
+i=1 ha1 ei R̂i +
+j=1 ha2 ej Ri
+and maps Gk : R × Rm×m → Rm×m , s.t.
+
+α
+ M−
+M ek R̂k M,
+k = 1, · · · , m,
+1+α(R̂k M ek )
+Gk (α, M ) :=
+α
+e
+ M−
+M ek−m Rk−m M, k = m + 1, · · · , 2m,
+e
+1+α(R
+Me
+)
+k−m
+
+k−m
+
+which implies that Tk = Gk (hak , Tk−1 ), where ak = ak1 for k = 1, · · · , m and ak = ak−m
+for k = m +
+2
+1, · · · , 2m. Similar to the discussion of operators for the diffusion-reaction equation, Gk is a highly sparse
+map. Then, the branch network can be constructed using the blessed representation in the previous section.
+4.8. Concluding remarks. The analysis for linear advection-diffusion equations also works for elliptic
+equations in a divergence form: −∇ · (a∇u) = f , where 0 < c ≤ a(x, y) ≤ C. In fact, one may convert it
+into a non-divergence form and −∆u − a−1 ∇a · ∇u = a−1 f . Let b = −a−1 ∇a and f˜ = a−1 f . A similar
+convergence rate can be obtained using the linearity of the solution operator with respect to the right hand
+side and the fact that −a−1 ∇a and a−1 can be well approximated by ReLU networks with the input am .
+The analysis can be extended to the steady advection-reaction-diffusion equation −∆u + a · ∇u + a3 u = f ,
+where a = [a1 , a2 ]> and a1 , a2 , a3 , f ∈ L∞ (Ω). After discretizing the PDE with a finite difference scheme,
+we may obtain a linear system of the form: (S + Dx + Dy + Λ)UN = F .
+For nonlinear problems and time-dependent problems, we expect that additional efficient iterative schemes
+may be used and thus may lead to extra layers in branch networks. In fact, in each iteration of the additional
+iterative schemes, there is a linear system where we can blessed representations.
+5. Proofs
+In this section, we present some proofs.
+5.1. Proof of Theorem 3.3.
+Proof. By the triangle inequality,
+kG(u) − GN (um )kY
+(5.1)
+
+≤
+
+γ
+kG(u) − G(Im u)kY + kG(Im u) − BR
+G(Im u)kY
+γ
++ BR
+G(Im u) − GeN (Im u)
+
+Y
+
++ GeN (Im u) − GN (Im u)
+
+γ
+where BR
+v is the Bochner-Riesz mean of Fourier series of v and
+
+GeN (u)(y) =
+
+p
+X
+
+ck (G(u))f N (y; θ(k) ),
+
+k=1
+
+given that ck (·) is a linear functional defined on G(V ), 1 ≤ k ≤ p. By (3.1), we have
+(5.2)
+
+α
+
+kG(u) − G(Im u)kY ≤ C ku − Im ukX .
+
+By Theorem A.1 and the fact that Rd ∼ p,
+(5.3)
+
+γ
+kG(Im u) − BR
+G(Im u)kY ≤ Cω2 (G(Im u), p−1/d ).
+
+,
+Y
+
+CONVERGENCE RATE OF DEEPONETS
+
+19
+
+By the assumption that u ∈ V and the fact that ck (·) are linear combinations of Fourier transform of “·”,
+we obtain that max1≤k≤p |ck (G(Im u))| ≤ C and thus
+γ
+BR
+G(Im u) − GeN (Im u)
+
+=
+Y
+
+p
+X
+
+ck (G(Im u))(ek − f N (y; θ(k) ))
+
+p
+X
+
+≤C
+
+k=1
+
+ek − f N (·; θ(k) )
+
+k=1
+
+Y
+
+.
+Y
+
+Recall that ek is the Fourier basis so we may apply Theorem B.4 to obtain
+
+
+1
+≤ C exp − |θ(k) | 1+d ,
+ek − f N (·; θ(k) )
+(5.4)
+Y
+
+1
+
+where |θ(k) | is the size of the trunk network and Lf N = C|θ(k) | 1+d ln(|θ(k) |) is the number of layers in the
+trunk network, which implies that
+
+
+1
+γ
+≤ Cp exp − |θ(k) | 1+d .
+BR
+G(Im u) − GeN (Im u)
+Y
+
+The last term in (5.1) can be bounded by
+GeN (Im u) − GN (Im u)
+p
+X
+
+≤
+
+[ck (G(Im u)) −
+
+≤ C
+
+cki g N (um ; Θ(k,i) )](f N (y; θ(k) ) − ek )
+
+i=1
+
+k=1
+p
+X
+
+Y
+
+n
+X
+
+ck (G(Im u)) −
+
++
+Y
+
+n
+X
+
+p
+X
+
+[ck (G(Im u)) −
+
+n
+X
+
+cki g N (um ; Θ(k,i) )]ek
+
+i=1
+
+k=1
+
+Y
+
+cki g N (um ; Θ(k,i) ) .
+
+i=1
+
+k=1
+
+Recall that the Hölder continuity (3.1) and the stability of the interpolation kIm ukX ≤ C kukV , ∀u ∈ V ,
+implied by (3.4), we have
+(5.5)
+
+p
+X
+
+α
+
+α
+
+|ck (G(Im u)) − ck (G(Im v))| ≤ C kG(Im u) − G(Im v)kY ≤ C kIm u − Im vkX ≤ C |um − vm | ,
+
+k=1
+
+which implies that ck (G(Im u)) is Hölder continuous in (u1 , u2 , . . . , um ). According to Theorem B.1,
+(5.6)
+
+p
+X
+
+ck (G(Im u)) −
+
+n
+X
+
+√
+−2α/m −2α/m
+cki g N (um ; Θ(k,i) ) ≤ Cp mNgN
+LgN
+,
+
+i=1
+
+k=1
+
+where NgN is the number of neurons per layer of the branch network and LgN is the number of layers of the
+branch network.
+
+5.2. Proof of Theorem 3.5.
+Proof. Recall the conclusion in Theorem 3.3 that
+kG(u) − GN (um )kY
+
+≤
+
+α
+
+C ku − Im ukX + Cω2 (G(Im u), p−1/d )q
++C
+
+p
+X
+
+ck (G(Im u)) −
+
+n
+X
+
+cki g N (um ; Θ(k,i) )
+
+i=1
+
+k=1
+
++C
+
+p
+X
+
+ek − f N (·; θ(k) )
+
+k=1
+
+.
+Y
+
+It’s trivial that any linear operator is Lipchitz continuous. On the other hand, if G is a linear operaPm k
+tor, then, by (3.6), every ck (G(v)) =
+l=1 cl v(xl ), k = 1, · · · , p, is a linear function with respect to
+(v(x1 ), v(x2 ), . . . , v(xm )). By using the basic fact that any m-variable linear function can be exactly expressed by a shallow network that contains m neurons, we can have
+ck (G(Im u)) −
+
+n
+X
+
+cki g N (um ; Θ(k,i) ) = 0,
+
+∀k.
+
+i=1
+
+Finally, by (5.4), C
+
+Pp
+
+k=1
+
+
+
+1
+ek − f N (·; θ(k) ) Y ≤ C exp − 21 |θ(k) | 1+d , if |θ(k) | ≥ (2 ln p)1+d .
+
+
+
+20
+
+DENG ET AL.
+
+5.3. Proof of Theorem 4.1.
+Lemma 5.1. (see [12]) Let u0 ∈ W 1,∞ (−π, π). Then the solution to (2.4) satisfies the maximum principle
+ku(·, t)kL∞ (−π,π) ≤ ku0 kL∞ (−π,π) ,
+
+∀t > 0.
+
+Proof. The proof of Theorem B.1 in [12], Appendix B, works for u0 ∈ W 1,∞ (−π, π).
+
+
+
+Proof of Theorem 4.1. First, every vi0 can be computed accurately and expressed as the product of Vj exactly
+because u0 is piecewise linear:
+Z xi
+i Z
+
+
+
+i
+1 h X xj u0,j − u0,j−1
+1
+0
+u0 (s)ds = exp −
+vi = exp −
+(y − xj−1 ) + u0,j−1 dy
+2κ 0
+2κ j=1 xj−1
+hj
+=
+
+i
+i
+i
+
+i Y
+Y
+1 hX 1
+u0,i + u0,i−1
+exp −
+(u0,j + u0,j−1 )hj =
+hj ) =
+exp(−
+Vj .
+2κ j=1 2
+4κ
+j=1
+j=1
+
+Then, notice that
+R
+G(u0 )(x) − Gm (u0,m ; x) = u(x)
+
+R
+1
+0
+v0 − v0 )(y)dy
+K(x, y, t)(Im
+v0 − v0 )(y)dy 2κ R ∂x K(x, y, t)(Im
+R
+−
+:= I1 + I2 .
+0
+0
+K(x, y, t)(Im v0 )(y)dy
+K(x, y, t)(Im v0 )(y)dy
+R
+R
+
+RR
+
+We observe that
+M0
+1
+u0 (s) ≤
+v0 (s) ,
+2κ
+2κ
+M2
+ u2 (s) ∂ u (s) 
+M1 
+x 0
+0
+0
+·
+v
+(s)
+≤
+v0 (s) .
+∂xx v0 (s) =
+−
++
+0
+4κ2
+2κ
+4κ2
+2κ
+Then, we estimate the two numerators. In every [xi−1 , xi ),
+1 0
+M0 h M0 i−1 
+M0 h M0  0
+Im v0 (x) − v0 (x) ≤ k∂x v0 kL∞ [xi−1 ,xi ) ≤ exp(
+)
+v0 = exp(
+)
+I v0 .
+h
+2κ 2κ
+2κ 2κ m
+So by the comparison principle,
+Z
+Z
+
+M 0 h M0 
+0
+0
+)
+h
+K(x, y, t)(Im
+v0 )(y)dy.
+K(x, y, t)(Im
+v0 − v0 )(y)dy ≤ exp(
+2κ
+2κ
+R
+R
+∂x v0 (s)
+
+=
+
+v0 (s) · −
+
+By Lemma 5.1, kukL∞ ≤ M0 and thus
+I1 ≤ exp(
+
+M0 h M02
+)
+h.
+2κ 2κ
+
+R
+1
+Now, we consider the numerator R ∂x K(x, y, t)(Im
+v0 − v0 )(y)dy.
+Z
+Z
+1
+1
+∂x K(x, y, t)(Im
+v0 − v0 )(y)dy = − K(x, y, t)∂x (Im
+v0 − v0 )(y)dy.
+R
+
+R
+
+In each sub-interval [xi−1 , xi ),
+
+
+1
+M1  i−1
+M0 h  M02
+M1  0
+M0 h  M02
+1
+∂x Im
+v0 (x) − v0 (x) ≤ k∂xx v0 kL∞ [xi−1 ,xi ) ≤ exp(
+)
++
+v
+=
+exp(
+)
++
+I v0 ,
+h
+2κ
+4κ2
+2κ 0
+2κ
+4κ2
+2κ m
+which implies, by the comparison principle,
+
+M0 h  M02
+I2 ≤ exp(
+)
++ M1 h.
+2κ
+2κ
+For any fixed κ, we take h small enough such that M2κ0 h ≤ ln 2, and then
+M2
+
+0
+kG(u0 ) − Gm (u0,m )kL∞ (−π,π)×(0,+∞) ≤ 2
++ M1 h.
+κ
+
+
+
+CONVERGENCE RATE OF DEEPONETS
+
+21
+
+5.4. Proof of Theorem 4.3.
+A
+Lemma 5.2. Let M > 0, and let A, B ∈ R, s.t. | B
+| ≤ M . Let c1 , c2 be some given constants. When
+2 |c2 h| < 1, we have
+
+(c2 − c1 )Ah
+A
+A + c1 Ah
+=
+≤ 2M (|c1 | + |c2 |)h.
+−
+B
+B + c2 Bh
+B + c2 Bh
+Proof. (Proof of Theorem 4.3) For any x ∈ (−π, π) × (0, ∞), by the triangular inequality and (4.3), we have
+G(u0 )(x) − g N (u0,m ; Θx )
+≤
+
+G(u0 )(x) − Gm (u0,m ; x) + G̃m (V0,m ; x) − G̃m (lV (u0,m ); x) + G̃m (lV (u0,m ); x) − g N (u0,m ; Θx )
+
+:= E1 + E2 + E3 ,
+V
+where lV = (l0V , l1V , · · · , lm−1
+)> , given by
+
+l0V = 1,
+
+u0,i + u0,i−1
+hi ,
+4κ
+
+liV = 1 −
+
+i = 1, 2, · · · , m − 1,
+
+and g N (u0,m ; Θx ) = (g̃ N ◦lV )(u0,m ) is defined by the composition of a ReLU network and the linear function.
+Clearly, liV is the linear approximation of Vi , i = 0, · · · , m − 1. So, for any fixed κ, when h is small enough,
+|Vi − liV | ≤ O(h2 ),
+which implies, by using 21 ≤ Vi ≤ 2 for small h additionally,
+i
+Y
+
+  i
+Y 
+Vj −
+ljV
+
+j=1
+
+=
+
+(V1 − l1V )V2 · · · Vi +
+
+h i−1
+X
+
+j=1
+
+i
+V
+V
+l1V · · · lk−1
+(Vk − lkV )Vk+1 · · · Vi + l1V · · · li−1
+(Vi − liV )
+
+k=2
+
+≤
+
+
+
+Ch2 V2 · · · Vi +
+
+h i
+X
+
+(V1 + Ch2 ) · · · (Vk−1 + Ch2 )Vk+1 · · · Vi
+
+i
+
+k=2
+
+≤
+
+Ch2
+
+ i
+X vi 
+0
+
+V
+j=0 j
+
++ Ch2 ≤ 2C(2π)v0i h + O(h2 ) ≤ 5Cπv0i h.
+
+Therefore, by using Theorem 4.1 and Lemma 5.2, we have E1 ≤ O(h) and E2 ≤ O(h), respectively. On the
+other hand, since G̃m is a rational function, so we may apply Theorem 4.2 to derive the error estimate for
+E3 , where r = m and s = m. Since ku0 kL∞ ≤ M0 , by using Lemma 5.1, the rational function |G̃m (lv )| ≤
+kukL∞ + O(h) ≤ M0 + O(h) ≤ M0 + 1, if h is small enough. Therefore, G̃m (lv ) = pq ≤ M0 + 1 = 2k implies
+k = log2 (M0 + 1) is a constant. Take ε = h in (4.5), and consider m ∼ 2π
+h , we have that there exists a neural
+network g̃ N (lv ; Θx ) of size
+(5.7)
+
+
+
+
+
+1
+|Θx | = O k 7 ln( )3 + km2 ln(m2 /h) = O ln(m)3 + m2 ln(m) ,
+h
+
+such that
+(5.8)
+
+G(u0 )(x) − g N (u0,m ; Θx ) ≤ O(h) + h = O(h).
+
+
+22
+
+DENG ET AL.
+
+5.5. Proof of Theorem 2.5.
+Proof. To obtain the L∞ error estimate, for any fixed t, we take
+Gm,p (u0 ) =
+
+(5.9)
+
+p
+X
+
+
+
+0
+1
+0
+G(Im,x
+u)(yk )Li (y) := Ip,y
+G(Im,x
+u) ,
+
+k=1
+
+where Li (x) is the piecewise linear nodal basis at yi . By [11], one only needs a network having width N = 3
+and depth L = 1 to represent a 1-D piecewise linear nodal basis function exactly, i.e.,
+ 1
+1
+1
+1
+ReLU(x − xi ) + ReLU(x − xi+1 ).
+ReLU(x − xi−1 ) −
++
+Li (x) =
+hi−1
+hi−1
+hi
+hi
+And one only needs a network having width N = O(kh ) and depth L = O(log2 (kh ) + 1) to approximate
+a piecewise linear nodal basis function in high dimension exactly, where kh is the maximum number of
+neighboring elements in the grid (e.g. kh = 6 for 2-D regular triangular mesh). On the other hand, the
+regularity of the analytical solution is G(u0 ) ∈ W 1,∞ . If one uses linear interpolation, then, by BrambleHilbert Lemma, there is a generic constant C, s.t.
+kG(u0 ) − Ip1 G(u0 )kL∞ ≤ Cp−1 |G(u0 )|W 1,∞ .
+Next, by using the maximal principle of linearity of interpolation and the result in Theorem 4.3, we have:
+
+
+kIp1 G(u0 ) − Ip1 g N (u0,m , Θ)kL∞ = kIp1 G(u0 ) − g N (u0,m ; Θ) kL∞ ≤ max G(u0 )(yi ) − g N (u0,m ; Θ(i) ) ≤ Cm−1 .
+1≤i≤p
+
+Finally, if the trunk networks f N (y; θ(i) ) represent Li (y), i = 1, · · · , p exactly, then we have
+kG(u0 ) − GN (um )kL∞
+
+kG(u0 ) − Ip1 G(u0 )kL∞ + kIp1 G(u0 ) − Ip1 g N (u0,m ; Θ)kL∞ + kIp1 g N (u0,m ; Θ) − GN (um )kL∞
+
+
+≤ C p−1 + m−1 ,
+
+≤
+
+1
+
+where m−1 ∼ |Θ|− 2 + for any arbitrary small  > 0.
+
+
+
+5.6. Proofs in the Section 4.5.
+Proof of Lemma 4.10. First, we consider the following error. For x ∈ (xk−1 , xk ],
+Z x
+Z x 
+
+
+
+
+
+±1
+0
+±1
+A g − I (A g) (x) =
+Ax (s)g(s) + A(s)gx (s) ds =
+A(s) ∓ g(s)a(s) + gx (s) ds
+xi−1
+
+xi−1
+
+
+kAkL∞ (xi−1 ,xi ) kgkL∞ (xi−1 ,xi ) kakL∞ (xi−1 ,xi ) + kgx kL∞ (xi−1 ,xi ) (x − xi−1 )
+
+
+≤ I 0 (A±1 ) exp(M1 hi ) kgkL∞ (xi−1 ,xi ) kakL∞ (xi−1 ,xi ) + kgx kL∞ (xi−1 ,xi ) hi ,
+
+≤
+
+
+
+where hi = xi − xi−1 , h = maxi hi . In particular, if g is constant or piecewise constant, then
+
+
+A±1 g − I 0 (A±1 g) (x) ≤ I 0 (A±1 g) M1 exp(M1 hi )hi ,
+which implies that
+AN
+A− (1)(x)
+− (1)(x)
+− N
+≤ 2M1 exp(M1 h)h,
+A− (1)(L) A− (1)(L)
+and there exists a uniform constant C, such that for any x ∈ [0, L],
+
+
+
+
+N
+AN
+◦
+A
+(f
+)(x)
+−
+A
+◦
+A
+(f )(x) ≤ Ch.
+−
++
+−
++
+Then the proof can be completed by the triangular inequality and the two error estimates above.
+
+
+
+CONVERGENCE RATE OF DEEPONETS
+
+23
+
+Proof of Theorem 4.11. Basically, we follow the idea of proof of Theorem 4.3. The key step is to figure
+f
+out the degree (r), number of variables (d) and number of terms (s) of Gm
+’s numerator and denominator,
+respectively, in order to apply Theorem 4.2 to determine the size of network gfN . Define Vm := [v1 , · · · , vm ],
+where
+v0 = 1, vi = exp(ai hi ), given that hi = xi − xi−1 , i = 1, · · · , m,
+Qj
+Qj
+whence A(xj ) = k=0 v1k and A−1 (xj ) = k=0 vk . Notice that, for any J = 1, · · · , m,
+AN
+− (1)(xJ ) =
+
+J
+X
+j=1
+
+A−1 (xj )fj hj =
+
+J
+X
+j=1
+
+hj fj
+
+j
+Y
+
+
+vk ,
+
+k=0
+
+which is a J-th degree J-variable ({v1 , · · · , vm }) polynomial with J terms, and
+
+
+i
+J
+J X
+i
+ X
+X
+hi  X
+A(xj )
+hi
+AN
+A(xj )fj hj =
+,
+hi hj fj
++ (f )(xi ) =
+A(xi )
+A(xi ) j=1
+A(xi )
+i=1
+i=1 j=1
+i=1
+
+J
+
+X
+N
+AN
+− ◦ A+ (f )(xJ ) =
+
+Qi
+A(x )
+A(x )
+where A(xji ) = k=j+1 vk for 0 ≤ j < i ≤ m, and A(xji ) = 1 for 0 ≤ i = j ≤ m, which implies that
+
+
+N
+AN
+− ◦ A+ (f )(xJ ) is a J-th degree J-variable ({v1 , · · · , vm }) polynomial with J(J + 1)/2 terms. If, for any
+J = 1, · · · , m, we rewrite (4.15) as
+
+
+
+ 
+
+
+N
+N
+N
+(AN
+(AN
+AN
+− ◦ A+ (f )(x)
+− ◦ A+ )(f )(xm ) − A− (1)(xm )
+− (1)(x)
+f
+f
+.
+Gm
+(am ; x) = G̃m
+(Vm ; x) :=
+AN
+− (1)(xm )
+f
+(Vm ; x) is a 2m-th degree m-variable polynomial with at most O(m3 ) terms. The rest
+The numerator of G̃m
+of this proof is similar to the proof of Theorem 4.3.
+
+
+5.7. Proof of Theorem 4.13.
+Proof. Let A ∈ Rm×m , b = [b1 , · · · , bm ]> ∈ Rm . Denote kAk = maxij |(A)ij |, kbk∞ = maxi |bi |. Herein, we
+consider the error estimate kUN − U N k∞ . First, we consider the error in each layer of the network:
+N
+N
+N
+kTk − TkN k ≤ kGk (h2 ak , Tk−1 ) − Gk (h2 ak , Tk−1
+)k + kGk (h2 ak , Tk−1
+) − NGk (h2 ak , Tk−1
+)k := E1k + E2k ,
+
+for any k = 1, 2 · · · , n. First, E1k is estimated by
+
+
+
+
+N
+N
+N
+N
+|E1k | = R h2 ak , (Tk−1 )ij , (Tk−1 )kk , (Tk−1 )ik , (Tk−1 )kj − R h2 ak , (Tk−1
+)ij , (Tk−1
+)kk , (Tk−1
+)ik , (Tk−1
+)kj
+h2 ak
+h2 ak
+N
+(T
+)
+(T
+)
+−
+(Tk−1
+)ik (Tk−1 )N
+k−1
+ik
+k−1
+kj
+kj
+N )
+1 + h2 ak (Tk−1 )kk
+1 + h2 ak (Tk−1
+kk
+
+
+∂R
+∂R
+∂R
+N
+≤
+1+
++
++
+kTk−1 − Tk−1
+k
+∂x3 (Tk−1 )kk ∂x4 (Tk−1 )ik ∂x5 (Tk−1 )kj
+
+h4 a2k (Tk−1 )ik (Tk−1 )kj
+h2 ak [(Tk−1 )ik + (Tk−1 )kj ] 
+N
+≤
+1+
++
+kTk−1 − Tk−1
+k.
+(1 + h2 ak (Tk−1 )kk )2
+(1 + h2 ak (Tk−1 )kk )
+≤
+
+N
+(Tk−1 )ij − (Tk−1
+)ij +
+
+Notice that there exists a uniform constant C1 > 0 s.t. ∀k, kTk k ≤ C1 , because every Tk is the inverse of
+(S + Λk ) for ak (x, y) that vanishes at all of k-th to m-th nodes. Hence, suppose h < 1, then there exists a
+N
+k. And E2k is
+uniform constant c = 1 + h4 C0 C12 + 2h2 C0 C1 ≤ 1 + C0 C12 + 2C0 C1 , s.t. E1k ≤ ckTk−1 − Tk−1
+1
+k
+the network error given by (4.26). Notice that E1 = 0. If we set E2 = ε for all k, we have
+N
+kTm − Tm
+k ≤ cmε,
+
+which implies that
+
+
+N
+kUN − U N kl∞ = k(Tm − Tm
+)F kl∞ ≤ cm2 kF k∞ ε = ckF k∞ m−1 ,
+
+24
+
+DENG ET AL.
+
+where we take ε ∼ m−3 . The proof may be completed by the triangular inequality.
+
+5.8. Proof of Theorem 2.8.
+Proof. Notice that the branch network only evaluates at the nodes given by the finite difference scheme, so
+p = m. On the other hand, a1 , a2 , a3 , f ∈ L∞ implies u ∈ W 2,2 . Then, by Sobolev embedding theorem
+that W 1,2 (Ω) ,→ Lα (Ω) for an arbitrary large number α when d = 2, we can have
+|u|W 2,α ≤ k∆ukLα ≤ (ka1 kL∞ + ka2 kL∞ )k∇ukLα + ka3 kL∞ kukL∞ + kf kL∞ ,
+which implies, for some small  depending on α,
+1
+ku − Im
+ukL∞ ≤ Ch2− |u|W 2,α .
+
+Hence, due to the error of the trunk networks is 0, we have
+m
+m
+G f (a1 , a2 , a3 ) − GNF (am
+1 , a2 , a3 ) L∞
+
+≤
+≤
+
+1
+1 N
+ku − Im
+ukL∞ + kIp1 u − Ip1 g N kL∞ + kIm
+g − GN (um )kL∞
+
+
+1
+r
+− +
+,
+C m−1+ + m− 2 + NgN LgN 3
+
+where h2 ∼ m−1 and  is arbitrary small.
+
+Acknowledgment
+This material is based upon work supported by the Air Force Office of Scientific Research under award
+number FA9550-20-1-0056. This work is also supported by the DOE PhILMs project (No. DE-SC0019453)
+and the DARPA-CompMods grant HR00112090062.
+References
+[1] W. F. Ames, Nonlinear Partial Differential Equations in Engineering, vol. II, Elsevier Science, 1972.
+[2] A. D. Back and T. Chen, Universal approximation of multiple nonlinear operators by neural networks, Neural Computation, 14 (2002), pp. 2561–2566.
+[3] J. Berg and K. Nyström, A unified deep artificial neural network approach to partial differential equations in complex
+geometries, Neurocomputing, 317 (2018), pp. 28 – 41.
+[4] T. Chen, A unified approach for neural network-like approximation of non-linear functionals, Neural Networks, 11 (1998),
+pp. 981 – 983.
+[5] T. Chen and H. Chen, Approximations of continuous functionals by neural networks with application to dynamic systems,
+IEEE Transactions on Neural Networks, 4 (1993), pp. 910–918.
+[6]
+, Approximation capability to functions of several variables, nonlinear functionals, and operators by radial basis
+function neural networks, IEEE Transactions on Neural Networks, 6 (1995), pp. 904–910.
+[7]
+, Universal approximation to nonlinear operators by neural networks with arbitrary activation functions and its
+application to dynamical systems, IEEE Transactions on Neural Networks, 6 (1995), pp. 911–917.
+[8] W. E and B. Yu, The deep Ritz method: a deep learning-based numerical algorithm for solving variational problems,
+Communications in Mathematics and Statistics, 6 (2018), pp. 1–12.
+[9] C. A. J. Fletcher, Generating exact solutions of the two-dimensional burgers’ equations, International Journal for
+Numerical Methods in Fluids, 3 (1983), pp. 213–216.
+[10] W. H. Guss and R. Salakhutdinov, On universal approximation by neural networks with uniform guarantees on approximation of infinite dimensional maps, 2019.
+[11] J. He, L. Li, J. Xu, and C. Zheng, Relu deep neural networks and linear finite elements, Journal of Computational
+Mathematics, 38 (2020), pp. 502–527.
+[12] H. Holden and N. H. Risebro, Front tracking for hyperbolic conservation laws, Springer, second edition ed., 2015.
+[13] K. Hornik, M. Stinchcombe, and H. White, Multilayer feedforward networks are universal approximators, Neural
+Networks, 2 (1989), pp. 359–366.
+
+CONVERGENCE RATE OF DEEPONETS
+
+25
+
+[14] B. S. Jovanović and E. Süli, Analysis of finite difference schemes, Springer, 2014.
+[15] E. Kharazmi, Z. Zhang, and G. E. Karniadakis, hp-VPINNs: Variational physics-informed neural networks with
+domain decomposition, Comput. Methods in Appl. Mech. Eng., 374 (2021). 113547.
+[16] S. Lanthaler, S. Mishra, and G. E. Karniadakis, Error estimates for DeepOnets: A deep learning framework in infinite
+dimensions, (2021).
+[17] Z. Li, N. Kovachki, K. Azizzadenesheli, B. Liu, K. Bhattacharya, A. Stuart, and A. Anandkumar, Fourier neural
+operator for parametric partial differential equations, arXiv:2010.08895, (2020).
+[18] L. Lu, P. Jin, Z. Zhang, and G. E. Karniadakis, Learning nonlinear operators via DeepONet based on the universal
+approximation theorem of operators, Nat. Mach. Intell., (2021).
+[19] S. Lu and D. Yan, Bochner-Riesz means on Euclidean spaces, World Scientific Publishing Co. Pte. Ltd., Hackensack, NJ,
+2013.
+[20] H. N. Mhaskar and N. Hahm, Neural networks for functional approximation and system identification, Neural Computation, 9 (1997), pp. 143–159.
+[21] H. N. Mhaskar and T. Poggio, Deep vs. shallow networks: An approximation theory perspective, Analysis and Applications, 14 (2016), pp. 829–848.
+[22] H. Montanelli and H. Yang, Error bounds for deep ReLU networks using the Kolmogorov-Arnold superposition theorem,
+Neural Networks, 129 (2020), pp. 1–6.
+[23] J. A. A. Opschoor, C. Schwab, and J. Zech, Exponential relu DNN expression of holomorphic maps in high dimension,
+Tech. Rep. 2019-35, Seminar for Applied Mathematics, ETH Zürich, Switzerland, 2019.
+, Deep learning in high dimension: Relu network expression rates for bayesian pde inversion, Tech. Rep. 2020-47,
+[24]
+Seminar for Applied Mathematics, ETH Zürich, Switzerland, 2020.
+[25] A. D. Polyanin and V. F. Zaitsev, Handbook of nonlinear partial differential equations, CRC Press, second edition ed.,
+2011.
+[26] M. Raissi and G. E. Karniadakis, Hidden physics models: machine learning of nonlinear partial differential equations,
+J. Comput. Phys., 357 (2018), pp. 125–141.
+[27] M. Raissi, P. Perdikaris, and G. E. Karniadakis, Physics-informed neural networks: a deep learning framework for
+solving forward and inverse problems involving nonlinear partial differential equations, J. Comput. Phys., 378 (2019),
+pp. 686–707.
+[28] A. I. Ranasinghe and M.-H. Chang, Solution of the Burgers equation on semi-infinite and finite intervals via a stream
+function, Appl. Math. Comput., 41 (1991), pp. 145–158.
+[29] I. Sandberg and L. Xu, Approximation of myopic systems whose inputs need not be continuous, Multidimensional Systems
+and Signal Processing, 9 (1998), pp. 207–225.
+[30] I. W. Sandberg, Approximations for nonlinear functionals, IEEE Transactions on Circuits and Systems I: Fundamental
+Theory and Applications, 39 (1992), pp. 65–67.
+[31]
+, Notes on weighted norms and network approximation of functionals, IEEE Transactions on Circuits and Systems
+I: Fundamental Theory and Applications, 43 (1996), pp. 600–601.
+[32] I. W. Sandberg and L. Xu, Uniform approximation of discrete-space multidimensional myopic maps, Circuits, Systems
+and Signal Processing, 16 (1997), pp. 387–403.
+[33]
+
+, Uniform approximation of multidimensional myopic maps, IEEE Transactions in Circuits and System - I: Foundamental Theory and Applications, 44 (1997), pp. 477–485.
+[34] J. Schmidt-Hieber, The Kolmogorov-Arnold representation theorem revisited, arXiv:2007.15884, (2020),
+p. arXiv:2007.15884.
+[35] Z. Shen, H. Yang, and S. Zhang, Deep network approximation characterized by number of neurons, arXiv, (2019),
+p. arXiv:1906.05497.
+[36] M. Telgarsky, Neural networks and rational functions, in 34th International Conference on Machine Learning, ICML
+2017, International Machine Learning Society (IMLS), 2017, pp. 5195–5210.
+[37] D. Yarotsky, Optimal approximation of continuous functions by very deep relu networks, in Conference on Learning
+Theory, PMLR, 2018, pp. 639–649.
+
+Appendix A. Approximation using Fourier expansion
+Theorem A.1. Let f ∈ Lq ([−π, π)d ), 1 ≤ q ≤ ∞. For d ≥ 1 and γ > γ∗ = (d − 1) 1q − 12 ,
+(A.1)
+
+γ
+kBR
+f − f kLq ≤ Cd,γ,q ω2 (f ; R−1 )q .
+
+26
+
+DENG ET AL.
+
+Here Cd,γ,q is a positive constant independent of R and f .
+Proof. When d > 1, this is exactly Theorem 3.4.5 of [19]. According to the proof of Theorem 3.4.5 in [19],
+the conclusion is also valid when d = 1 as long as γ > 0.
+
+Appendix B. Convergence rates of deep ReLU networks for continuous functions
+Theorem B.1 ([35]). Given f ∈ C([0, 1]d ), for any integers L, N > 0, and p ∈ [1, ∞], there exists a ReLU
+
+feedforward network f N with width C1 max dbN 1/d c, N + 1 and depth 12L + C2 such that
+√
+kf − f N kLp ([0,1]d ) ≤ 19 d ω(f, N −2/d L−2/d )∞ ,
+where ω(f, ·) is the modulus of continuity of f defined via
+ω(f, δ)∞ = sup kf (· + z) − f (·)kL∞ , x, y ∈ [0, 1]d ,
+|z|≤r
+
+and C1 = 12 and C2 = 14 if p ∈ [1, ∞); C1 = 3d+3 and C2 = 14 + 2d if p = ∞.
+Theorem B.2 ([37]). For any continuous function Let f : [0.1]n → R be with modulus of continuity ωf ,
+there is a deep ReLU network f˜ with depth L ≤ c0 (n) and size W such that
+f − f˜
+
+L∞
+
+≤ c1 (n)ωf (c2 (n)W −2/n ),
+
+where c0 (n), c1 (n), c2 (n) > 0.
+
+Theorem B.3 (Theorem 3 in [34]). Let p ∈ [1, ∞) and assume that there exists a constant C > 0 such that
+β
+|f (x) − f (y)| ≤ C kx − ykl∞ with β ∈ [0, 1], for all x, y ∈ [0, 1]d . Then, there exists a deep ReLU network
+
+f˜ with K + 3 hidden layers, network architecture 2K + 3, d, 4d, . . . , 4d, d, 1, 2Kd + 1, 1 and all network
+weights bounded in absolute value by 2 (K ∨ kf k∞ ) 2K(d∨(pβ)) , such that
+kf − f˜kp ≤ (16C + 2kf kL∞ ) 2−βK .
+
+Pd
+where f˜(x1 , . . . , xd) = g̃( k=1 3−k φeK (xk )) and g̃ is a ReLU network with network architecture 2, 1, 2Kd + 1
+and φ̃K is a ReLU network with network architecture (2K, (d, 4d, . . . , 4d, d)).
+β
+
+β
+
+Here C can depend on d, e.g. |f (x) − f (y)| ≤ C1 kx − ykl2 ≤ C1 dβ kx − ykl∞ . The theorem leads to a
+β
+rate of 2−Kβ using of the order of 2Kd network parameters-one obtains the order (2Kd )− d .
+The following is from [23] on convergence rate of ReLU networks for analytic functions.
+Theorem B.4 (Theorem 3.7 in [23]). Fix d ∈ N. Assume that u : [−1, 1]d → R can be analytically
+extended to Bernstein Ellipse Eρ with radius ρ = (ρj )dj=1 . Then, there exist constants β 0 = β 0 (ρ, d) > 0 and
+C = C(u, ρ, d) > 0, and for every N ∈ N there exists a ReLU neural network ũN : [−1, 1]d → R satisfying
+size(ũN ) ≤ N ,
+
+1
+
+depth(ũN ) ≤ CN d+1 log2 (N ),
+
+and the error bound
+1
+
+ku(·) − ũN (·)kW 1,∞ ([−1,1]d ) ≤ C exp(−β 0 N 1+d ).
+Department of Mathematical Sciences, Worcester Polytechnic Institute, Worcester, MA. Email address:
+bdeng2@wpi.edu, zzhang7@wpi.edu.
+Department of Mathematics, Massachusett Institute of Technology, MA. Email address: lu lu@mit.edu.
+Division of Applied Mathematics, Brown University, Providence, RI. Email address: yeonjong shin@brown.edu
+george karniadakis@brown.edu.
+
+

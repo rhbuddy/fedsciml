@@ -1,0 +1,1656 @@
+Fourier-MIONet: Fourier-enhanced multiple-input neural operators
+for multiphase modeling of geological carbon sequestration
+Zhongyi Jiang1 , Min Zhu1 , and Lu Lu1,2,*
+
+arXiv:2303.04778v2 [cs.LG] 24 Jul 2024
+
+1
+
+Department of Statistics and Data Science, Yale University, New Haven, CT 06511, USA
+2
+Wu Tsai Institute, Yale University, New Haven, CT 06510, USA
+*
+Corresponding author. Email: lu.lu@yale.edu
+
+Abstract
+Geologic carbon sequestration (GCS) is a safety-critical technology that aims to reduce the
+amount of carbon dioxide in the atmosphere, which also places high demands on reliability.
+Multiphase flow in porous media is essential to understand CO2 migration and pressure fields
+in the subsurface associated with GCS. However, numerical simulation for such problems in
+4D is computationally challenging and expensive, due to the multiphysics and multiscale nature of the highly nonlinear governing partial differential equations (PDEs). It prevents us
+from considering multiple subsurface scenarios and conducting real-time optimization. Here, we
+develop a Fourier-enhanced multiple-input neural operator (Fourier-MIONet) to learn the solution operator of the problem of multiphase flow in porous media. Fourier-MIONet utilizes the
+recently developed framework of the multiple-input deep neural operators (MIONet) and incorporates the Fourier neural operator (FNO) in the network architecture. Once Fourier-MIONet
+is trained, it can predict the evolution of saturation and pressure of the multiphase flow under
+various reservoir conditions, such as permeability and porosity heterogeneity, anisotropy, injection configurations, and multiphase flow properties. Compared to the enhanced FNO (U-FNO),
+the proposed Fourier-MIONet has 90% fewer unknown parameters, and it can be trained in significantly less time (about 3.5 times faster) with much lower CPU memory (< 15%) and GPU
+memory (< 35%) requirements, to achieve similar prediction accuracy. In addition to the lower
+computational cost, Fourier-MIONet can be trained with only 6 snapshots of time to predict
+the PDE solutions for 30 years. Furthermore, we observed that Fourier-MIONet can maintain
+good accuracy when predicting out-of-distribution (OOD) data. The excellent generalizability of
+Fourier-MIONet is enabled by its adherence to the physical principle that the solution to a PDE
+is continuous over time. Moreover, the developed Fourier-MIONet makes it possible to solve the
+long-time evolution of geological carbon sequestration in a large-scale three-dimensional space
+accurately and efficiently.
+
+Keywords: Geological carbon sequestration; Multiphase flow in porous media; Deep neural operator; Fourier-MIONet; Computational cost; Out-of-distribution
+
+1
+
+Introduction
+
+Multiphase flow in porous media is crucial in various industry and natural processes, such as geologic
+carbon sequestration (GCS) [1], enhanced oil recovery [2], hydrogen production [2, 3], and nuclear
+waste geological repositories [4], which have high requirements for ensuring utmost reliability and
+safety. Numerical simulation is primarily used to solve the material and energy balances of the
+1
+
+multiphase flow system [5, 6], which involves highly nonlinear partial differential equations [7]
+and requires high-resolution grids [8, 9] and multiscale and multiphysics modeling [10, 11]. Largescale geological carbon sequestration projects involve optimization and decision-making tasks under
+subsurface uncertainties [12, 13, 14, 15], where a large number of forward simulations need to be
+conducted under various subsurface scenarios and realizations. For this purpose, conventional
+reservoir simulators are inefficient due to their high computational cost, whereas (physics-informed
+and/or data-driven) surrogate modeling has the potential to enable real-time predictions once
+trained on a reasonable amount of data from full-physics simulations [16, 17, 18, 19].
+Surrogate modeling based on deep neural networks that can learn solutions of PDEs is a
+promising alternative to traditional numerical simulation [20, 21, 22, 23, 24, 25]. Deep learning
+techniques have recently been used to solve subsurface flow and transport problems in carbon
+storage [23, 26, 27]. The two most common deep learning techniques are data-driven learning [20, 21, 28, 22, 29, 30, 31, 32, 33, 34] and physics-informed learning [35, 36, 37, 38, 39].
+The former has achieved accurate predictions even for high-dimensional multiphase flow problems [40, 41, 42, 23]. However, data-driven learning requires a large amount of data for training.
+Physics-informed neural networks (PINNs) [43] and their extensions [44, 45, 46] have shown promising applications in computational science and engineering [47, 48, 49, 50, 51, 52]. The physicsinformed learning is usually implemented using artificial neural networks (ANNs) [53, 54], thus
+requiring separate training if any new parameters or coefficients change [35]. Similar to traditional
+numerical simulations, physics-informed learning for solving geologic carbon storage problems can
+be computationally inefficient. In some cases, additional physical constraints or observations are
+needed to guarantee convergence [55, 56, 57].
+In recent years, deep neural operators [58, 59, 60, 61, 62, 63] have shown promising potential
+for many applications in computational science and engineering. Unlike traditional deep learning methods, deep neural operators are designed to learn operators between infinite-dimensional
+function spaces. Several numerical experiments have demonstrated the promise of deep neural
+operators, such as Fourier neural operator (FNO) [26], for real-time prediction of reservoir simulation. Very recently, an extension of FNO, U-FNO, has achieved the state-of-the-art performance
+in highly heterogeneous geological formations for carbon sequestration problems [26]. However,
+U-FNO requires a couple of days for training in one GPU with about 16 GiB GPU memory and
+more than 100 GiB CPU memory, and it also needs a large training dataset and performs poorly
+on out-of-distribution (OOD) data.
+In this work, we overcome these challenges of high computational cost and data efficiency. We
+propose a novel deep neural operator, Fourier-MIONet, based on the multiple-input deep neural
+operators (MIONet) [64]. MIONet is an extension of the deep neural operator (DeepONet) [58, 61]
+and it enables several input functions defined on different domains. We further incorporate U-FNO
+in MIONet. Fourier-MIONet requires much less GPU and CPU memory and significantly reduces
+the computational cost without compromising prediction accuracy. Moreover, to simulate geological
+carbon sequestration for 30 years, the required number of time snapshots can be reduced from 24
+to only 6. Additionally, Fourier-MIONet achieves better generalization for OOD scenarios. This
+finding could have very important implications for reducing monitoring costs and safety-critical
+applications.
+This study presents a significant contribution to the field of GCS through the development of
+the Fourier-MIONet. By integrating MIONet and U-FNO, Fourier-MIONet offers an efficient and
+accurate method for simulating multiphase flow in porous media. The model substantially reduces
+computational costs, using 85% less CPU memory and 64% less GPU memory, and accelerates
+training by 3.5 times compared to U-FNO. Additionally, its ability to generalize from limited data
+ensures accurate long-term predictions of CO2 migration and pressure fields. This contribution
+2
+
+benefits real-time optimization and decision-making in GCS, a safety-critical technology, improving
+the feasibility and effectiveness of large-scale carbon sequestration projects aimed at mitigating
+climate change.
+The paper is organized as follows. In Section 2, we introduce the problem setup, including
+the governing equations of multiphase flow and the dataset generated by numerical simulation. In
+Section 3, after providing a brief overview of MIONet and U-FNO, we propose Fourier-MIONet. In
+Section 4, we demonstrate the accuracy, efficiency, and reliability of Fourier-MIONet on multiphase
+flow prediction for gas saturation and pressure. We conclude the paper in Section 5 and give a brief
+discussion of the 4D problem.
+
+2
+
+Problem setup
+
+In this study, we consider the problem of multiphase flow in porous media. Specifically, we consider
+the application of underground carbon storage (also called geological carbon sequestration), which
+involves injecting supercritical CO2 into underground geological formations for permanent storage.
+Geological carbon sequestration is one of the most important technologies for mitigating CO2
+emissions [65, 66].
+
+2.1
+
+Multiphase flow
+
+The problem we are considering is multiphase, multicomponent (CO2 , brine) flow in porous media.
+Each component α satisfies the mass conservation equation:
+∂M α
+= −∇ · (Fα |adv + Fα |dif ) + q α ,
+∂t
+where Fα |adv is the advective mass flux, Fα |dif is the diffusive mass flux, q α is the volumetric flow
+rate of the injection source, and M α is the accumulation of mass given by
+X
+Mα = ϕ
+Sp ρp Xpα .
+p
+
+Here, ϕ is the porosity, Sp is the saturation of phase p, Xpα is the mass fraction of component α in
+phase p, and ρp is the density of phase p.
+For simplicity, we do not consider molecular diffusion and hydrodynamic dispersion, and thus
+α
+F |dif = 0. The advective mass flux of component α is
+X
+Fα |adv =
+Xpα ρp up .
+p
+
+Here, up is the Darcy velocity of phase p as follows:
+up = −k (∇Pp − ρp g) krp /µp ,
+where k is the absolute permeability tensor, Pp is the fluid pressure of phase p, g is the gravitational
+acceleration, krp is the relative permeability of phase p, and µp is the viscosity of phase p. The
+fluid pressure for wetting phase Pw or non-wetting phase Pn is
+Pn = Pw + Pc ,
+where Pc is the capillary pressure.
+3
+
+2.2
+
+Dataset
+
+In this study, we use the open-source dataset from Wen et al. [26], generated for the purpose of
+testing surrogate modeling algorithms. To generate the dataset, we consider that CO2 is injected
+at a constant rate into a radially symmetrical system. The thickness of the reservoir ranges from
+12.5 to 200 m and the radius of the reservoir is 100,000 m. Closed boundary condition is applied
+at the top and bottom of the reservoir, meaning the flux normal to the boundary is zero. To
+mimic an open reservoir condition, a very large simulation domain was used with no flow boundary
+condition. The system is solved numerically with the finite difference method by the simulator
+ECLIPSE (e300) for 30 years.
+In the dataset, several PDE parameters (i.e., network inputs) are randomly sampled to generate
+different PDE solutions (i.e., network outputs): gas saturation (SG) and pressure buildup (dP).
+These inputs can be categorized into two types (Table 1): space-dependent inputs (field inputs)
+and scalar inputs. Field inputs include the horizontal permeability map (kx ), vertical permeability
+map (ky ), and porosity map (ϕ). Permeability maps kx are produced by the Stanford Geostatistical
+Modeling Software (SGeMS) [67] based on different parameters, including correlation lengths in the
+vertical and radial directions, medium appearances, permeability mean and standard deviation.
+The permeability value ranges widely from 0.001 mD to 10000 mD. Values of kx are binned into
+naniso tropic materials, where each bin is assigned a randomly sampled anisotropy ratio (kx /ky ).
+Then the vertical permeability map ky is computed by multiplication between kx and the anisotropy
+map. Porosity (ϕ) is calculated by loosely correlated permeability map with a random Gaussian
+noise N (0, 0.001).
+Table 1: Summary of the branch network inputs. The size of the field inputs is (96, 200).
+V[a, b] means that the input value ranges from a to b.
+Parameter
+
+Notation
+
+Distribution
+
+Unit
+
+Field
+
+Horizontal permeability field
+Material anisotropy ratio
+Porosity
+
+kx
+kx /ky
+ϕ
+
+V[0.001, 10000]
+V[1, 150]
+–
+
+mD
+–
+–
+
+Scalar
+
+Injection rate
+Initial pressure
+Iso-thermal reservoir temperature
+Irreducible water saturation
+Van Genuchten scaling factor
+Perforation top location
+Perforation bottom location
+
+Q
+Pinit
+T
+Swi
+λ
+perftop
+perfbottom
+
+V[0.2, 2]
+V[100, 300]
+V[35, 170]
+V[0.1, 0.3]
+V[0.3, 0.7]
+V[0, 200]
+V[0, 200]
+
+MT/y
+bar
+◦C
+–
+–
+m
+m
+
+The scalar inputs include the initial reservoir pressure at the top of the reservoir (Pinit ), reservoir temperature (T ), injection rate (Q), capillary pressure scaling factor (λ), irreducible water
+saturation (Swi ), and the top and bottom locations of the perforation (perftop and perfbottom ). We
+note that the reservoir thickness b is a variable randomly sampled in each case and determines the
+size of the field inputs, ranging from 12.5 to 200 m. When b is thinner than 200 m, zero padding is
+used for the domain outside of the actual reservoir such that all inputs have the same shape. Then,
+perftop and perfbottom are randomly sampled within the range from 0 to b of each case.
+All the input and output fields in the dataset are saved in a resolution of (96, 200). The outputs
+are saved at 24 time snapshots from 1 day to 30 years: {1 day, 2 days, 4 days, . . . ,14.8 years, 21.1
+
+4
+
+years, 30 years}. The training dataset includes 4500 cases, and the test dataset includes 500 cases.
+We show an example of inputs and outputs in Fig. 1.
+A
+
+Field inputs
+
+B
+
+Scalar inputs
+
+•
+•
+•
+•
+•
+•
+•
+
+C
+
+Gas saturation output - SG
+
+D
+
+Pressure buildup output - dP (bar)
+
+⋮
+
+⋮
+
+Injection rate Q = 1.92 MT/𝑦𝑟
+Iso-thermal reservoir temperature 𝑇 = 121.2 ℃
+Initial Pressure 𝑃!"!# = 258.3 bar
+Irreducible water saturation 𝑆$! = 0.28
+Van Genuchten scaling factor 𝜆 = 0.45
+Perforation top location 𝑃𝑒𝑟𝑓#%& = 32 𝑚
+Perforation bottom location 𝑃𝑒𝑟𝑓'%##%( = 38 m
+
+Figure 1: An example of inputs and outputs. (A) Example of field inputs. (B) Example of
+scalar inputs. (C) Gas saturation evolution at 6 out of 24 time snapshots. (D) Pressure buildup
+evolution at 6 out of 24 time snapshots.
+
+3
+
+Methods
+
+U-FNO has been developed to build a surrogate model for such dataset, and has shown great
+prediction accuracy. However, there are still some challenges remaining: the computational cost
+is high, as we have discussed in the introduction. Moreover, these existing methods always use
+different channels to predict the solutions at different times, which do not guarantee the continuity
+of solution over time. The recently developed framework of the multiple-input deep neural operators
+(MIONet) overcomes the challenges of computational cost and data efficiency, but MIONet by itself
+cannot easily provide highly accurate predictions. In this section, we first briefly introduce MIONet
+and U-FNO. Next, we propose Fourier-enhanced multiple-input neural operator (Fourier-MIONet)
+by combining the advantages of MIONet and U-FNO together for learning physical systems more
+effectively.
+
+3.1
+
+MIONet
+
+MIONet was proposed by Jin et al. [64] for learning nonlinear operators mapping between function
+spaces. Based on the universal approximation theorem of Chen & Chen [68], the vanilla DeepONet
+is defined for input functions on a single Banach space. MIONet extends the capability of DeepONet [58] both theoretically and numerically from a single Banach space to multiple Banach spaces.
+5
+
+MIONet can be understood as a multivariable regression method in the statistical regression area,
+but MIONet is different from other special regression models [69, 70] which were designed to exploit
+the relationships among multiple variables.
+We denote n input functions by vi for i = {1, . . . , n} with each defined on the domain Di ⊂ Rdi :
+vi : Di → R,
+′
+
+and the output function by u defined on the domain D′ ∈ Rd :
+u : D′ ∋ ξ 7→ u(ξ) ∈ R.
+Then, the operator mapping from the input functions to the output function is
+G : (v1 , . . . , vn ) 7→ u.
+MIONet is developed to learn the operator G by using n independent branch nets and one
+trunk net (Fig. 2). The ith branch net encodes the input function vi , and the trunk net encodes
+the coordinates input ξ. The output of MIONet is computed as
+G(v1 , v2 , . . . , vn )(ξ) =
+
+p
+X
+
+b1j (v1 ) × b2j (v2 ) · · · × bnj (vn ) × tj (ξ) +b0 ,
+| {z } | {z }
+| {z } | {z }
+j=1
+branch1
+
+branch2
+
+trunk
+
+branchn
+
+
+where b0 ∈ R is a bias, bi1 , bi2 , . . . , bip are the p outputs of the branch net i, and {t1 , t2 , . . . , tp } are
+the p outputs of the trunk net. The choice of the branch nets and trunk net is problem dependent.
+For example, if the discretization of vi is on an equispaced 2D grid, then a convolution neural
+network can be used as the branch net i; if the discretization of vi is on an unstructured mesh,
+then a graph neural network can be used as the branch net i.
+𝑣!
+
+Branch net 1
+
+b!!
+
+b!"
+
+…
+
+b!#
+
+𝑣"
+
+Branch net 2
+
+b!"
+
+b""
+
+…
+
+b"#
+
+…
+
+…
+
+𝑣$
+
+Branch net n
+
+3
+×
+𝑟
+
+…
+b!$
+
+b$"
+
+…
+
+b$#
+𝑡!
+
+𝜉
+
+Trunk net
+
+3
+×
+𝑟
+
+𝒢(𝑣! , ⋯ , 𝑣$ )(𝜉)
+
+𝑡"
+…
+𝑡#
+
+Figure 2: Architecture of MIONet. All the branch nets and the trunk net have the same
+number of outputs, which are merged together via the element-wise product.
+
+3.2
+
+U-FNO
+
+U-FNO [26] is an extension of Fourier neural operator (FNO) [59], which computes convolutions
+in the Fourier space rather than physical space. U-FNO uses additional U-Net blocks [71] in FNO.
+6
+
+A
+𝑣(𝑥)
+
+𝑢(𝑥)
+
+B
+
+𝑧(𝑥)
+
+C
+𝑧(𝑥)
+
+Figure 3: Architecture of U-FNO. (A) v(x) is the input function, P and Q are fully connected
+neural networks, and u(x) is the output function. (B) Inside each Fourier layer, F denotes the
+Fourier transform, R is a weight matrix, F −1 is the inverse Fourier transform, W is an another
+weight matrix, and σ is the activation function. (C) Inside each U-Fourier layer, U denotes a U-Net
+block. Figure is adapted from [26].
+
+7
+
+Different from DeepONet, U-FNO requires the input function v(x) and output function u(ξ) defined
+on the same equispaced mesh grid of the same domain. A schematic diagram of U-FNO is shown
+in Fig. 3.
+First, the input function v(x) is lifted to a higher dimensional representation zl0 (x) by
+zl0 (x) = P (v(x)),
+where P is a linear transformation, which is often parameterized by a linear layer or a shallow fullyconnected neural network. Then, L Fourier layers and M U-Fourier layers are applied iteratively to
+zl0 and the final output is zmM . In the end, a local linear transformation Q is applied by employing
+a shallow neural network to convert the zmM to the output by
+u(x) = Q (zmM (x)) .
+Each Fourier layer is defined by using the Fast Fourier Transform (FFT). For the output of the
+jth Fourier layer zlj , we compute the following transform by 3D FFT F and inverse 3D FFT F −1 :
+
+F −1 Rlj · F zlj ,
+where R is a weight matrix. Moreover, a residual connection with a weight matrix Wj is used to
+compute the output of the (j + 1)th Fourier layer zlj+1 as
+
+
+zlj+1 = σ F −1 Rlj · F zlj + Wj · zlj + blj ,
+where σ is a nonlinear activation and blj is a bias.
+U-Fourier layer is defined based on the Fourier layer and 3D U-Net block:
+zmk+1 = σ F −1 (Rmk · F (zmk )) + Umk (zmk ) + Wmk · zmk + bmk
+
+
+
+where Umk is an U-Net block.
+
+3.3
+
+Fourier-MIONet
+
+Motivated by the discussion at the beginning of this section, here we develop a new version of
+MIONet, Fourier-MIONet, by leveraging MIONet and U-FNO. As we have discussed in Section 2,
+we split the inputs into two parts: for all the field parameters denoted by v1 and for all the
+scalar parameters denoted by v2 (Fig. 4). The coordinates of the output function u are x, y,
+and t, while x and y are space coordinates and t is time. If we apply MIONet, the trunk net
+input includes x, y, and t, and the output is u(x, y, t) ∈ R, while for U-FNO, the network output is
+u(·, ·, ·) ∈ R96×200×24 . In our developed Fourier-MIONet, we treat spatial and temporal coordinates
+separately. Specifically, the trunk input is only t, and the network output is u(·, ·, t) ∈ R96×200 .
+In Fourier-MIONet, there are two branch nets to encode field inputs and scalar inputs, respectively (Fig. 4A). Let b1 and b2 be the outputs of the two branch nets, and c be the output of the
+trunk net. Two merger operations are used here: one to merge the two branch outputs (Branch
+merger operation) and one to merge the branch and trunk net outputs (Branch-Trunk merger
+operation). We choose the Branch merger operation as a point-wise summation:
+b = b1 + b2 ,
+where b is the output of the branch merger operation. We choose the Branch-Trunk merger
+operation as a point-wise multiplication used in vanilla MIONet:
+z = b ⊙ c,
+8
+
+where z is the output of the merger operation. We note that ther are other choices of the merger
+operations, which will be studied in the future.
+Next, we use U-FNO as a decoder to map from the hidden vector z to the output u by applying
+Fourier layers and U-Fourier layers iteratively (Figs. 4C and D). We note that we use 2D FFT and
+2D U-Net in this U-FNO, rather than the 3D FFT and 3D U-Net used in the original U-FNO. In
+the end, a fully connected neural network Q is applied to project the output of the last U-Fourier
+layer to the output.
+
+A
+
+C
+
+𝒗𝟏 (𝑥, 𝑦)
+
+Fiel𝑑
+𝑖𝑛𝑝𝑢𝑡
+
+Branch net 1
+
+𝑏!
+
+3
++
+𝑟
+
+Branch merge operation
+
+𝒗𝟐
+
+Scalar
+𝑖𝑛𝑝𝑢𝑡
+
+Branch net 2
+
+𝑏"
+
+Branch-Trunk merge operation
+
+B
+
+𝑡
+
+𝑡𝑖𝑚𝑒
+
+Trunk net
+
+3
+×
+𝑟
+
+𝐹𝑜𝑢𝑟𝑖𝑒𝑟
+𝑙𝑎𝑦𝑒𝑟 𝑙!
+
+⋯
+
+𝐹𝑜𝑢𝑟𝑖𝑒𝑟
+𝑙𝑎𝑦𝑒𝑟 𝑙"
+
+U– 𝐹𝑜𝑢𝑟𝑖𝑒𝑟
+𝑙𝑎𝑦𝑒𝑟 𝑚!
+
+⋯
+
+U– 𝐹𝑜𝑢𝑟𝑖𝑒𝑟
+𝑙𝑎𝑦𝑒𝑟 𝑚#
+
+𝑄
+
+𝑢(𝑥, 𝑦, 𝑡)
+
+D
+
+𝑐
+
+Figure 4: Fourier-MIONet architecture. (A) v1 is field input and v2 is scalar input. (B) The
+input t is time. (C) Fourier layer. (D) U-Fourier layer.
+
+3.4
+
+Training and evaluation
+
+As mentioned in Section 2, our dataset contains reservoirs with various thicknesses, and the domain
+outside of the reservoir is padded with zeros for both input and output. To accommodate for the
+variable reservoir thicknesses, we construct a mask for each data sample and only calculate the loss
+within the mask during training. In addition to the input variables described in Table 1, we also
+supply the spatial grid information to the training as additional two field inputs.
+Same as U-FNO [26], we use lp-loss function:
+L(y, ŷ) =
+
+∥y − ŷ∥p
+∥dy/dr − dŷ/dr∥p
++β
+,
+∥y∥p
+∥ dy/dr∥p
+
+where y is the true solution and ŷ is the prediction. p is the order of norm, and β is a hyperparameter. We choose p = 2 and β = 0.5. During training, the initial learning rate is specified to
+be 0.001, same as [26], the learning rate gradually decreases with a constant rate.
+U-FNO directly outputs gas saturation and pressure fields at all the 24 time steps during
+training and testing, i.e., the output size is (96, 200, 24). In each training step, we choose different
+cases and the number of cases (i.e., batch size) is denoted by batchcase . For Fourier-MIONet, in
+addition to batchcase , we can also choose different number of time snapshots of the trunk net input
+for training, and we denote this batch size as batchtime . Hence, when training Fourier-MIONet
+model, the output size is (96, 200, batchtime ).
+To evaluate the performance of the trained network, we use R2 and mean absolute error (MAE)
+as the metrics.
+9
+
+4
+
+Results
+
+We demonstrate the accuracy, reliability, training efficiency, and data efficiency of the proposed
+Fourier-MIONet in this section. The network architecture for the Fourier-MIONet model is shown
+in Table 2. All experiments are performed on a workstation with an AMD Threadripper Pro
+5955WX CPU and an NVIDIA GeForce RTX 3090 GPU. We implement the experiments by using
+the library DeepXDE [37] and the code is available in GitHub at https://github.com/lu-group/
+fourier-mionet-gcs.
+Table 2: Fourier-MIONet architecture. In order to provide a fair comparison, we adopt a
+similar structure for U-FNO as in [26]. The “Padding” denotes a padding operation. “Linear”
+denotes a linear transformation. “Fourier2d” denotes the 2D Fourier transform. “Conv1d” denotes
+1D convolution. “UNet2d” denotes a 2D U-Net. C represents batchcase . T represents batchtime . In
+this model, the number of total parameters is 3,685,325.
+Operation
+
+Output shape
+
+Padding/Linear
+FNN
+
+(C, 104, 208, 36)
+(C, 36)
+
+Branch merger operation
+
+Point-wise summation
+
+(C, 104, 208, 36)
+
+Trunk net
+
+FNN
+
+(T , 36)
+
+Branch-Trunk merger operation
+
+Point-wise multiplication
+
+(C × T , 104, 208, 36)
+
+Fourier2d/Conv1d/Add/ReLU
+Fourier2d/Conv1d/Add/ReLU
+Fourier2d/Conv1d/Add/ReLU
+Fourier2d/Conv1d/UNet2d/Add/ReLU
+Fourier2d/Conv1d/UNet2d/Add/ReLU
+Fourier2d/Conv1d/UNet2d/Add/ReLU
+Linear/ReLU
+Linear
+−
+−
+
+(C × T , 104, 208, 36)
+(C × T , 104, 208, 36)
+(C × T , 104, 208, 36)
+(C × T , 104, 208, 36)
+(C × T , 104, 208, 36)
+(C × T , 104, 208, 36)
+(C × T , 104, 208, 128)
+(C × T , 104, 208, 1)
+(C × T , 96, 200, 1)
+(C, T , 96, 200)
+
+Branch net
+
+Merger net
+
+4.1
+
+Branch net 1
+Branch net 2
+
+Fourier 1
+Fourier 2
+Fourier 3
+U-Fourier 1
+U-Fourier 2
+U-Fourier 3
+Projection 1
+Projection 2
+De-padding
+Reshape
+
+Gas saturation
+
+We apply Fourier-MIONet to learn gas saturation. As we have discussed in Section 3.4, in FourierMIONet, we have the flexibility to select different values of the batchcase and batchtime , while
+U-FNO only allows for batchcase (i.e., batchtime can only be chosen as 24). Then, we first select
+batchtime as 24 (i.e., full batch for the time input). The comparison between Fourier-MIONet and
+U-FNO is shown in the first two rows of Table 3. First of all, the prediction accuracy between
+U-FNO and Fourier-MIONet is almost the same in terms of R2 and MAE. Compared with U-FNO,
+Fourier-MIONet only has 1% lower in the R2 . Compared to U-FNO with 33 million parameters,
+Fourier-MIONet only has 10% trainable parameters (about 3 million). During training, U-FNO
+requires 103 GiB CPU memory and 15.9 GiB GPU memory, but Fourier-MIONet only needs 15
+GiB CPU memory and 12.8 GiB GPU memory. Moreover, Fourier-MIONet is much faster to train,
+and the training time per epoch of Fourier-MIONet is 50% less than U-FNO.
+As Fourier-MIONet has the flexibility of using different values of batchtime , here we investigate
+the effect of batchtime and determine the optimal choice of batchtime . The range of batchtime is
+10
+
+Table 3: Comparison between Fourier-MIONet and U-FNO. We choose batchcase as 4 for
+all the experiments. U-FNO uses all 24 time snapshots during training.
+
+U-FNO
+
+FMIONet
+
+batchtime
+
+No. of
+parameters
+
+CPU
+memory
+(GiB)
+
+GPU
+memory
+(GiB)
+
+Training time
+per epoch
+(second)
+
+Minimum
+epochs
+needed
+
+Training
+time
+(hour)
+
+R2
+
+MAE
+
+–
+
+33,097,829
+
+103
+
+15.9
+
+1535
+
+100
+
+42.6
+
+0.992±0.001
+
+0.0031±0.0002
+
+24 (Full)
+
+3,685,325
+
+15
+
+12.8
+
+730
+
+77±13
+
+15.7±2.7
+
+0.982±0.002
+
+0.0050±0.0002
+
+20
+
+3,685,325
+
+15
+
+11.0
+
+742
+
+66±8
+
+13.7±1.5
+
+0.979±0.002
+
+0.0054±0.0004
+
+16
+
+3,685,325
+
+15
+
+9.1
+
+757
+
+68±13
+
+14.2±2.8
+
+0.984±0.001
+
+0.0046±0.0002
+
+12
+
+3,685,325
+
+15
+
+7.3
+
+808
+
+56±6
+
+12.6±0.7
+
+0.984±0.001
+
+0.0047±0.0005
+
+8
+
+3,685,325
+
+15
+
+5.6
+
+928
+
+48±5
+
+12.3±1.2
+
+0.985±0.001
+
+0.0040±0.0004
+
+4
+
+3,685,325
+
+15
+
+3.8
+
+1339
+
+73±9
+
+27.2±3.4
+
+0.987±0.001
+
+0.0036±0.0002
+
+3
+
+3,685,325
+
+15
+
+3.4
+
+1609
+
+54±8
+
+24.1±4.0
+
+0.987±0.002
+
+0.0037±0.0002
+
+2
+
+3,685,325
+
+15
+
+3.0
+
+2195
+
+44±4
+
+27.0±2.7
+
+0.988±0.001
+
+0.0035±0.0001
+
+1
+
+3,685,325
+
+15
+
+2.6
+
+3832
+
+39±5
+
+41.8±4.2
+
+0.987±0.001
+
+0.0033±0.0003
+
+from 24 to 1. First, the batchtime has little effect on the final accuracy (Figs. 5A and B), unless the
+batchtime is very small (e.g., smaller than 4). In terms of computational cost, the GPU memory
+requirement decreases approximately linearly with respect to batchtime (Fig. 5C). However, training
+time per epoch of the Fourier-MIONet increases when batchtime decreases. In general, fewer epochs
+are needed for training neural networks when smaller batch size is used, which is also observed in
+Fourier-MIONet. Hence, for smaller batch size, less epochs are needed for the training to converge.
+In Fig. 5E, we show the minimum epoch needed for different batchtime . Since training time per epoch
+and minimum epoch needed have the opposite trend, the total training time has an approximate
+U-shaped curve (Fig. 5F). The minimum training time occurs at batchtime equal to 8. Therefore,
+to achieve the fastest training, we use batchtime as 8 in the following study.
+The accuracy between Fourier-MIONet (with batchtime as 8) and U-FNO is almost the same and
+4 testing examples of Fourier-MIONet are shown in Fig. 6. GPU memory of Fourier-MIONet is 5.69
+GiB (Table 3) which only accounts for 35% of the U-FNO. Total training time of Fourier-MIONet
+is 12.3 hours (less than 30% of U-FNO). Hence, Fourier-MIONet is much more computationally
+efficient.
+In addition to the training cost, we also summarize the computational cost during testing
+(Table 4). Compared with U-FNO, Fourier-MIONet needs much less CPU memory (33.3%) and
+GPU memory (50%) during the testing. For each case, Fourier-MIONet requires 0.041 s, while
+U-FNO requires 0.075 s, so Fourier-MIONet is about 1.8 times faster.
+Table 4: Computational cost of Fourier-MIONet and U-FNO during testing. The inference time is computed by taking the average of 500 test cases.
+
+U-FNO
+FMIONet
+
+CPU memory (GiB)
+
+GPU memory (GiB)
+
+Inference time (s)
+
+15.3
+5.1
+
+7.1
+3.5
+
+0.075
+0.041
+
+11
+
+A
+
+B
+
+C
+
+D
+
+E
+
+F
+
+Figure 5: Effect of batchtime for Fourier-MIONet. (A) R2 . (B) MAE. (C) GPU memory
+usage. (D) Training time per epoch. (E) Minimum number of training epochs needed. (F) Total
+training time. The solid blue curves and shaded regions represent the mean and one standard
+deviation of 3 runs of Fourier-MIONet. The precise values in this figure can be found in Table 3.
+U-FNO does not have time batch size.
+
+12
+
+A
+
+Time = 7.3 year
+
+Time = 30 year
+
+B
+
+Time = 7.3 year
+
+Time = 30 year
+
+C
+
+Time = 7.3 year
+
+Time = 30 year
+
+D
+
+Time = 7.3 year
+
+Time = 30 year
+
+Figure 6: Four testing examples of gas saturation. For each example, we show the reference
+solution and the predictions and errors of Fourier-MIONet and U-FNO at 7.3 year and 30 year.
+The R2 and MAE error are also computed for each prediction and shown in the figure.
+
+13
+
+4.2
+
+Inference for unseen time
+
+We also test the generalizability of Fourier-MIONet at unseen training time, i.e., only partial time
+snapshots are used for training. We recall that in the dataset for each case, there are 24 time
+snapshots. Here, we choose to test three cases with different amounts of training dataset: 50%,
+33%, and 25%.
+In the first case, we use 50% of the time snapshots: {1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23}. As
+shown in Figs. 7A and B, Fourier-MIONet has good performance at both seen time index and the
+unseen time index, and there is nearly no accuracy loss for the unseen time. However, U-FNO only
+performs well at seen time index, and a significant accuracy drop can be seen at the unseen time
+index.
+The same phenomenon has also been observed for the other two cases of 33% and 25% training
+data (Figs. 7C, D, E and F). We note that the behavior of U-FNO is typical for deep learning
+models, because it is usually difficult to generalize to unseen times by training with extremely
+sparse time snapshots. However, Fourier-MIONet shows good performance in both interpolation
+and extrapolation. For example in Figs. 7E and F, the training time snapshots are 1 day, 11 day,
+53 day, 226 day, 2.6 year, and 10.4 year, and the testing time snapshots include both interpolation
+(from 2 day to 7.3 year) and extrapolation (14.8 year, 21.1 year, and 30.0 year). The R2 and
+MAE at 30.0 years are 0.9616 and 0.0179. Here, Fourier-MIONet can generalize well because we
+use time as the input of the trunk net, which guarantees that the prediction of gas saturation is
+continuous with respect to time, i.e., Fourier-MIONet obeys the physics law that gas saturation is
+continuous over, showcasing a crucial advance in ensuring the reliability of our model under varied
+conditions. In contrast, U-FNO uses different channels to predict gas saturation at different time,
+which does not guarantee the continuity of solution over time, weakening generalization ability for
+out-of-distribution (OOD) scenarios.
+
+4.3
+
+Nonuniform sampling of training data
+
+To further improve the accuracy of using 25% training data (i.e., six time snapshots) in the previous
+section, we propose to train the network using nonuniform time snapshots. The 24 time snapshots
+in the datasets corresponds to 1 day, 2 day, 4 day, 7 day, 11 day, 17 day, 25 day, 37 day, 53 day, 77
+day, 111 day, 158 day, 226 day, 323 day, 1.3 year, 1.8 year, 2.6 year, 3.6 year, 5.2 year, 7.3 year, 10.4
+year, 14.8 year, 21.1 year, and 30.0 year. Specifically, we design 6 different nonuniform sampling
+cases as listed in Table 5. The R2 for each case can be found in Table 5.
+Table 5: Six nonuniform sampling cases.
+Case
+
+Seen time snapshots
+
+R2
+
+A
+
+{1d, 7d, 53d, 323d, 5.2y, 30y}
+
+0.9793±0.0247
+
+B
+
+{1d, 4d, 53d, 323d, 5.2y, 30y}
+
+0.9809±0.0049
+
+C
+
+{1d, 4d, 37d, 226d, 5.2y, 30y}
+
+0.9821±0.0063
+
+D
+
+{1d, 4d, 37d, 226d, 3.6y, 30y}
+
+0.9807±0.0092
+
+E
+
+{1d, 4d, 37d, 323d, 5.2y, 30y}
+
+0.9793±0.0040
+
+F
+
+{1d, 4d, 37d, 323d, 7.3y, 30y}
+
+0.9773±0.0048
+
+For all these 6 cases, the R2 of all time snapshots is shown in Fig. 8. Since the dynamics of gas
+saturation changes fast at the beginning, more data need to be chosen at the very first few time
+14
+
+A
+
+B
+
+C
+
+D
+
+E
+
+F
+
+Figure 7: Three different test cases for unseen time. (A and B) Training at time index
+{1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23}. (C and D) Training at time index {1, 4, 7, 10, 13, 16, 19, 22}.
+(E and F) Training at time index {1, 5, 9, 13, 17, 21}.
+
+15
+
+snapshots, otherwise, predictions will become worse. For example, if we choose the second time
+snapshots at 7 day (Fig. 8A), the accuracy at the time 2 day will drop significantly. For later time,
+we need to choose time snapshots relatively uniformly. As shown in Fig. 8D, there are 5 unseen
+time snapshots between the last two points, which makes the prediction of the unseen time with
+much lower accuracy. Hence, by choosing dense time snapshots at the beginning and relatively
+uniform snapshots between later times, Fourier-MIONet can achieve good prediction accuracy at
+both seen time and unseen time with only 6 time snapshots for training (Fig. 8B, C, E and F).
+A
+
+B
+
+C
+
+D
+
+E
+
+F
+
+Figure 8: Six nonuniform sampling of time. (A) Training at time snapshots: {1d, 7d, 53d,
+323d, 5.2y, 30y}. (B) Training at time snapshots: {1d, 4d, 53d, 323d, 5.2y, 30y}. (C) Training
+at time snapshots: {1d, 4d, 37d, 226d, 5.2y, 30y}. (D) Training at time snapshots: {1d, 4d, 37d,
+226d, 3.6y, 30y}. (E) Training at time snapshots: {1d, 4d, 37d, 323d, 5.2y, 30y}. (F) Training at
+time snapshots: {1d, 4d, 37d, 323d, 7.3y, 30y}.
+
+4.4
+
+Pressure buildup
+
+When it comes to the prediction of pressure buildup, Fourier-MIONet also achieves good accuracy.
+We follow the same setup as U-FNO and use a smaller network for pressure buildup. Specifically,
+we only apply one Fourier layer and one U-Fourier layer in the merge net, and other parts of the
+network architecture are the same as the one in the gas saturation problem. Based on Section 4.1,
+we choose batchtime as 8. The testing R2 of Fourier-MIONet is 0.986. We show 4 examples of the
+prediction and absolute error with the corresponding R2 and MAE in Fig. 9.
+
+4.5
+
+Discussions about baseline network architectures
+
+In this study, we have demonstrated good performance of Fourier-MIONet, and in this section, we
+show the necessity of using Fourier and U-Fourier layers as the merger net by studying two baseline
+16
+
+A
+
+Time = 7.3 year
+
+Time = 30 year
+
+B
+
+Time = 7.3 year
+
+Time = 30 year
+
+C
+
+Time = 7.3 year
+
+Time = 30 year
+
+D
+
+Time = 7.3 year
+
+Time = 30 year
+
+Figure 9: Four testing examples of pressure buildup. The reference solution and the predictions and errors of Fourier-MIONet and U-FNO at 7.3 year and 30 year. The R2 and MAE error
+are also computed for each prediction and shown in the figure.
+
+17
+
+networks. One baseline is the vanilla MIONet, which uses an inner product to construct the output
+(Section 3.1). Another baseline is MIONet-FNN, where the dot product in the vanilla MIONet
+is replaced by a fully-connected neural network (FNN) as the merger net [72, 73]. The network
+architectures of the vanilla MIONet and MIONet-FNN are in Tables 8 and 9, respectively.
+The testing R2 of vanilla MIONet for both gas saturation and pressure buildup is the worst
+among these three models (Table 6) due to the simple dot product in merger operation. By using
+FNN as the merger net, MIONet-FNN performs better than vanilla MIONet. Fourier-MIONet
+achieves the best accuracy by employing Fourier and U-Fourier layers as a decoder. Fourier layers
+with truncated modes can effectively capture low-frequency components in the data, while U-Nets
+are designed to capture both local and global features.
+Table 6: Accuracy of vanilla MIONet, MIONet-FNN and Fourier-MIONet.
+R2
+Gas saturation
+
+Pressure buildup
+
+Vanilla MIONet
+MIONet-FNN
+Fourier-MIONet
+
+0.948
+0.971
+0.985
+
+Vanilla MIONet
+MIONet-FNN
+Fourier-MIONet
+
+0.961
+0.979
+0.986
+
+We also show 4 examples of the gas saturation prediction and absolute error with the corresponding R2 and MAE in Fig. 10. Vanilla MIONet and MIONet-FNN have good predictions in
+the case with smooth solutions (Fig. 10A). However, when dealing with cases with non-smooth
+solutions, these two methods result in blurred outputs of interface structures (Figs. 10B, C, and
+D). In contrast, Fourier-MIONet generates accurate predictions no matter whether the solution is
+smooth or not (Fig. 6).
+
+5
+
+Conclusions
+
+In this paper, we propose a novel deep neural operator, a Fourier-enhanced multiple-input neural
+operator (Fourier-MIONet), which combines the advantages of data and computational efficiency
+from MIONet and good accuracy from U-FNO. We show that Fourier-MIONet is both accurate
+and efficient for solving the problem of multiphase flow in porous media while ensuring reliability,
+for safety-critical applications including geological carbon sequestration. Compared with U-FNO,
+Fourier-MIONet saves 85% CPU memory and 64% GPU memory, and can be trained 3.5 times
+faster.
+Fourier-MIONet also provides much more accurate predictions at unseen time snapshots with
+only six time snapshots in each case for training. This good generalizability is due to that FourierMIONet obeys the physics that the PDE solution is continuous over time, which provides an
+interpretable basis for maintaining reliability when handling diverse and complex OOD data. We
+also consider the nonuniform sampling method to further improve the generalizability.
+Here, we give a brief discussion of the time-dependent 3D problem (i.e., 4D problem), since
+the heterogeneity in a geologic formation is beyond the radially symmetric models. As we do not
+have a 4D dataset available, we generate a synthetic dataset with the mesh size (100, 100, 18,
+24), which means the x-axis resolution is 100, y-axis resolution is 100, z-axis resolution is 18, and
+there are in total 24 time snapshots. We find that U-FNO is too big to be trained in a GPU with
+18
+
+A
+
+Time = 7.3 year
+
+Time = 30 year
+
+B
+
+Time = 7.3 year
+
+Time = 30 year
+
+C
+
+Time = 7.3 year
+
+Time = 30 year
+
+D
+
+Time = 7.3 year
+
+Time = 30 year
+
+Figure 10: Four testing examples of vanilla MIONet and MIONet-FNN for gas saturation. For each example, we show the reference solution and the predictions and errors of vanilla
+MIONet and MIONet-FNN at 7.3 and 30 years. The R2 and MAE error are also computed for
+each prediction.
+
+19
+
+24 GiB memory, even if the batchcase is chosen as 1, and thus we use FNO for the comparison.
+Fourier-MIONet also uses FNO as the decoder merge net. We have two choices for Fourier-MIONet.
+First, we only time as the trunk net input and then the merge net should be FNO with 3D FFT.
+Compared with FNO, Fourier-MIONet (3D FFT) with batchtime as 8 only has 10% the number
+of parameters and needs much less GPU memory (< 30%) (Table 7). Second, we can further use
+z-coordinates combined with time as the trunk net input, and then we only need 2D FFT in the
+merge net. In this case, the number of parameters and GPU memory can be further decreased. The
+Fourier-MIONet with 2D FFT has 3.3% number of trainable parameters and 14.7% GPU memory.
+The advantages of our architecture show more potential possibilities for 4D multiphase problems,
+though more work is required to evaluate the performance with 4D datasets in the future.
+Table 7: Comparison between Fourier-MIONet and FNO on time-dependent 3D problems. We use batchcase as 1 for all the experiments.
+batchtime
+
+batchz
+
+No. of parameters
+
+GPU memory (GiB)
+
+–
+
+–
+
+46,665,329
+
+23.2
+
+FMIONet (3D FFT)
+
+24 (Full)
+8
+
+–
+–
+
+4,679,033
+4,679,033
+
+16.3
+6.7
+
+FMIONet (2D FFT)
+
+8
+
+6
+
+1,568,669
+
+3.4
+
+FNO (4D FFT)
+
+One limitation of the proposed Fourier-MIONet is that it cannot be directly applied to irregular
+geometry because Fourier and U-Fourier layers require the input to be a regular geometry. There
+are two possible solutions to this issue. One solution is mapping the irregular geometry to a regular
+geometry such as gFNO+ [60]. Another solution is using other networks as a merger net, such as
+MIONet-FNN. Another limitation of U-FNO and the proposed Fourier-MIONet is that they cannot
+provide accurate predictions of the CO2 saturation plume front (Fig. 6). One possible solution is
+adding more Fourier and U-Fourier layers in the decoder merge net, but it will also cost more
+computing resources. How to improve the prediction of CO2 plume front will be investigated in
+future studies.
+
+Acknowledgments
+This work was supported by ExxonMobil Technology and Engineering Company and U.S. Department of Energy [DE-SC0022953]. The authors gratefully acknowledge Yanhua O. Yuan, Dongzhuo
+Li, Qiuzi Li, and Alex Gk Lee from ExxonMobil for helpful suggestions. We thank Gege Wen et
+al. for making the dataset public.
+
+A
+
+Network architectures
+
+The network architectures of the vanilla MIONet and MIONet-FNN in Section 4.5 are shown in
+Tables 8 and 9, respectively, while the “CNN” denotes a convolutional neural network in Table 10.
+
+References
+[1] R. K. Pachauri and L. A. Meyer. Climate change 2014: Synthesis report. contribution of
+working groups i, ii and iii to the fifth assessment report of the intergovernmental panel on
+20
+
+Table 8: Vanilla MIONet architecture.
+Operation
+
+Output shape
+
+CNN
+FNN
+
+(C, 512)
+(C, 512)
+
+Branch merger operation
+
+Point-wise multiplication
+
+(C, 512)
+
+Trunk net
+
+FNN
+
+(T × 96 × 200, 512)
+
+Branch-Trunk merger operation
+
+Dot product
+Reshape
+
+(C, T × 96 × 200)
+(C, T , 96, 200)
+
+Branch net 1
+Branch net 2
+
+Branch net
+
+Table 9: MIONet-FNN architecture.
+Operation
+
+Output shape
+
+CNN
+FNN
+
+(C, 512)
+(C, 512)
+
+Branch merger operation
+
+Point-wise multiplication
+
+(C, 512)
+
+Trunk net
+
+FNN
+
+(T × 96 × 200, 512)
+
+Branch-Trunk merger operation
+
+Point-wise multiplication
+
+(C × T × 96 × 200, 512)
+
+Merger net
+
+FNN/Reshape
+
+(C, T , 96, 200)
+
+Branch net 1
+Branch net 2
+
+Branch net
+
+Table 10: CNN architecture. The “Conv3d” denotes 3D convolution. “LeakyReLU” denotes a
+leaky rectified linear unit with the negative slope as 0.2.
+Layer
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+
+Operation
+
+Output shape
+
+Conv3D/LeakyReLU
+Conv3D/LeakyReLU
+Conv3D/LeakyReLU
+Conv3D/LeakyReLU
+Conv3D/LeakyReLU
+Conv3D/LeakyReLU
+Conv3D/LeakyReLU
+Conv3D/LeakyReLU
+Conv3D/LeakyReLU
+Conv3D/LeakyReLU/Flatten
+Linear/LeakyReLU
+Linear
+
+(C, 32, 96, 100)
+(C, 64, 48, 50)
+(C, 64, 48, 50)
+(C, 64, 24, 25)
+(C, 64, 24, 25)
+(C, 128, 12, 13)
+(C, 128, 12, 13)
+(C, 256, 6, 7)
+(C, 256, 6, 7)
+(C, 512)
+(C, 2048)
+(C, 512)
+
+21
+
+climate change. 2014.
+[2] K. Aziz. Petroleum reservoir simulation. Applied Science Publishers, 476, 1979.
+[3] L. Hashemi, M. Blunt, and H. Hajibeygi. Pore-scale modelling and sensitivity analyses of
+hydrogen-brine multiphase flow in geological porous media. Scientific Reports, 11(1):1–13,
+2021.
+[4] B. Amaziane, M. El Ossmani, and M. Jurak. Numerical simulation of gas migration through
+engineered and geological barriers for a deep repository for radioactive waste. Computing and
+Visualization in Science, 15(1):3–20, 2012.
+[5] A. Prosperetti and G. Tryggvason. Computational methods for multiphase flow. Cambridge
+university press, 2009.
+[6] S. Balachandar and J. K. Eaton. Turbulent dispersed multiphase flow. Annual review of fluid
+mechanics, 42:111–133, 2010.
+[7] F. M. Orr et al. Theory of Gas Injection Processes, volume 5. Tie-Line Publications Copenhagen, 2007.
+[8] C. Doughty. Investigation of CO2 plume behavior for a large-scale pilot test of geologic carbon
+storage in a saline formation. Transport in Porous Media, 82(1):49–76, 2010.
+[9] G. Wen and S. M. Benson. CO2 plume migration and dissolution in layered reservoirs. International Journal of Greenhouse Gas Control, 87:66–79, 2019.
+[10] O. Khebzegga, A. Iranshahr, and H. Tchelepi. Continuous relative permeability model for
+compositional simulation. Transport in Porous Media, 134(1):139–172, 2020.
+[11] X. Meng and Z. Guo. Localized lattice Boltzmann equation model for simulating miscible
+viscous displacement in porous media. International Journal of Heat and Mass Transfer,
+100:767–778, 2016.
+[12] C. W. Strandli, E. Mehnert, and S. M. Benson. CO2 plume tracking and history matching
+using multilevel pressure monitoring at the illinois basin – decatur project. Energy Procedia,
+63:4473–4484, 2014. 12th International Conference on Greenhouse Gas Control Technologies,
+GHGT-12.
+[13] P. K. Kitanidis. Persistent questions of heterogeneity, uncertainty, and scale in subsurface flow
+and transport. Water Resources Research, 51(8):5888–5904, 2015.
+[14] Ilja Kröker and Sergey Oladyshkin. Arbitrary multi-resolution multi-wavelet-based polynomial
+chaos expansion for data-driven uncertainty quantification. Reliability Engineering & System
+Safety, 222:108376, 2022.
+[15] Michael F Rehme, Fabian Franzelin, and Dirk Pflüger. B-splines on sparse grids for surrogates
+in uncertainty quantification. Reliability Engineering & System Safety, 209:107430, 2021.
+[16] P. Tahmasebi, S. Kamrava, T. Bai, and M. Sahimi. Machine learning in geo- and environmental
+sciences: From small to large scale. Advances in Water Resources, 142:103619, 2020.
+
+22
+
+[17] M. A. Cardoso, L. J. Durlofsky, and P. Sarma. Development and application of reducedorder modeling procedures for subsurface flow simulation. International Journal for Numerical
+Methods in Engineering, 77(9):1322–1350, 2009.
+[18] S. Razavi, B. A. Tolson, and D. H. Burn. Review of surrogate modeling in water resources.
+Water Resources Research, 48(7), 2012.
+[19] H. Bazargan, M. Christie, A. H. Elsheikh, and M. Ahmadi. Surrogate accelerated sampling of
+reservoir models with complex structures using sparse polynomial chaos expansion. Advances
+in Water Resources, 86:385–399, 2015.
+[20] Y. Zhu and N. Zabaras. Bayesian deep convolutional encoder–decoder networks for surrogate
+modeling and uncertainty quantification. Journal of Computational Physics, 366:415–447,
+2018.
+[21] S. Mo, Y. Zhu, N. Zabaras, X. Shi, and J. Wu. Deep convolutional encoder-decoder networks
+for uncertainty quantification of dynamic multiphase flow in heterogeneous media. Water
+Resources Research, 55(1):703–728, 2019.
+[22] M. Tang, Y. Liu, and L. J. Durlofsky. A deep-learning-based surrogate model for data assimilation in dynamic subsurface flow problems. Journal of Computational Physics, 413:109456,
+2020.
+[23] G. Wen, C. Hay, and S. M. Benson. CCSNet: A deep learning modeling suite for CO2 storage.
+Advances in Water Resources, 155:104009, 2021.
+[24] Yang Liu, Dewei Wang, Xiaodong Sun, Nam Dinh, and Rui Hu. Uncertainty quantification for
+multiphase-cfd simulations of bubbly flows: a machine learning-based bayesian approach supported by high-resolution experiments. Reliability Engineering & System Safety, 212:107636,
+2021.
+[25] Hao Wu, Yanwen Xu, Zheng Liu, Yumeng Li, and Pingfeng Wang. Adaptive machine learning
+with physics-based simulations for mean time to failure prediction of engineering systems.
+Reliability Engineering & System Safety, 240:109553, 2023.
+[26] G. Wen, Z. Li, K. Azizzadenesheli, A. Anandkumar, and S. M. Benson. U-FNO—an enhanced
+fourier neural operator-based deep-learning model for multiphase flow. Advances in Water
+Resources, 163:104180, 2022.
+[27] G. Wen, Z. Li, Q. Long, K. Azizzadenesheli, A. Anandkumar, and S. M. Benson. Accelerating carbon capture and storage modeling using fourier neural operators. arXiv preprint
+arXiv:2210.17051, 2022.
+[28] Z. Zhong, A. Y. Sun, and H. Jeong. Predicting CO2 plume migration in heterogeneous formations using conditional deep convolutional generative adversarial network. Water Resources
+Research, 55(7):5830–5851, 2019.
+[29] G. Wen, M. Tang, and S. M. Benson. Towards a predictor for CO2 plume migration using
+deep neural networks. International Journal of Greenhouse Gas Control, 105:103223, 2021.
+[30] M. Zhu, S. Feng, Y. Lin, and L. Lu. Fourier-DeepONet: Fourier-enhanced deep operator
+networks for full waveform inversion with improved accuracy, generalizability, and robustness.
+Computer Methods in Applied Mechanics and Engineering, 416:116300, 2023.
+23
+
+[31] A. Jiao, H. He, R. Ranade, J. Pathak, and L. Lu. One-shot learning for solution operators of
+partial differential equations. arXiv preprint arXiv:2104.05512, 2021.
+[32] X.-Y. Liu, H. Sun, M. Zhu, L. Lu, and J.-X. Wang. Predicting parametric spatiotemporal dynamics by multi-resolution PDE structure-preserved deep learning. arXiv preprint
+arXiv:2205.03990, 2022.
+[33] Shiqi Fan and Zaili Yang. Accident data-driven human fatigue analysis in maritime transport
+using machine learning. Reliability Engineering & System Safety, 241:109675, 2024.
+[34] Rajesh Kandel and Hiba Baroud. A data-driven risk assessment of arctic maritime incidents:
+Using machine learning to predict incident types and identify risk factors. Reliability Engineering & System Safety, 243:109779, 2024.
+[35] M. Raissi, P. Perdikaris, and G. E. Karniadakis. Physics-informed neural networks: A deep
+learning framework for solving forward and inverse problems involving nonlinear partial differential equations. Journal of Computational physics, 378:686–707, 2019.
+[36] Y. Zhu, N. Zabaras, P.-S. Koutsourelakis, and P. Perdikaris. Physics-constrained deep learning
+for high-dimensional surrogate modeling and uncertainty quantification without labeled data.
+Journal of Computational Physics, 394:56–81, 2019.
+[37] L. Lu, X. Meng, Z. Mao, and G. E. Karniadakis. DeepXDE: A deep learning library for solving
+differential equations. SIAM Review, 63(1):208–228, 2021.
+[38] S. Cai, Z. Mao, Z. Wang, M. Yin, and G. E. Karniadakis. Physics-informed neural networks
+(PINNs) for fluid mechanics: A review. Acta Mechanica Sinica, 37(12):1727–1738, 2021.
+[39] B. Fan, E. Qiao, A. Jiao, Z. Gu, W. Li, and L. Lu. Deep learning for solving and estimating
+dynamic macro-finance models. arXiv preprint arXiv:2305.09783, 2023.
+[40] Z. Jiang, P. Tahmasebi, and Z. Mao. Deep residual U-net convolution neural networks with
+autoregressive strategy for fluid flow predictions in large-scale geosystems. Advances in Water
+Resources, 150:103878, 2021.
+[41] M. Tang, Y. Liu, and L. J. Durlofsky. Deep-learning-based surrogate flow modeling and
+geological parameterization for data assimilation in 3D subsurface flow. Computer Methods in
+Applied Mechanics and Engineering, 376:113636, 2021.
+[42] H. Wu and R. Qiao. Physics-constrained deep learning for data assimilation of subsurface
+transport. Energy and AI, 3:100044, 2021.
+[43] G. E. Karniadakis, I. G. Kevrekidis, L. Lu, P. Perdikaris, S. Wang, and L. Yang. Physicsinformed machine learning. Nature Reviews Physics, 3(6):422–440, 2021.
+[44] G. Pang, L. Lu, and G. E. Karniadakis. fPINNs: Fractional physics-informed neural networks.
+SIAM Journal on Scientific Computing, 41(4):A2603–A2626, 2019.
+[45] J. Yu, L. Lu, X. Meng, and G. E. Karniadakis. Gradient-enhanced physics-informed neural
+networks for forward and inverse PDE problems. Computer Methods in Applied Mechanics
+and Engineering, 393:114823, 2022.
+
+24
+
+[46] C. Wu, M. Zhu, Q. Tan, Y. Kartha, and L. Lu. A comprehensive study of non-adaptive and
+residual-based adaptive sampling for physics-informed neural networks. Computer Methods in
+Applied Mechanics and Engineering, 403:115671, 2023.
+[47] Y. Chen, L. Lu, G. E. Karniadakis, and L. Dal Negro. Physics-informed neural networks for
+inverse problems in nano-optics and metamaterials. Optics Express, 28(8):11618–11633, 2020.
+[48] L. Lu, R. Pestourie, W. Yao, Z. Wang, F. Verdugo, and S. G. Johnson. Physics-informed neural
+networks with hard constraints for inverse design. SIAM Journal on Scientific Computing,
+43(6):B1105–B1132, 2021.
+[49] A. Yazdani, L. Lu, M. Raissi, and G. E. Karniadakis. Systems biology informed deep learning
+for inferring parameters and hidden dynamics. PLoS Computational Biology, 16(11):e1007575,
+2020.
+[50] M. Daneker, Z. Zhang, G. E. Karniadakis, and L. Lu. Systems biology: Identifiability analysis
+and parameter identification via systems-biology informed neural networks. arXiv preprint
+arXiv:2202.01723, 2022.
+[51] Chaolin Song, Rucheng Xiao, Chi Zhang, Xinwei Zhao, and Bo Sun. Simulation-free reliability
+analysis with importance sampling-based adaptive training physics-informed neural networks:
+Method and application to chloride penetration. Reliability Engineering & System Safety,
+246:110083, 2024.
+[52] Sourav Das and Solomon Tesfamariam. Reliability assessment of stochastic dynamical systems
+using physics informed neural network based pdem. Reliability Engineering & System Safety,
+243:109849, 2024.
+[53] S. Kamrava, M. Sahimi, and P. Tahmasebi. Simulating fluid flow in complex porous materials by integrating the governing equations with deep-layered machines. npj Computational
+Materials, 7(1), 2021.
+[54] K. Wang, Y. Chen, M. Mehana, N. Lubbers, K. C. Bennett, Q. Kang, H. S. Viswanathan,
+and T. C. Germann. A physics-informed and hierarchically regularized data-driven model for
+predicting fluid flow through porous media. Journal of Computational Physics, 443:110526,
+2021.
+[55] O. Fuks and H. Tchelepi. Physics based deep learning for nonlinear two-phase flow in porous
+media. ECMOR XVII, 2020.
+[56] M. M. Almajid and M. O Abu-Al-Saud. Prediction of porous media fluid flow using physics
+informed neural networks. Journal of Petroleum Science and Engineering, 208:109205, 2022.
+[57] C. G. Fraces and H. Tchelepi. Physics informed deep learning for flow and transport in porous
+media. In SPE Reservoir Simulation Conference. OnePetro, 2021.
+[58] L. Lu, P. Jin, G. Pang, Z. Zhang, and G. E. Karniadakis. Learning nonlinear operators
+via deeponet based on the universal approximation theorem of operators. Nature Machine
+Intelligence, 3(3):218–229, 2021.
+[59] Z. Li, N. Kovachki, K. Azizzadenesheli, B. Liu, K. Bhattacharya, A. Stuart, and A. Anandkumar. Fourier neural operator for parametric partial differential equations. arXiv preprint
+arXiv:2010.08895, 2020.
+25
+
+[60] L. Lu, X. Meng, S. Cai, Z. Mao, S. Goswami, Z. Zhang, and G. E. Karniadakis. A comprehensive and fair comparison of two neural operators (with practical extensions) based on fair
+data. Computer Methods in Applied Mechanics and Engineering, 393:114778, 2022.
+[61] M. Zhu, H. Zhang, A. Jiao, G. E. Karniadakis, and L. Lu. Reliable extrapolation of deep
+neural operators informed by physics or sparse observations. Computer Methods in Applied
+Mechanics and Engineering, 412:116064, 2023.
+[62] M. Yin, E. Zhang, Y. Yu, and G. E. Karniadakis. Interfacing finite elements with deep neural
+operators for fast multiscale modeling of mechanics problems. Computer methods in applied
+mechanics and engineering, 402:115027, 2022.
+[63] S. Goswami, M. Yin, Y. Yu, and G. E. Karniadakis. A physics-informed variational DeepONet
+for predicting crack path in quasi-brittle materials. Computer Methods in Applied Mechanics
+and Engineering, 391:114587, 2022.
+[64] P. Jin, S. Meng, and L. Lu. MIONet: Learning multiple-input operators via tensor product.
+arXiv preprint arXiv:2202.06137, 2022.
+[65] S. M. Benson and D. R. Cole. CO2 sequestration in deep sedimentary formations. Elements,
+4(5):325–331, 2008.
+[66] D. Zhang and J. Song. Mechanisms for geological carbon sequestration. Procedia IUTAm,
+10:319–327, 2014.
+[67] N. Remy, A. Boucher, and J. Wu. Applied Geostatistics with SGeMS: A User’s Guide. Cambridge University Press, 2009.
+[68] T. Chen and H. Chen. Universal approximation to nonlinear operators by neural networks with
+arbitrary activation functions and its application to dynamical systems. IEEE Transactions
+on Neural Networks, 6(4):911–917, 1995.
+[69] Yuejian Chen, Meng Rao, Ke Feng, and Gang Niu. Modified varying index coefficient autoregression model for representation of the nonstationary vibration from a planetary gearbox.
+IEEE Transactions on Instrumentation and Measurement, 72:1–12, 2023.
+[70] Shujie Ma and Peter X-K Song. Varying index coefficient models. Journal of the American
+Statistical Association, 110(509):341–356, 2015.
+[71] O. Ronneberger, P. Fischer, and T. Brox. U-net: Convolutional networks for biomedical
+image segmentation. In International Conference on Medical Image Computing and ComputerAssisted Intervention, pages 234–241. Springer, 2015.
+[72] S. Mao, R. Dong, L. Lu, K. M. Yi, S. Wang, and P. Perdikaris. PPDONet: Deep operator
+networks for fast prediction of steady-state solutions in disk–planet systems. The Astrophysical
+Journal Letters, 950(2):L12, 2023.
+[73] J. Seidman, G. Kissas, P. Perdikaris, and G. J. Pappas. NOMAD: Nonlinear manifold decoders
+for operator learning. Advances in Neural Information Processing Systems, 35:5601–5613, 2022.
+
+26
+
+

@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Orient artifacts
+orient/backend/results/
+orient/client/examples/bundles/
+*.safetensors
+*.ckpt
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Test / install artifacts
+*.log
+orient/tests/_e2e_logs/
+orient/client/logs/
+orient/logs/
+orient/start.log
+orient/start.err
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

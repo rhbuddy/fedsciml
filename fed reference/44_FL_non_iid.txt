@@ -1,0 +1,1670 @@
+arXiv:1806.00582v2 [cs.LG] 21 Jul 2022
+
+Federated Learning with Non-IID Data
+
+Yue Zhao*
+yzhao727@gmail.com
+
+Meng Li
+meng.li@arm.com
+
+Liangzhen Lai
+liangzhen.lai@arm.com
+
+Naveen Suda
+naveen.suda@arm.com
+
+Damon Civin
+damon.civin@arm.com
+
+Vikas Chandra
+vikas.chandra@arm.com
+
+Abstract
+Federated learning enables resource-constrained edge compute devices, such as
+mobile phones and IoT devices, to learn a shared model for prediction, while keeping the training data local. This decentralized approach to train models provides
+privacy, security, regulatory and economic benefits. In this work, we focus on the
+statistical challenge of federated learning when local data is non-IID. We first show
+that the accuracy of federated learning reduces significantly, by up to ~55% for
+neural networks trained for highly skewed non-IID data, where each client device
+trains only on a single class of data. We further show that this accuracy reduction
+can be explained by the weight divergence, which can be quantified by the earth
+mover’s distance (EMD) between the distribution over classes on each device and
+the population distribution. As a solution, we propose a strategy to improve training
+on non-IID data by creating a small subset of data which is globally shared between
+all the edge devices. Experiments show that accuracy can be increased by ~30%
+for the CIFAR-10 dataset with only 5% globally shared data.
+
+1
+
+Introduction
+
+Mobile devices have become the primary computing resource for billions of users worldwide and
+billions more IoT devices are expected to come online over the next few years. These devices generate
+a tremendous amount of valuable data and machine learning models trained using these data have the
+potential to improve the intelligence of many applications. But enabling these features on mobile
+devices usually requires globally shared data on a server in order to train a satisfactory model. This
+may be impossible or undesirable from a privacy, security, regulatory or economic point of view.
+Therefore approaches that keep data on the device and share the model have become increasingly
+attractive.
+There has been great progress recently on inference on the device [1, 2]. Federated learning
+[3, 4, 5] offers an approach to do training locally as well. McMahan et al. [3] introduced the
+F ederatedAveraging(F edAvg) algorithm and demonstrated the robustness of F edAvg to train
+convolutional neural networks (CNNs) on benchmark image classification datasets (e.g. MNIST [6]
+and CIFAR-10 [7]), and LSTM on a language dataset [8].
+A lot of recent research has been done on addressing the communication challenges of federated
+learning, i.e., how to reduce the communication cost of transferring huge matrices of weights of deep
+networks, and the unexpected dropout or the synchronization latency due to network connectivity,
+power, and computing constraints. Bonawitz et al. [9] developed an efficient secure aggregation
+protocol for federated learning, allowing a server to perform computation of high-dimensional data
+from mobile devices. Konečnỳ et al. [10] proposed structured updates and sketched updates to
+reduce communication costs by two orders of magnitude. Lin et al. [11] proposed Deep Gradient
+Preprint in May 2018.
+
+Compression (DGC) to reduce the communication bandwidth by two orders of magnitude to train
+high-quality models.
+Other than the communication challenge, federated learning also faces the statistical challenge.
+Federated learning relies on stochastic gradient descent (SGD), which is widely used in training
+deep networks with good empirical performances [12, 13, 14, 15, 16, 17]. The IID sampling of
+the training data is important to ensure that the stochastic gradient is an unbiased estimate of the
+full gradient [15, 16, 18]. In practice, it is unrealistic to assume that the local data on each edge
+device is always IID. To approach the non-IID challenge, Smith et al. [19] proposed a multi-task
+learning (MTL) framework and developed MOCHA to address system challenges in MTL. But this
+approach differs significantly from the previous work on federated learning. McMahan et al. [3]
+have demonstrated that F edAvg can work with certain non-IID data. However, as we will show
+in Section 2, the accuracy of convolutional neural networks trained with F edAvg algorithm can
+reduce significantly, up to 11% for MNIST, 51% for CIFAR-10 and 55% for keyword spotting (KWS)
+datasets, with highly skewed non-IID data.
+To address this statistical challenge of federated learning, we show in Section 3 that the accuracy
+reduction can be attributed to the weight divergence, which quantifies the difference of weights from
+two different training processes with the same weight initialization. We then prove that the weight
+divergence in training is bounded by the earth mover’s distance (EMD) between the distribution
+over classes on each device (or client) and the population distribution. This bound is affected by the
+learning rate, synchronization steps and gradients. Finally, in Section 4, we propose a data-sharing
+strategy to improve F edAvg with non-IID data by distributing a small amount of globally shared data
+containing examples from each class. This introduces a trade-off between accuracy and centralization.
+Experiments show that accuracy can be increased by 30% on CIFAR-10 if we are willing to centralize
+and distribute 5% shared data.
+
+2
+
+FedAvg on Non-IID data
+
+In this section, we demonstrate the accuracy reduction with F edAvg on non-IID data by training
+representative neural networks on three datasets.
+
+2.1
+
+Experimental Setup
+
+In this work, we use convolutional neural networks (CNNs) trained on MNIST [6], CIFAR-10 [7]
+and Speech commands datasets [20]. MNIST and CIFAR-10 are datasets for image classification
+tasks with 10 output classes. Speech commands dataset consists of 35 words each of 1 sec duration.
+To make it consistent, we use a subset of the data with 10 key words as keyword spotting (KWS)
+dataset. For each audio clip, we extract 10 MFCC features for a 30ms frame with a stride of 20ms to
+generate 50x10 features, which is used for the neural network training. For MNIST and CIFAR-10,
+we use same CNN architectures as [3], where as for KWS, we use CNN architecture from [1].
+The training sets are evenly partitioned into 10 clients. For IID setting, each client is randomly
+assigned a uniform distribution over 10 classes. For non-IID setting, the data is sorted by class and
+divided to create two extreme cases: (a) 1-class non-IID, where each client receives data partition
+from only a single class, and (b) 2-class non-IID, where the sorted data is divided into 20 partitions
+and each client is randomly assigned 2 partitions from 2 classes.
+We use the same notations for F edAvg algorithm as [3]: B, the batch size and E, the number of local
+epochs. The following parameters are used for F edAvg: for MNIST, B = 10 and 100, E = 1 and 5,
+η = 0.01 and decay rate = 0.995; for CIFAR-10, B = 10 and 100, E = 1 and 5, η = 0.1 and decay rate
+= 0.992; for KWS, B = 10 and 50, E = 1 and 5, η = 0.05 and decay rate = 0.992. The learning rates
+are optimized for each dataset and exponentially decays over communication rounds. For SGD, the
+learning rate and decay rate are identical but B is 10 times larger. This is because the global model
+from F edAvg is averaged across 10 clients at each synchronization. F edAvg with IID data should
+be compared to SGD with shuffling data and a batch size K times larger, where K is the number of
+clients included at each synchronization of F edAvg.
+2
+
+Test accuracy
+
+1.000
+0.975
+0.950
+0.925
+0.900
+0.875
+0.850
+0.825
+0.800 0
+
+(a) MNIST
+
+0.9
+0.8
+0.7
+0.6
+0.5
+0.4
+B=1000 SGD
+B=100 E=1 IID
+0.3
+B=100 E=1 Non-IID(2)
+B=100 E=1 Non-IID(1)
+0.2
+B=100 E=5 Non-IID(1)
+0.1
+B=100 E=1 Non-IID(1)
+pre-trained
+100 200 300 400 500 0.0 0
+Communication rounds
+
+(b) CIFAR-10
+
+0.9
+0.8
+0.7
+0.6
+0.5
+0.4
+B=1000 SGD
+B=100 E=1 IID
+0.3
+B=100 E=1 Non-IID(2)
+B=100 E=1 Non-IID(1)
+0.2
+B=100 E=5 Non-IID(1)
+0.1
+B=100 E=1 Non-IID(1)
+pre-trained
+100 200 300 400 500 0.0 0
+Communication rounds
+
+(c) KWS
+
+B=500 SGD
+B=50 E=1 IID
+B=50 E=1 Non-IID(2)
+B=50 E=1 Non-IID(1)
+B=50 E=5 Non-IID(1)
+B=50 E=1 Non-IID(1)
+pre-trained
+
+100 200 300 400
+Communication rounds
+
+500
+
+Figure 1: Test accuracy over communication rounds of F edAvg compared to SGD with IID and
+non-IID data of (a) MNIST (b) CIFAR-10 and (c) KWS datasets. Non-IID(2) represents the 2-class
+non-IID and non-IID(1) represents the 1-class non-IID.
+2.2
+
+Experimental Results
+
+For the IID experiments, the convergence curves of F edAvg with a batch size of B mostly overlap
+with the curves of SGD with B × 10 for all the three datasets (Figure 1). Only a small difference
+is observed for CIFAR-10 that F edAvg with B = 10 converges to 82.62% but SGD with B = 100
+converges to 84.14% (Figure A.1). Thus, F edAvg achieves SGD-level test accuracy for IID data,
+which is consistent with the results in [3].
+Significant reduction in the test accuracy is observed for F edAvg on non-IID data compared to SGD
+with matched batch size (Figure 1 and A.1). The accuracy reduction of non-IID data is summarized
+in Table 1. The maximum accuracy reduction occurs for the most extreme 1-class non-IID data.
+Moreover, a larger number of local epochs (E = 5) doesn’t reduce the loss. The convergence curves
+mostly overlap for E=1 and E=5. Furthermore, the CNN models pre-trained by SGD doesn’t learn
+from the F edAvg training on non-IID data. For CIFAR-10, the accuracy drops when the pre-trained
+CNN is trained by F edAvg on non-IID data. Thus, we demonstrate the reduction in the test accuracy
+of F edAvg for non-IID data. The test accuracy of all the experiments is summarized in Table A.2.
+Note that the SGD accuracy reported in this paper are not state-of-the-art [6, 21, 22, 1] but the CNNs
+we train are sufficient for our goal to evaluate federated learning on non-IID data.
+Table 1: The reduction in the test accuracy of F edAvg for non-IID data.
+Non-IID
+B
+E MNIST (%) CIFAR-10 (%) KWS (%)
+Non-IID(1) large 1
+6.52
+37.66
+43.64
+Non-IID(1) large 5
+6.77
+37.11
+43.62
+Non-IID(2) large 1
+2.4
+14.51
+12.16
+Non-IID(1) small 1
+11.31
+51.31
+54.5
+Non-IID(2) small 1
+1.77
+15.61
+15.07
+
+3
+
+Weight Divergence due to Non-IID Data
+
+In Figure 1 and A.1, it is interesting to note that the reduction is less for the 2-class non-IID data
+than for the 1-class non-IID data. It indicates that the accuracy of F edAvg may be affected by the
+exact data distribution, i.e., the skewness of the data distribution. Since the test accuracy is dictated
+by the trained weights, another way to compare F edAvg with SGD is to look at the difference of
+the weights relative to those of SGD, with the same weight initialization. It is termed as weight
+divergence and it can be computed by the following equation:
+weight divergence = ||wF edAvg − wSGD ||/||wSGD ||
+
+(1)
+
+As shown in Figure 2, the weight divergence of all the layers increases as the data become more
+non-IID, from IID to 2-class non-IID to 1-class non-IID. Thus, an association between the weight
+divergence and the skewness of the data is expected. The accuracy reduction found in Section 2 can
+be understood in terms of weight divergence, which quantifies the difference of weights from two
+3
+
+(a) MNIST
+
+Weight divergence
+
+0.10
+
+(b) CIFAR-10
+
+1.0
+
+(c) KWS
+
+0.10
+
+0.08
+
+0.8
+
+0.08
+
+0.06
+
+0.6
+
+0.06
+
+0.04
+
+0.4
+
+0.04
+
+0.02
+
+0.2
+
+0.02
+
+IID E=1
+Non-IID(2) E=1
+Non-IID(1) E=1
+
+0.00
+
+0.0
+0.00
+conv1 conv2 fc1
+fc2
+conv1 conv2 fc1 fc2 fc3
+conv1 conv2 fc1 fc2 fc3
+Layers
+Layers
+Layers
+Figure 2: Weight divergence of CNN layers for IID, 2-class non-IID and 1-class non-IID.
+
+different training processes with the same weight initialization. In this section, we formally analyze
+the origin of the weight divergence. In Section 3.1, we provide an illustrative example and a formal
+proposition to demonstrate that the root cause of the weight divergence is due to the distance between
+the data distribution on each client and the population distribution. Specifically, we find such distance
+can be evaluated with the earth mover’s distance (EMD) between the distributions. Then, in Section
+3.2, we validate the proposition with experiments that demonstrate the impact of EMD on the weight
+divergence and test accuracy of F edAvg.
+3.1
+
+Mathematical demonstration
+
+We formally define the problem of federated learning and analyze the origin of the weight divergence.
+We consider a C class classification problem defined over a compact space X and a label space
+Y = [C], where [C] = {1, . . . , C}. The data point {x, y} distributes over X × Y following the
+PC
+distribution p. A function f : X → S maps x to the probability simplex S, where S = {z| i=1 zi =
+1, zi ≥ 0, ∀i ∈ [C]} with fi denoting the probability for the ith class. f is parameterized over the
+hypothesis class w, i.e., the weight of the neural network. We define the population loss `(w) with
+the widely used cross-entropy loss as
+C
+C
+X
+X
+`(w) = Ex,y∼p [
+1y=i log fi (x, w)] =
+p(y = i)Ex|y=i [log fi (x, w)].
+i=1
+
+i=1
+
+To simplify the analysis, we ignore the generalization error and assume the population loss is
+optimized directly. Therefore, the learning problem becomes
+min
+w
+
+C
+X
+
+p(y = i)Ex|y=i [log fi (x, w)].
+
+i=1
+(c)
+
+To determine w, SGD solves the optimization problem iteratively. Let wt denotes the weight after
+t-th update in the centralized setting. Then, centralized SGD performs the following update:
+(c)
+
+wt
+
+(c)
+
+(c)
+
+(c)
+
+= wt−1 − η∇w `(wt−1 ) = wt−1 − η
+
+C
+X
+
+(c)
+
+p(y = i)∇w Ex|y=i [log fi (x, wt−1 )].
+
+i=1
+
+In federated learning, we assume there are K clients. Let n(k) denote the amount of data and p(k)
+denote the data distribution on client k ∈ [K]. On each client, local SGD is conducted separately. At
+iteration t on client k ∈ [K], local SGD performs
+(k)
+
+wt
+
+(k)
+
+= wt−1 − η
+
+C
+X
+
+(k)
+
+p(k) (y = i)∇w Ex|y=i [log fi (x, wt−1 )].
+
+i=1
+(f )
+
+Then, assume the synchronization is conducted every T steps and let wmT denote the weight
+calculated after the m-th synchronization, then, we have
+(f )
+
+wmT =
+
+K
+X
+
+n(k)
+(k)
+w .
+PK
+(k) mT
+n
+k=1
+k=1
+4
+
+(f )
+
+(c)
+
+The divergence between wmT and wmT can be understood with the illustration in Figure 3. When
+(k)
+(c)
+data is IID, for each client k, the divergence between wt and wt is small and after the m-th
+(f )
+(c)
+synchronization, wmt is still close to wmt . When data is non-IID, for each client k, due to the
+(k)
+(c)
+distance between the data distribution, the divergence between wt and wt becomes much larger
+(f )
+(c)
+and accumulates very fast, which makes the divergence between wmT and wmT much larger. To
+(f )
+(c)
+formally bound the weight divergence between wmT and wmT , we have the following proposition.
+
+IID Settings:
+
+(1)
+
+Non-IID Settings:
+
+(1)
+wmT
+
+wmT
+
+Client 1
+
+1
+
+(1)
+
+wmT
+
+(c)
+w(m 1)T
+
+(1)
+wmT
+
+wmT
+
+(1)
+
+2
+
+wmT
+
+(f )
+wmT
+
+1
+
+(f )
+w(m 1)T
+(c)
+
+wmT
+(K)
+
+(K)
+
+wmT
+
+2
+
+wmT
+
+(K)
+
+wmT
+
+(c)
+
+w(m 1)T
+
+2
+
+. . ..
+. . .. .
+...
+
+(1)
+
+(f )
+w(m 1)T
+
+(f )
+wmT
+
+SGD
+
+(c)
+
+wmT
+
+FedAvg
+
+(K)
+
+wmT
+
+1
+
+Client K
+
+2
+
+(K)
+wmT
+
+(K)
+
+wmT
+
+1
+
+Figure 3: Illustration of the weight divergence for federated learning with IID and non-IID data.
+Proposition 3.1. Given K clients, each with n(k) i.i.d samples following distribution p(k) for
+client k ∈ [K]. If ∇w Ex|y=i log fi (x, w) is λx|y=i -Lipschitz for each class i ∈ [C] and the
+synchronization is conducted every T steps, then, we have the following inequality for the weight
+divergence after the m-th synchronization,
+(f )
+
+(c)
+
+||wmT − wmT || ≤
+
+K
+X
+
+n(k)
+(f )
+(c)
+(a(k) )T ||w(m−1)T − w(m−1)T ||
+PK
+(k)
+n
+k=1
+k=1
++η
+
+C
+T
+−1
+X
+X
+n(k)
+(c)
+||p(k) (y = i) − p(y = i)||
+(a(k) )j gmax (wmT −1−k ),
+PK
+(k)
+n
+k=1
+i=1
+j=1
+k=1
+(2)
+K
+X
+
+(k)
+where gmax (w) = maxC
+=1+η
+i=1 ||∇w Ex|y=i log fi (x, w)|| and a
+
+PC
+
+i=1 p
+
+(k)
+
+(y = i)λx|y=i .
+
+Detailed proof of Proposition 3.1 can be found in Appendix A.3. Based on Proposition 3.1, we have
+the following remarks.
+Remark 3.2. The weight divergence after the m-th synchronization mainly comes from two parts,
+(f )
+(c)
+including the weight divergence after the (m−1)-th divergence, i.e., ||w(m−1)T −w(m−1)T ||, and the
+weight divergence induced by the probability distance for the data distribution on client k compared
+PC
+with the actual distribution for the whole population, i.e., i=1 ||p(k) (y = i) − p(y = i)||.
+Remark 3.3. The weight divergence after the (m − 1)-th synchronization is amplified by
+(k)
+(k) T
+PK n(k) (a(k) )T
+PK
+)
+(k)
+PK
+≥ 1, k=1 nPK(a n(k)
+≥ 1. Hence, if different clients start from
+(k) . Since a
+k=1
+n
+k=1
+k=1
+different initial w in the federated learning, then, even if the data is IID, large weight divergence will
+still be encountered, which leads to degraded accuracy.
+Remark 3.4. When all the clients start from the same initialization as the centralized settings,
+PC
+(k)
+(y = i) − p(y = i)|| becomes the root cause of the weight divergence. This term is
+i=1 ||p
+EMD between the data distribution on client k and the population distribution, when the distance
+measurement is defined as ||p(k) (y = i) − p(y = i)||. The impact of EMD is affected by the learning
+(c)
+rate η, the number of steps before synchronization T , and the gradient gmax (wmT −1−k ).
+Based on Proposition 3.1, we validate that EMD is a good metric to quantify the weight divergence
+and thus the test accuracy of F edAvg with non-IID data in Section 3.2.
+5
+
+3.2
+
+Experimental Validation
+
+3.2.1
+
+Experimental Setup
+
+The training set is sorted and partitioned into 10 clients, M examples per client. Eight values are
+chosen for EMD listed in Table 2. Because there may exist various distributions for one EMD, we
+aim to generate five distributions to compute the average and variations of the weight divergence
+and the test accuracy. First, one probability distribution P over 10 classes is generated for one EMD.
+Based on M and P , we can compute the number of examples over 10 classes for one client. Second,
+a new distribution P 0 is generated by shifting the 10 probabilities of P by 1 element. The number of
+examples for the second client can be computed based on P 0 . This procedure is repeated for the other
+8 clients. Thus, all the 10 clients have a distribution of M examples over 10 classes and each example
+is only used once. Finally, the above two steps are repeated 5 times to generate 5 distributions for
+each EMD. The CNNs are trained by F edAvg over 500 communication rounds on the data processed
+from the above procedures. There are the key parameters used for training: for MNIST, B = 100, E =
+1, η = 0.01, decay rate = 0.995; for CIFAR-10, B = 100, E = 1, η = 0.1, decay rate = 0.992; for KWS,
+B = 50, E = 1, η = 0.05, decay rate = 0.992. The weight divergence is computed according to Eq. (1)
+after 1 synchronization (i.e., 1 communication round).
+3.2.2
+
+Weight Divergence vs. EMD
+
+The mean and standard deviation of the weight divergence are computed over 5 distributions for each
+EMD. For all the three datasets, the weight divergence of each layer increases with EMD as shown
+in Figure 4. The initial weights are identical for all SGD, IID and non-IID experiments on each
+dataset. Thus, according to Remark 3.2, the weight divergence after 1 synchronization is not affected
+(f )
+(c)
+by the (m − 1)-th divergence, ||w(m−1)T − w(m−1)T ||, because it is zero when m = 1. Therefore,
+the results in Figure 4 support Proposition 3.1 that the bound of weight divergence is affected by
+EMD. This effect is more significant in the first convolutional layer and the last fully connected
+layer. Moreover, the maximum weight divergence for CIFAR-10 is significantly higher than that for
+MNIST and KWS, which is affected by the gradient term in Eq. (2) due to the problem itself and
+different CNN architectures. Note that the initial weights are also identical across the clients to avoid
+accuracy loss according to Remark 3.3, which is consistent with the significant increase in the loss
+when averaging models with different initialization [3, 23].
+3.2.3
+
+Test Accuracy vs. EMD
+
+The mean and standard deviation of the test accuracy are computed over the same 5 distributions
+for each EMD. The results are summarized in Table 2 and are plotted against EMD in Figure 5.
+For all the three datasets, the test accuracy decreases with EMD. The decreasing rate is relatively
+small at first and becomes larger as the data becomes more non-IID. So there is a trade-off between
+balancing non-IID data towards IID and improving the accuracy of F edAvg. The error bars on
+the plots represent the variations of test accuracy due to various distributions for each EMD. To
+take a closer look at the variations, the boxplots show the test accuracy across 5 runs when EMD
+= 1.44. Moreover, Table 2 shows that the maximum variation is less than 0.086% for MNIST, 2%
+
+(a) MNIST
+
+Weight divergence
+
+0.10
+
+1.0
+
+(b) CIFAR-10
+
+0.10
+
+0.08
+
+0.8
+
+0.08
+
+0.06
+
+0.6
+
+0.06
+
+0.04
+
+0.4
+
+0.04
+
+0.02
+
+0.2
+
+0.02
+
+0.00
+
+(c) KWS
+conv1
+conv2
+fc1
+fc2
+fc3
+
+0.0
+0.00
+1.0
+1.5
+0.0
+0.5
+1.0
+1.5
+0.0
+0.5
+1.0
+1.5
+EMD
+EMD
+EMD
+Figure 4: Weight divergence vs. EMD across CNN layers on (a) MNIST, (b) CIFAR-10 and (c) KWS
+datasets. The mean value and standard deviation are computed over 5 distributions for each EMD.
+0.0
+
+0.5
+
+6
+
+(a) Test accuracy vs. EMD
+
+0.8
+MNIST
+CIFAR-10
+KWS
+
+0.6
+0.4
+
+0.0
+
+0.5
+
+0.9807
+Test accuracy
+
+Test accuracy
+
+1.0
+
+1.0
+EMD
+
+1.5
+
+(b) Test accuracy for EMD=1.44
+
+0.9803
+
+0.743
+
+0.8005
+
+0.739
+
+0.7985
+
+0.735
+
+0.7965
+
+0.9799
+0.9795
+0.9791
+
+MNIST
+
+0.731
+
+CIFAR-10
+
+0.7945
+
+KWS
+
+Figure 5: (a) Test accuracy vs. EMD for F edAvg and (b) boxplots of weight divergence when EMD
+= 1.44 for MNIST, CIFAR-10 and KWS datasets. The mean and standard deviation are computed
+over 5 distributions for each EMD.
+for CIFAR-10, and 1% for KWS, respectively. Thus, the accuracy is affected by EMD instead of
+the underlying distributions. It indicates that EMD can be used to estimate the accuracy of F edAvg
+given a distribution of data. In addition, the maximum reduction in the accuracy is 6.53% for MNIST,
+37.03% for CIFAR-10 and 40.21% for KWS, respectively. This difference may be affected by the
+gradient in Eq. (2) depending on the problem itself.
+Table 2: The mean and standard deviation of the test accuracy of F edAvg over 5 distributions. The
+standard deviation is very small compared to the scale
+of the mean value.
+.
+Earth mover’s distance (EMD)
+mean
+MNIST
+std (×10−4 )
+CIFARmean
+10
+std (×10−3 )
+mean
+KWS
+std (×10−3 )
+
+4
+
+0
+0.9857
+6.431
+0.8099
+2.06
+0.8496
+1.337
+
+0.36
+0.9860
+2.939
+0.8090
+2.694
+0.8461
+3.930
+
+0.72
+0.9852
+4.604
+0.8017
+2.645
+0.8413
+4.410
+
+1.08
+0.9835
+4.308
+0.7817
+3.622
+0.8331
+5.387
+
+1.44
+0.9799
+4.716
+0.7379
+3.383
+0.7979
+1.763
+
+1.62
+0.9756
+8.085
+0.6905
+2.048
+0.7565
+3.329
+
+1.764
+0.962
+8.232
+0.5438
+9.655
+0.5827
+1.078
+
+1.8
+0.922
+1.939
+0.4396
+1.068
+0.4475
+4.464
+
+Proposed Solution
+
+In this section, we propose a data-sharing strategy to improve F edAvg with non-IID data by creating
+a small subset of data which is globally shared between all the edge devices. Experiments show that
+test accuracy can be increased by ~30% on CIFAR-10 dataset with only 5% globally shared data.
+4.1
+
+Motivation
+
+As shown in Figure 5, the test accuracy falls sharply with respect to EMD beyond a certain threshold.
+Thus, for highly skewed non-IID data, we can significantly increase the test accuracy by slightly
+reducing EMD. As we have no control on the clients’ data, we can distribute a small subset of global
+data containing a uniform distribution over classes from the cloud to the clients. This fits in with the
+initialization stage of a typical federated learning setting. In addition, instead of distributing a model
+with random weights, a warm-up model can be trained on the globally shared data and distributed to
+the clients. Because the globally shared data can reduce EMD for the clients, the test accuracy is
+expected to improve.
+4.2
+
+Data-sharing Strategy
+
+Herein, we propose a data-sharing strategy in the federated learning setting as illustrated in Figure
+6. A globally shared dataset G that consists of a uniform distribution over classes is centralized in
+the cloud. At the initialization stage of F edAvg, the warm-up model trained on G and a random α
+portion of G are distributed to each client. The local model of each client is trained on the shared
+data from G together with the private data from each client. The cloud then aggregates the local
+7
+
+↵⇥ Shared
+
+Data
+
+Data
+
+↵⇥ Shared
+Data
+
+↵⇥ Shared
+Data
+
+↵⇥ Shared
+Data
+
+↵⇥ Shared
+Data
+
+Private
+Data
+
+Private
+Data
+
+Private
+Data
+
+0.80
+1.25
+
+EMD
+Test accuracy
+
+Test accuracy
+
+↵⇥ Shared
+
+(a)
+
+0.80
+
+Shared
+Data
+
+0.75
+
+1.00
+
+0.75
+
+0.70
+
+0.75
+
+0.70
+
+0.65
+
+0.50
+
+0.65
+
+5.0 10.0 15.0 20.0 25.0
+(%)
+
+(b)
+
+= 20%
+= 10%
+0.0 20.0 40.0 60.0 80.0 100.0
+(%)
+
+Figure 6: Illustration of the data- Figure 7: (a) Test accuracy and EMD vs. β (b) Test accuracy
+vs. the distributed fraction α
+sharing strategy.
+models from the clients to train a global model with F edAvg. There are two trade-offs: (a) the
+||G||
+× 100%, where
+trade-off between the test accuracy and the size of G, which is quantified as β = ||D||
+D represents the total data from the clients (b) the trade-off between the test accuracy and α. The
+following experiments are performed on CIFAR-10 to address these two trade-offs.
+The CIFAR-10 training set is partitioned into two parts, the client part D with 40,000 examples and
+the holdout part H with 10,000 examples. D is partitioned into 10 clients with 1-class non-IID data.
+H is used to create 10 random G0 s with β ranging from 2.5% to 25%. First, each entire G is merged
+with the data of each client and 10 CNNs are trained by F edAvg on the merged data from scratch
+over 300 communication rounds. The test accuracy is plotted against β in Figure 7. Second, we pick
+two specific G0 s, i.e., G10% when β = 10% and G20% when β = 20%. For each G, (a) a warm-up
+CNN model is trained on G to a test accuracy of ~60% (b) only a random α portion is merged with
+the data of each client and the warm-up model is trained on the merged data. The test accuracy is
+plotted against α in Figure 7. The same training parameters for Section 3 are used.
+As shown in Figure 7(a), the test accuracy increases up to 78.72% as β increases. Even with a lower β
+= 10%, we can still achieve a test accuracy of 74.12% for the extreme 1-class non-IID data, compared
+to 44% without the data-sharing strategy. Moreover, it turns out that it is not necessary to distribute
+the entire G to the clients to achieve a similar accuracy. Instead, only a random portion of G needs to
+be distributed to each client. As shown in Figure 7(b), the test accuracy of the warm-up model slowly
+increases with α, up to 77.08% for G20% and 73.12% for G10% . In particular, after an initially quick
+rise, the test accuracy changes less than 1% for both G20% and G10% when α changes from 50% to
+100%. Therefore, we can further reduce the size of the data that is actually received by each client
+with a proper selection of α. For instance, if we are willing to centralize 10% of the total clients’
+data in the cloud and randomly distribute 50% of the globally shared data to the clients as well as a
+warm-up model at the initialization stage of federated learning, the test accuracy of F edAvg can be
+increased by 30% for the extreme 1-class non-IID data while only 5% of the total data is actually
+received by each client.
+In summary, the data-sharing strategy offers a solution for federated learning with non-IID data. The
+size of the globally shared dataset and the random distributed fraction (α) can be tuned depending
+on the problems and applications. The strategy only needs to be performed once when federated
+learning is initialized, so the communication cost is not a major concern. The globally shared data is
+a separate dataset from the clients’ data so it is not privacy sensitive.
+
+5
+
+Conclusion
+
+Federated learning will play a key role in distributed machine learning where data privacy is of
+paramount importance. Unfortunately, the quality of model training degrades if each of the edge
+devices sees a unique distribution of data. In this work, we first show that the accuracy of federated
+learning reduces significantly, by up to ~55% for neural networks trained on highly skewed non-IID
+data. We further show that this accuracy reduction can be explained by the weight divergence, which
+can be quantified by the earth movers distance (EMD) between the distribution over classes on each
+device and the population distribution. As a solution, we propose a strategy to improve training
+on non-IID data by creating a small subset of data which is globally shared between all the edge
+devices. Experiments show that accuracy can be increased by ~30% for the CIFAR-10 dataset with
+only 5% globally shared data. There are still quite a few challenges left to make federated learning
+mainstream, but improving model training on non-IID data is key to make progress in this area.
+8
+
+References
+[1] Y. Zhang, N. Suda, L. Lai, and V. Chandra, “Hello edge: Keyword spotting on microcontrollers,” arXiv
+preprint arXiv:1711.07128, 2017.
+[2] L. Lai, N. Suda, and V. Chandra, “Cmsis-nn: Efficient neural network kernels for arm cortex-m cpus,”
+arXiv preprint arXiv:1801.06601, 2018.
+[3] H. B. McMahan, E. Moore, D. Ramage, S. Hampson, and B. A. y Arcas, “Communication-efficient
+learning of deep networks from decentralized data,” in Int. Conf. on Artificial Intelligence and Statistics,
+2017.
+[4] J. Konečnỳ, B. McMahan, and D. Ramage, “Federated optimization: Distributed optimization beyond the
+datacenter,” arXiv preprint arXiv:1511.03575, 2015.
+[5] H. B. McMahan and D. Ramage, “Federated learning: Collaborative machine learning without centralized
+training data,” in Google, 2017.
+[6] Y. Lecun, L. Bottou, Y. Bengio, and P. Haffner, “Gradient-based learning applied to document recognition,”
+in Proceedings of the IEEE, pp. 2278–2324, 1998.
+[7] A. Krizhevsky and G. Hinton, “Learning multiple layers of features from tiny images,” in Technical Report,
+University of Toronto, 2009.
+[8] W. Shakespeare, “The complete works of william shakespeare,” in https://www.gutenberg.org/ebooks/100.
+[9] K. Bonawitz, V. Ivanov, B. Kreuter, A. Marcedone, H. B. McMahan, S. Patel, D. Ramage, A. Segal, and
+K. Seth, “Practical secure aggregation for privacy-preserving machine learning,” in Proceedings of the
+2017 ACM SIGSAC Conference on Computer and Communications Security, pp. 1175–1191, ACM, 2017.
+[10] J. Konečnỳ, H. B. McMahan, F. X. Yu, P. Richtárik, A. T. Suresh, and D. Bacon, “Federated learning:
+Strategies for improving communication efficiency,” arXiv preprint arXiv:1610.05492, 2016.
+[11] Y. Lin, S. Han, H. Mao, Y. Wang, and W. J. Dally, “Deep gradient compression: Reducing the communication bandwidth for distributed training,” arXiv preprint arXiv:1712.01887, 2017.
+[12] J. Duchi, E. Hazan, and Y. Singer, “Adaptive subgradient methods for online learning and stochastic
+optimization,” Journal of Machine Learning Research, vol. 12, no. Jul, pp. 2121–2159, 2011.
+[13] T. Tieleman and G. Hinton, “Divide the gradient by a running average of its recent magnitude. coursera: Neural networks for machine learning,” tech. rep., Technical Report. Available online: https://zh.
+coursera. org/learn/neuralnetworks/lecture/YQHki/rmsprop-divide-the-gradient-by-a-running-average-ofits-recent-magnitude (accessed on 21 April 2017).
+[14] D. Kinga and J. B. Adam, “A method for stochastic optimization,” in International Conference on Learning
+Representations (ICLR), 2015.
+[15] L. Bottou, “Large-scale machine learning with stochastic gradient descent,” in Proceedings of COMPSTAT’2010, pp. 177–186, Springer, 2010.
+[16] A. Rakhlin, O. Shamir, K. Sridharan, et al., “Making gradient descent optimal for strongly convex stochastic
+optimization.,” in ICML, Citeseer, 2012.
+[17] J. Dean, G. Corrado, R. Monga, K. Chen, M. Devin, M. Mao, A. Senior, P. Tucker, K. Yang, Q. V. Le,
+et al., “Large scale distributed deep networks,” in Advances in neural information processing systems,
+pp. 1223–1231, 2012.
+[18] S. Ghadimi and G. Lan, “Stochastic first-and zeroth-order methods for nonconvex stochastic programming,”
+SIAM Journal on Optimization, vol. 23, no. 4, pp. 2341–2368, 2013.
+[19] V. Smith, C.-K. Chiang, M. Sanjabi, and A. S. Talwalkar, “Federated multi-task learning,” in Advances in
+Neural Information Processing Systems, pp. 4427–4437, 2017.
+[20] P. Warden, “Speech commands: A dataset for limited-vocabulary speech recognition,” arXiv preprint
+arXiv:1804.03209, 2018.
+[21] A. Krizhevsky, I. Sutskever, and G. E. Hinton, “Imagenet classification with deep convolutional neural
+networks,” in Advances in neural information processing systems, pp. 1097–1105, 2012.
+[22] B. Graham, “Fractional max-pooling,” arXiv preprint arXiv:1412.6071, 2014.
+[23] I. J. Goodfellow, O. Vinyals, and A. M. Saxe, “Qualitatively characterizing neural network optimization
+problems,” in arXiv preprint arXiv:1412.6544, 2014.
+
+9
+
+A
+
+Appendix
+
+A.1
+
+Test accuracy over communication rounds for a smaller batch size
+
+(a) MNIST
+
+1.00
+
+Test accuracy
+
+0.95
+0.90
+0.85
+0.80
+0.75 0
+
+0.9
+0.8
+0.7
+0.6
+0.5
+0.4
+0.3
+B=100 SGD
+0.2
+B=10 E=1 IID
+B=10 E=1 Non-IID(2) 0.1
+B=10 E=1 Non-IID(1)
+100 200 300 400 500 0.0 0
+Communication rounds
+
+(b) CIFAR-10
+
+100 200 300 400
+Communication rounds
+
+0.9
+0.8
+0.7
+0.6
+0.5
+0.4
+0.3
+0.2
+0.1
+500 0.0 0
+
+(c) KWS
+
+100 200 300 400
+Communication rounds
+
+500
+
+Figure 8: Test accuracy over communication rounds of F edAvg compared to SGD with IID and
+non-IID data of (a) MNIST (b) CIFAR-10 and (c) KWS datasets. Non-IID(2) represents the 2-class
+non-IID and non-IID(1) represents the 1-class non-IID.
+
+A.2
+
+Test accuracy of SGD and F edAvg with IID or non-IID data
+
+Table 3: The test accuracy of SGD and F edAvg with IID or non-IID data.
+Training
+B
+E
+MNIST (%) CIFAR-10 (%) KWS (%)
+SGD
+large NA
+98.69
+81.51
+84.46
+FedAvg IID
+large
+1
+98.69
+80.83
+84.82
+FedAvg non-IID(2)
+large
+1
+96.29
+67.00
+72.30
+FedAvg non-IID(1)
+large
+1
+92.17
+43.85
+40.82
+FedAvg non-IID(1)
+large
+5
+91.92
+44.40
+40.84
+Pre-trained non-IID(1) large
+1
+96.19
+61.72
+63.58
+SGD
+small NA
+99.01
+84.14
+86.28
+FedAvg IID
+small
+1
+99.12
+82.62
+86.64
+FedAvg non-IID(2)
+small
+1
+97.24
+68.53
+71.21
+FedAvg non-IID(1)
+small
+1
+87.70
+32.83
+31.78
+
+A.3
+
+Proof of Proposition 3.1
+(f )
+
+(c)
+
+Proof. Based on the definition of wmT and wmT , we have
+10
+
+(f )
+
+(c)
+
+||wmT − wmT ||
+K
+X
+
+=||
+
+n(k)
+(k)
+(c)
+w
+− wmT ||
+PK
+(k) mT
+n
+k=1
+k=1
+
+=||
+
+C
+X
+n(k)
+(k)
+(k)
+(wmT −1 − η
+p(k) (y = i)∇w Ex|y=i [log fi (x, wmT −1 )]
+PK
+(k)
+n
+k=1
+i=1
+k=1
+K
+X
+
+(c)
+
+− wmT −1 + η
+1
+
+≤||
+
+K
+X
+k=1
+
+(k)
+
+n
+PK
+
+k=1
+
++ η||
+2
+
+i=1
+
+(c)
+
+p(y = i)∇w Ex|y=i [log fi (x, wmT −1 )])
+
+(k)
+
+n(k)
+
+(c)
+
+wmT −1 − wmT −1 ||
+
+K
+X
+k=1
+
+≤
+
+C
+X
+
+C
+X
+
+n(k)
+PK
+
+(k)
+k=1 n
+i=1
+
+(k)
+
+(c)
+
+p(k) (y = i)(∇w Ex|y=i [log fi (x, wmT −1 )] − ∇w Ex|y=i [log fi (x, wmT −1 )])||
+
+K
+X
+
+C
+X
+n(k)
+(c)
+(k)
+p(k) (y = i)λx|y=i )||wmT −1 − wmT −1 ||.
+(1 + η
+PK
+(k)
+n
+k=1
+i=1
+k=1
+
+PK
+(k)
+Here, inequality 1 holds because for each class i ∈ [C], p(y = i) = k=1 PKn n(k) p(k) (y = i),
+k=1
+i.e., the data distribution over all the clients is the same as the distribution over the whole population.
+Inequality 2 holds because we assume ∇w Ex|y=i [log fi (x, w)] is λx|y=i -Lipschitz.
+(k)
+
+(c)
+
+In terms of ||wmT −1 − wmT −1 || for client k ∈ [K], we have
+(k)
+
+(c)
+
+||wmT −1 − wmT −1 ||
+(k)
+=||wmT −2 − η
+
+C
+X
+i=1
+
+(c)
+
+− wmT −2 + η
+(k)
+
+(k)
+
+p(k) (y = i)∇w Ex|y=i [log fi (x, wmT −2 )]
+C
+X
+i=1
+
+(c)
+
+≤||wmT −2 − wmT −2 || + η||
+−
+3
+
+C
+X
+i=1
+
+(k)
+
+4
+
+i=1
+
+C
+X
+i=1
+
+(k)
+
+(c)
+
+p(k) (y = i)(∇w Ex|y=i [log fi (x, wmT −2 )] − ∇w Ex|y=i [log fi (x, wmT −2 )])||
+
+C
+X
+i=1
+
+≤(1 + η
+
+i=1
+
+(k)
+
+p(k) (y = i)∇w Ex|y=i [log fi (x, wmT −2 )]
+(c)
+
+(c)
+
+C
+X
+
+C
+X
+
+p(y = i)∇w Ex|y=i [log fi (x, wmT −2 )]||
+
+≤||wmT −2 − wmT −2 || + η||
++ η||
+
+(k)
+
+p(y = i)∇w Ex|y=i [log fi (x, wmT −2 )]||
+
+(c)
+
+(p(k) (y = i) − p(y = i))∇w Ex|y=i [log fi (x, wmT −2 )]||
+(k)
+
+(c)
+
+(c)
+
+p(k) (y = i)Lx|y=i )||wmT −2 − wmT −2 || + ηgmax (wmT −2 )
+
+C
+X
+i=1
+
+||p(k) (y = i) − p(y = i)||.
+(3)
+
+Here, inequality 3 holds because
+11
+
+||
+=||
+
+C
+X
+
+(k)
+
+p
+
+i=1
+C
+X
+i=1
+
+(k)
+
+p(k) (y = i)∇w Ex|y=i [log fi (x, wmT −2 )] −
+
+C
+X
+i=1
+
+≤||
+
+C
+X
+i=1
+
+(k)
+(y = i)∇w Ex|y=i [log fi (x, wmT −2 )] −
+
+C
+X
+i=1
+C
+X
+i=1
+
+(c)
+
+p(k) (y = i)∇w Ex|y=i [log fi (x, wmT −2 )] −
+
+(c)
+
+p(y = i)∇w Ex|y=i [log fi (x, wmT −2 )]||
+(c)
+
+p(k) (y = i)∇w Ex|y=i [log fi (x, wmT −2 )]+
+
+C
+X
+i=1
+
+(c)
+
+p(y = i)∇w Ex|y=i [log fi (x, wmT −2 )]||
+
+(k)
+
+(c)
+
+p(k) (y = i)(∇w Ex|y=i [log fi (x, wmT −2 )] − ∇w Ex|y=i [log fi (x, wmT −2 )])||
++ ||
+
+C
+X
+i=1
+
+(c)
+
+(p(k) (y = i) − p(y = i))∇w Ex|y=i [log fi (x, wmT −2 )]||.
+(c)
+
+(c)
+
+Inequality 4 holds because gmax (wmT −2 ) = maxC
+i=1 ||∇w Ex|y=i log fi (x, wmT −2 )||.
+P
+C
+Based on Eq. (3), let a(k) = 1 + η i=1 p(k) (y = i)λx|y=i , by induction, we have
+(c)
+
+(k)
+
+||wmT −1 − wmT −1 ||
+(k)
+
+(c)
+
+(c)
+
+≤a(k) ||wmT −2 − wmT −2 || + ηgmax (wmT −2 )
+(k)
+
+(c)
+
+≤(a(k) )2 ||wmT −3 − wmT −3 || + η
+(k)
+
+C
+X
+i=1
+
+(c)
+
+(c)
+
+i=1
+
+||p(k) (y = i) − p(y = i)||
+(c)
+
+=(a(k) )T −1 ||w(m−1)T − w(m−1)T || + η
+
+C
+X
+i=1
+C
+X
+i=1
+
+||p(k) (y = i) − p(y = i)||(
+||p(k) (y = i) − p(y = i)||(
+
+T
+−2
+X
+j=0
+
+T
+−2
+X
+j=0
+
+(c)
+
+K
+X
+
+n(k)
+(f )
+(c)
+((a(k) )T ||w(m−1)T − w(m−1)T ||
+PK
+(k)
+k=1 n
+k=1
++η
+
+C
+X
+i=1
+
+T
+−1
+X
+
+||p(k) (y = i) − p(y = i)||(
+
+Hence proved.
+
+12
+
+j=0
+
+(c)
+
+(a(k) )j gmax (wmT −2−j ))
+
+||wmT − wmT ||
+≤
+
+(c)
+
+(a(k) )j gmax (wmT −2−j ))
+
+Therefore,
+(f )
+
+(c)
+
+||p(k) (y = i) − p(y = i)||(gmax (wmT −2 ) + a(k) gmax (wmT −3 ))
+
+≤(a(k) )T −1 ||w(m−1)T − w(m−1)T || + η
+(f )
+
+C
+X
+
+(c)
+
+(a(k) )j gmax (wmT −1−k ))).
+
+

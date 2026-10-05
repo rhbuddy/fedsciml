@@ -1,0 +1,853 @@
+DeepM&Mnet: Inferring the electroconvection multiphysics
+fields based on operator approximation by neural networks
+Shengze Caia,1 , Zhicheng Wanga,1 , Lu Lub , Tamer A. Zakic , George Em Karniadakisa,∗
+
+arXiv:2009.12935v1 [physics.comp-ph] 27 Sep 2020
+
+a
+
+b
+
+Division of Applied Mathematics, Brown University, Providence, RI, 02912, USA
+Department of Mathematics, Massachusetts Institute of Technology, Cambridge, MA, 02139, USA
+c
+Department of Mechanical Engineering, Johns Hopkins University, Baltimore, MD 21218, USA
+
+Abstract
+Electroconvection is a multiphysics problem involving coupling of the flow field with
+the electric field as well as the cation and anion concentration fields. For small Debye lengths, very steep boundary layers are developed, but standard numerical methods can simulate the different regimes quite accurately. Here, we use electroconvection as a benchmark problem to put forward a new data assimilation framework, the
+DeepM&Mnet, for simulating multiphysics and multiscale problems at speeds much
+faster than standard numerical methods using pre-trained neural networks (NNs). We
+first pre-train DeepONets that can predict independently each field, given general inputs from the rest of the fields of the coupled system. DeepONets can approximate
+nonlinear operators and are composed of two sub-networks, a branch net for the input
+fields and a trunk net for the locations of the output field. DeepONets, which are
+extremely fast, are used as building blocks in the DeepM&Mnet and form constraints
+for the multiphysics solution along with some sparse available measurements of any
+of the fields. We demonstrate the new methodology and document the accuracy of
+each individual DeepONet, and subsequently we present two different DeepM&Mnet
+architectures that infer accurately and efficiently 2D electroconvection fields for unseen electric potentials. The DeepM&Mnet framework is general and can be applied
+for building any complex multiphysics and multiscale models based on very few measurements using pre-trained DeepONets in a “plug-and-play” mode.
+Keywords: Mutiphysics, multiscale modeling, deep learning, operator
+approximation, DeepONet, data assimilation
+1. Introduction
+Recently, deep learning techniques have been introduced in modeling diverse fluid
+mechanics problems [1, 2, 3]. A promising direction is focused on the surrogate modeling of complex fluid systems, which are typically described by partial differential
+∗
+
+Corresponding author:
+Email address: george_karniadakis@brown.edu (George Em Karniadakis)
+1
+The authors contributed equally to this work.
+
+Preprint submitted to Elsevier
+
+September 29, 2020
+
+equations (PDEs). For example, Raissi et al. [4] applied physics-informed neural networks (PINNs) to obtain accurate solutions of a wide class of PDEs. The governing
+equations are embedded in PINNs and form the constraints of the solutions. Similar
+approaches for scientific machine learning have been proposed in a number of recent
+works [5, 6, 7]. Following the framework of [4], a number of learning-based methods
+were proposed to simulate different types of fluid mechanics problems [8, 9, 10, 11].
+In addition to solving forward problems, neural networks are also used to identify the
+unknown coefficient values of PDEs from data [12, 13, 14, 15, 16]. A typical example is
+to learn the Reynolds number of Navier-Stokes equations based on some measurements
+of flow [17, 18]. This is a data-driven inverse problem, which is not easy to address by
+conventional computational fluid mechanics (CFD) methods.
+Overall, the recent applications of deep learning to physics modeling are based on
+the universal approximation theorem stating that neural networks (NNs) can be used
+to approximate any continuous function [19]. However, there are other approximation
+theorems stating that a neural network can approximate accurately any continuous
+nonlinear functional [20] or operator (a mapping from a function to another function)
+[21]. Based on the universal approximation theorem for operator, Lu et al. [22] proposed
+a specific network architecture, the deep operator network (DeepONet), to learn both
+explicit as well as implicit operators, e.g., in the form of PDEs. DeepONet, which is
+designed based on rigorous theory, is composed of two sub-networks, the branch net for
+the input function and the trunk net for the coordinate to evaluate the output function.
+In [22], the authors presented theoretical analysis and demonstrated various examples
+to show the high accuracy and high efficiency of DeepONets. Inspired by the work
+of [22], here we first pose the related question: “Can DeepONet learn the mapping
+between two coupled state variables for complex fluid systems?” If this is the case, we
+ask: “Can the pre-trained DeepONets be combined in a simplified data assimilation
+framework, using a single NN, to accelerate significantly modeling of multiphysics and
+multiscale flow problems?”
+In this paper, our first goal is to demonstrate the effectiveness of DeepONets for
+multiphysics and multiscale problems in fluid mechanics. To this end, we use electroconvection as a benchmark problem, which describes electrolyte flow driven by an
+electric voltage and involves multiphysics, i.e., the mass, momentum and cation/anion
+transport as well as electrostatic fields [23]. Electroconvection is observed in many electrochemical and microfluidic systems that usually have ion selective interfaces. Since
+the development of the theoretical formulations of electroconvection by [24, 25], which
+were later confirmed by experiment in [26], a considerable number of numerical studies
+has been published [27, 28, 29, 23]. More recently, several 3D interesting simulations
+have been presented in [30, 31]. The main bottleneck of the simulation of electroconvection is the computational cost to resolve the electric double layer (EDL), the
+thickness of which is characterized by a dimensionless parameter, namely the Debye
+length (). In the aforementioned simulations,  = 10−3 is used, which is larger than
+the physical realistic value in experiments, i.e.,  < 10−4 , although studies show that
+the mean transport rate is only weakly sensitive to  [30]. Here, we aim to present a
+proof-of-concept for a new deep learning framework and we use electronvection as a
+2
+
+Figure 1: DeepM&Mnet for 2D electroconvection problem: schematic of the parallel architecture.
+Here, the neural network (NN), which is used to approximate the multiphysics solutions, is a fullyconnected network with trainable parameters. The pre-trained DeepONets are fixed (not trainable)
+and they are considered as the constraints of the NN outputs.
+
+benchmark multiphysics problem.
+To apply DeepONets to electroconvection, we train DeepONets to predict each field
+independently by giving inputs from the rest of the fields. Upon supervised training
+with labeled data, the DeepONets can predict very accurately and efficiently the target
+field. There are some existing learning-based methods that can perform similar inputoutput mappings. In particular, the most common algorithm is the convolutional
+neural networks (CNNs), which are used to learn mapping between two variables when
+the input and output functions are treated as images [32, 33, 34, 35]. For example,
+Kim and Lee [35] used a CNN to predict the wall-normal heat flux from the wall-shear
+stresses and pressure. However, this kind of approach is limited to problems where the
+input and output are represented by 2D maps with equispaced grids. On the contrary,
+it is not necessary to include all the grid values inside the computational domain for
+the training data.
+In addition to the application of DeepONets, another objective in this paper is to
+put forward a new framework, the DeepM&Mnet, for simulating general multiphysics
+and multiscale problems. To use the DeepONets for prediction of an independent
+condition, at least one of the electroconvection fields is required. However, this is
+not realistic in general. Therefore, we develop the DeepM&Mnet, which can integrate
+several pre-trained DeepONets with a few measurements from any of the fields to
+produce the full fields of the coupled multiphysics system. To this end, we develop two
+architectures of DeepM&Mnet. One of them, the parallel DeepM&Mnet, is illustrated
+in Figure 1. In the context of DeepM&Mnet, a neural network, which takes the spatial
+coordinates as inputs, is applied to approximate the multiphysics solutions. In other
+words, the neural network is the surrogate model of the multiphysics electroconvection.
+Then, the pre-trained DeepONets are used as building blocks and form the constraints
+3
+
+for the solutions. The proposed DeepM&Mnet can be considered as a framework
+assimilating the data measurements and the physics-related operators, but it is much
+more flexible and efficient than any other conventional numerical method in terms of
+dealing with such assimilation problem.
+The paper is organized as follows. In Section 2, we introduce the numerical simulation of the electroconvection problem and the data preparation. In Section 3, we
+introduce the concept of DeepONet and train several DeepONets to predict separately
+each field accurately. In Section 4, we propose two architectures of DeepM&Mnet,
+namely the parallel DeepM&Mnet and series DeepM&Mnet, and then evaluate the
+performance of these new networks. Finally, we conclude the paper in Section 5. We
+also present some details on the implementations of DeepONet and DeepM&Mnet, e.g.,
+the choice of the training loss, regularization issues, etc., in the appendices.
+2. Numerical simulation of electroconvection and data generation
+We developed an eletroconvection solver using the high-order spectral element
+method [36]. Following the numerical study in [27], here the governing equations in
+dimensionless form, including the Stokes equations, the electric potential and the ion
+transport equations, are given as follows:
+0 = −∇p + ∇2 u + fe ,
+∇ · u = 0,
+2 2
+−2 ∇ φ = ρe ,
+∂c±
+= −∇ · J± ,
+∂t
+J± = c± u − ∇c± ∓ c± ∇φ.
+
+(1a)
+(1b)
+(1c)
+(1d)
+(1e)
+
+Here, u is the velocity vector, p is the pressure field and φ is the electric potential.
+Moreover, c+ and c− are the cation and anion concentrations, respectively. Also,
+ρe = z(c+ − c− ) is the free charge density with ionic valence z = ±1, fe = −κρe ∇φ/22
+is the electrostatic body force, where  is the Debye length; κ is the electrohydrodynamic
+coupling constant and its value is 0.5 throughout this paper.
+We consider electroconvection between an ion-selective surface and a stationary
+reservoir subject to an applied voltage ∆Φ. As shown in the Figure 2, the simulation
+domain is a rectangle of size [−3, 3] × [0, 1]. On the top surface (y = 1), no-slip and
+no-penetration wall boundary condition (u = 0) for the Stokes equations, constant
+ion concentrations (c+ = c− = 1) and constant potential (φ = ∆Φ) are imposed.
+The bottom surface (y = 0) is also a solid wall, and it is assumed to be impermeable
+to anions (J − = 0), but permeable to cations whose concentration is maintained at
+c+ = 2. The potential on the bottom surface is φ = 0. Periodic boundary conditions
+are used on both the right (x = 3) and left (x = −3) boundaries. The electroconvection
+solver is developed based on our spectral element library NekTar. The spectral element
+is used to discretize the governing equations in space and the second-order stiffly-stable
+scheme is employed for time advancing [36].
+4
+
+Figure 2: Simulation domain and boundary conditions for 2D electroconvection.
+
+The key parameters for the eletroconvection system are  and ∆Φ. In this paper,
+in order to validate the spectral element electroconvection solver, we first performed
+nine cases of 2D simulations at a fixed  = 10−3 , while ∆Φ = 25, 30, 35, 40, 50,
+55, 80, 100 and 120, respectively. The computational domain consists of 48 × 64
+quadrilateral elements, which are uniformly distributed in the x direction, but clustered
+in the vicinity of the walls. The smallest element size in the y direction is 0.0011. Same
+as the procedure in [27], the initial condition is generated by solving the governing
+equations without flow, and randomly perturbing the resulting concentration fields
+locally by 1%. Moreover, the time step is δt = 5 × 10−7 , and 4 spectral element
+modes (3rd order polynomials) and 7 quadrature points (per direction) are used in all
+the validation cases. All the simulations stopped after t > 0.3 and convergence was
+verified. The collection of the statistical samples began at t = 0.15 when the current
+on the top surface entered into a statistically stationary state. Figure 3 shows the
+comparisons of current spectral element solutions to those of [27]. Same as the finding
+in [27], it can be observed from Figure 3 (a) that the current (I) on the top surface
+is steady at low voltage ∆Φ = 25, it becomes unsteady when ∆Φ = 40, and it shows
+chaotic behaviour as the ∆Φ is increased further. Quantitatively, the time averaged
+current < I > is in good agreement with the results of [27] , as shown in Figure 3 (b).
+With the spectral element code being fully validated, subsequently in order to
+generate the training data we performed simulations at  = 10−2 with ∆Φ varying in
+the range [5, 75] systematically. The flow is steady under these conditions. Note that
+the computational domain is the same as that used in the validation, but the number
+of elements is reduced to 32 × 32. Also since a bigger  is used, the smallest element
+size in y direction is increased to 0.0082, the time step is increased to δt = 10−5 ,
+the number of spectral element modes is 3 and the number of quadrature points in
+each element in each direction is 5. All the simulations stopped at t = 2.5 when the
+time is sufficient long for the current on the top surface to reach steady state. For
+each simulation condition, we save the 2D snapshots of φ, u, v and c± at time instant
+t = 2.5, which will be used as the training data.
+
+5
+
+(a)
+
+(b)
+
+Figure 3: Spectral element simulation results of the current density (I) on the top wall and validation
+against the simulations of [27]. (a) x-averaged I as a function of time (t): black line: applied voltage
+∆Φ = 25; blue line: ∆Φ = 40; green line: ∆Φ = 80; red line: ∆Φ = 120. (b) Time and x-averaged
+< I > as a function of ∆Φ: red circles: NekTar simulation; blue triangles: simulation results of [27].
+
+3. DeepONets for 2D Electroconvection
+3.1. The building blocks: DeepONets
+In this section, we describe the DeepONets that will be used as the building blocks
+in DeepM&Mnets. The DeepONet was proposed in [22] for learning general nonlinear
+operators, including different types of partial differential equations (PDEs). Let G
+be an operator mapping from a space of functions to another space of functions. In
+this study, G is represented by a DeepONet, which takes inputs composed of two
+components: a function U and the location points (x, y), and outputs G(U )(x, y).
+According to the physics of electroconvection, we design five independent DeepONets,
+which are divided into two classes. The first one takes the electric potential φ(x, y) as
+the input and predicts the velocity vector field (u, v) and concentration fields (c+ , c− ),
+which are denoted as Gu , Gv , Gc+ and Gc− , respectively. The second one is used to
+predict φ by using the cation and anion concentrations, which is represented by Gφ .
+The definitions of these DeepONets are given in Table 1. We should mention that the
+pressure field of the electroconvection is not considered in this work. However, it should
+be easy to include the pressure in the context of DeepONets as well as DeepM&Mnets.
+In this paper, we apply the “unstacked” architecture for DeepONet, which is composed of a branch network and a trunk network. DeepONets are implemented in
+DeepXDE [37], a user-friendly Python library designed for scientific machine learning. The schematic diagrams of the proposed networks are illustrated in Figure 4. In
+this framework, the trunk network takes the coordinates (x, y) as input and outputs
+[t1 , t2 , · · · , tp ]T ∈ Rp . In addition, the input function, which is represented by m discrete values (e.g., [φ(x1 , y1 ), · · · , φ(xm , ym )]T ), is fed into the branch network. Then
+the two vectors from the branch and trunk nets are merged together via a dot product to obtain the output function value. We use the fully-connected networks as the
+sub-networks (i.e., trunk and branch nets) in this study. The numbers of hidden layers
+and the number of neurons per layer of these sub-networks are given in Table 2.
+The DeepONets are trained by minimizing a loss function, which measures the
+6
+
+Table 1: DeepONets for 2D electroconvection: definitions of the 2D operators.
+
+DeepONets Input function Output function
+Gφ
+c+ (x, y), c− (x, y)
+φ(x, y)
+Gu
+φ(x, y)
+u(x, y)
+Gv
+φ(x, y)
+v(x, y)
+Gc+
+φ(x, y)
+c+ (x, y)
+Gc−
+φ(x, y)
+c− (x, y)
+
+Figure 4: DeepONets for 2D electroconvection: schematics of the DeepONet architectures. Left: using
+the electric potential to predict the velocity, cation and anion concentrations, i.e., Gu,v,c+ ,c− : φ →
+[u, v, c+ , c− ]; right: using the concentrations to predict the electric potential, i.e., Gφ : [c+ , c− ] → φ.
+
+difference between the labels and NN predictions. In general, the mean squared error
+(MSE) is applied:
+N
+1 X
+MSE =
+(Vi − V̂i )2 ,
+(2)
+N i=1
+where V represents the predicting variable, Vi and V̂i are the labeled data and the
+prediction, respectively; N is the number of training data. Alternatively, the mean
+absolute percentage error (MAPE) is also considered in the paper:
+N
+
+1 X |Vi − V̂i |
+,
+MAPE =
+N i=1 |Vi | + η
+
+(3)
+
+where η is a small number to guarantee the stability when Vi = 0. The MSE loss works
+well in most cases, while the MAPE loss is better for the case where the output has a
+large range of function values. In this paper, we apply the MSE loss to the training of
+Gφ,c+ ,c− and apply the MAPE loss for Gu,v . A comparison between MSE and MAPE
+applied to Gu is demonstrated in Appendix A.
+
+7
+
+Table 2: DeepONets for 2D electroconvection: architectures and loss functions of the DeepONets.
+MSE: mean squared error; MAPE: mean absolute percentage error.
+
+DeepONets Branch depth Branch width Trunk depth
+Gφ
+2
+[300, 200]
+3
+Gu
+2
+[200, 200]
+3
+Gv
+2
+[200, 200]
+3
+Gc+
+2
+[200, 200]
+3
+Gc−
+2
+[200, 200]
+3
+
+Trunk width
+Loss
+[100, 200, 200] MSE
+[100, 200, 200] MAPE
+[100, 200, 200] MAPE
+[100, 200, 200] MSE
+[100, 200, 200] MSE
+
+3.2. Training of DeepONets
+The training of DeepONets requires datasets with labeled outputs. We apply NekTar to simulate the 2D steady state fields of electroconvection problem. The computational domain is defined as Ω: x ∈ [−1, 1], y ∈ [0, 1]. As mentioned in Section
+2, different steady-state patterns can be produced by modifying the electric potential
+difference ∆Φ between the boundaries. The fields of φ(x, y), c+ (x, y), c− (x, y) and
+velocities u(x, y), v(x, y) are collected. By modifying the boundary conditions of φ,
+namely using ∆Φ = 5, 10, . . . , 75, we generate 15 steady states for this electroconvection problem. The 2D snapshots at various values of ∆Φ and some 1D profiles of
+φ(x = −0.5, y), u(x = −0.5, y), c+ (x = −0.5, y) are demonstrated in Figure 5. Note
+that throughout this paper the data of φ, u, v are normalized by ∆Φ (which is readily
+known) for enhanced stability in the DeepONet training. From the figures, we can
+find the flow pattern varies significantly with different ∆Φ. Moreover, the range of the
+velocity magnitude is very large (10−4 − 100 ), showing the multiscale nature of this
+electroconvection problem.
+For each 2D input field, we have 21 × 11 uniformly-distributed sensors to represent
+the function. As for the corresponding output fields, we randomly select 800 data points
+in the space for each state variable. In this context, we have N = 15 × 800 = 12000
+training data points in all, where one data item is a triplet. For example, for the DeepONet Gu , one data item is [φ, (x, y), u(x, y)]. We also use NekTar to generate fields
+under two additional conditions, namely ∆Φ = 13.4 and ∆Φ = 62.15, which are not
+included in the training datasets and are used for testing and validation. As mentioned
+in the introduction, the training data can be selected randomly in the computational
+domain. Moreover, it is possible to include the experimental measurements from sensors in the dataset. These advantages show the flexibility when preparing the data for
+DeepONets training.
+To train the DeepONets, we apply the Adam optimizer with a small learning rate
+2 × 10−4 , and the networks are trained over 500,000 iterations. The activation function
+of the neural network is ReLU. The losses of the training data and testing data during
+training process are presented in Figure 6. As shown, the losses converge to small
+values. Note that we apply MAPE loss function to Gu,v , and thus the magnitude of
+their losses is different from the others. Upon training, these DeepONets can predict
+all fields accurately when the input functions are given.
+8
+
+=5
+
+=20
+
+=75
+
+(a)
+
+1
+
+0
+1
+
+1
+
+(b)
+Figure 5: DeepONets for 2D electroconvection: demonstration of the training data. (a) 2D steady
+fields of φ, u and v under various boundary conditions, i.e., ∆Φ = 5, 20, 75; (b) 1D profiles of φ(x =
+−0.5, y), u(x = −0.5, y) and c+ (x = −0.5, y) for 15 training states with ∆Φ = 5, 10, . . . , 75. The
+arrow represents the increasing direction of ∆Φ.
+
+3.3. Testing of DeepONets
+Here, we demonstrate the predictions of the well-trained DeepONets for the new
+case (not included in the training set) corresponding to ∆Φ = 62.15. The results of Gu ,
+Gv , Gc+ and Gc− are shown in Figure 7. In this figure, the input function φ(x, y), which
+is represented by a set of values at the sensor locations, is fed into the networks. We
+find that the DeepONet predictions are in good agreement with the fields generated
+by NekTar simulation. The MSEs for different state variables are on the order of
+O(10−6 − 10−5 ). On the other hand, for testing the DeepONet Gφ , the inputs c+ and
+c− are provided. The prediction of φ is illustrated in Figure 8.
+The prediction errors for both ∆Φ = 13.4 and ∆Φ = 62.15 are given in Table
+3. In addition to MSEs, we also compute the relative L2 -norm errors, namely V =k
+V − V̂ k2 / k V k2 . We find that in the case of ∆Φ = 13.4, the L2 errors of the velocity
+fields (u and v) are much larger than the others. The reason is that the magnitude
+of the velocity fields is almost zero (O(10−4 )) in the case of ∆Φ = 13.4. In fact, the
+9
+
+Figure 6: DeepONets for 2D electroconvection: training and testing losses of Gφ,u,v,c+ ,c− . Note that
+we use MSE loss for training Gφ,c+ ,c− and MAPE loss for Gu,v , thus the magnitudes of the loss
+functions are different.
+
+predictions of DeepONets Gu and Gv are very close to the references, which can be
+seen from the small MSEs. To deal with the multiscale velocity, we apply the MAPE
+loss for Gu and Gv . A comparison between the MSE and MAPE applied to Gu is
+demonstrated in Appendix A.
+We should note that once the DeepONets have been well trained, the prediction
+is a simple network evaluation task that can be performed very efficiently. In the
+2D electroconvection problem, the training of a DeepONet requires approximately 2
+hours. However, the well-trained DeepONets take less than 1 second (on any common
+GPU) to predict the 2D fields when the input functions are provided. The speedup
+of DeepONets prediction versus the NekTar simulation for independent conditions is
+about 10,000 folds.
+Table 3: DeepONets for 2D electroconvection: MSEs and relative L2 -norm errors of the DeepONet
+predictions for two testing examples. In the case of ∆Φ = 13.4, the L2 errors of the velocities (u and
+v) are much larger than the others brcause the magnitude of the velocity in this case is almost zero
+(O(10−4 )).
+
+DeepONets
+Gφ
+Gu
+Gv
+Gc+
+Gc−
+
+∆Φ = 13.4
+MSE
+L2 error
+−6
+3.85 × 10
+0.23%
+1.92 × 10−9 8.54%
+2.55 × 10−9 10.01%
+6.59 × 10−6 0.49%
+4.20 × 10−6 0.36%
+
+10
+
+∆Φ = 62.15
+MSE
+L2 error
+−7
+1.53 × 10
+0.05%
+3.89 × 10−5 1.65%
+1.51 × 10−5 0.86%
+1.29 × 10−6 0.31%
+3.64 × 10−6 0.45%
+
+Figure 7: DeepONets (upper left) for 2D electroconvection: predictions of u, v, c+ and c− (from top
+to bottom) using DeepONets Gu , Gv , Gc+ and Gc− for a new case corresponding to ∆Φ = 62.15. Note
+that φ(x, y) is the input of these networks, and u, v, c+ and c− are the outputs of four independent
+DeepONets. For comparison, we generate the reference fields by using NekTar simulations and plot
+the absolute errors (right column).
+
+Figure 8: A DeepONet for 2D electroconvection: predictions of φ using the DeepONet Gφ in the case
+of ∆Φ = 62.15. Note that c+ and c− are the inputs of this network, and φ(x, y) is the output. For
+comparison, we generate the reference field by using NekTar simulations and plot the absolute error
+(right plot).
+
+11
+
+4. DeepM&Mnet for 2D Electroconvection
+In order to use the pre-trained DeepONets, the input function should be given.
+For example, the proper electric potential φ(x, y) should be provided to Gu to obtain
+the u-velocity. However, this is not realistic in general. Therefore, we develop a new
+framework called DeepM&Mnet, which allows us to infer the full fields of the coupled
+electroconvection problem when only a few measurements for any of the state variables
+are available. In the context of DeepM&Mnet, a neural network is used to approximate
+the solutions of the electroconvection, while the pre-trained DeepONets are applied as
+the constraints of the solutions. In the following, we introduce two architectures of the
+proposed DeepM&Mnet in 4.1 and present the evaluation results in 4.2.
+4.1. DeepM&Mnet architectures
+4.1.1. Parallel DeepM&Mnet archtecture
+A schematic diagram of the parallel DeepM&Mnet architecture is illustrated in
+Figure 1. In this context, a fully-connected network with trainable parameters is used
+to approximate the coupling solutions. This is an ill-posed problem since only a few
+measurements are available. Therefore, regularization is required to avoid overfitting.
+In this work, the pre-trained DeepONets are applied to deal with this problem. The
+pre-trained DeepONets are fixed (not trainable) and considered as the constraints of
+the NN outputs, which can be seen in Figure 1. The neural network, which takes
+(x, y) as inputs and outputs (φ, u, v, c+ , c− ), is trained by minimizing the following loss
+function:
+arg minθ L = λd Ldata + λo Lop + λr L2 (θ),
+(4)
+where λd , λo and λr are the weighting coefficients of the loss function; L2 (θ) =k θ k2
+is the L2 regulatization of the trainable parameters θ, which can help avoid overfitting
+and stabilize the training process2 ; and
+N
+
+Ldata =
+
+X
+
+d
+1 X
+(V (xi , y i ) − Vdata (xi , y i )),
+N
+d
++ −
+i=1
+
+V ∈(φ,u,v,c ,c )
+
+Lop =
+
+X
+
+Nop
+1 X
+(V (xi , y i ) − V 0 (xi , y i )),
+N
+op i=1
++ −
+
+V ∈(φ,u,v,c ,c )
+
+where Ldata is the data mismatch and Lop is the difference between the neural network outputs and the DeepONets outputs. V can be any variables of the investigated
+solutions (φ, u, v, c+ , c− ); V (xi , y i ) accounts for the output of the fully-connected network, while V 0 (xi , y i ) is the output of DeepONet. Nd and Nop denote the number of
+measurements for each variable and the number of points for evaluating the operators,
+respectively. Here, we would like to add some comments on DeepM&Mnet. First, it is
+not necessary to have measurements for every variable. For example, if measurements
+2
+
+The influence of the L2 regulatization term for DeepM&Mnet is investigated in Appendix B.
+
+12
+
+Figure 9: DeepM&Mnet for 2D electroconvection problem: schematic of the series architecture. Here,
+the neural network (NN), which is used to approximate only one solution (i.e., φ), is a fully-connected
+network with trainable parameters. The other variables (i.e., u, v, c+ , c− ) are hidden outputs in this
+framework. The pretrained DeepONets are fixed (not trainable) and they are considered as the
+constraints of the NN outputs.
+
+are only available for φ, the DeepONets Gu , Gv , Gc+ and Gc− can provide constraints
+for the other variables and guide the NN outputs to the correct solutions. Second, in
+the framework of parallel DeepM&Mnet (Figure 1), we do not only have the outputs of
+the fully-connected network V ∈ {φ, u, v, c+ , c− }, but also the outputs of DeepONets
+0
+0
+V 0 ∈ {φ0 , u0 , v 0 , c+ , c− }. Ideally, V and V 0 should converge to the same values. However, there is bias between V and V 0 due to the approximation error of the pre-trained
+DeepONets and the optimization error of the neural network.
+4.1.2. Series DeepM&Mnet architecture
+In addition to the parallel architecture, we also propose a series architecture of
+DeepM&Mnet, which is illustrated in Figure 9. In the series setup, the fully-connected
+network is only used to approximate φ. The other variables (i.e., u, v, c+ , c− ) are the
+hidden outputs in this framework and given by the DeepONets based on the result of
+0
+0
+φ. Moreover, with the pre-trained DeepONet Gφ , we can generate φ0 from (c+ , c− ).
+The loss function is similar to (4). However, here we assume that we only have the
+measurements of φ, and Lop only contains the φ operator, thus:
+N
+
+Ldata =
+
+d
+1 X
+(φ(xi , y i ) − φdata (xi , y i )),
+Nd i=1
+
+Nop
+1 X
+(φ(xi , y i ) − φ0 (xi , y i )).
+Lop =
+Nop i=1
+
+Different from the parallel architecture, in the series DeepM&Mnet, V only represents
+0
+0
+φ, while V 0 ∈ {φ0 , u0 , v 0 , c+ , c− }. This framework shows that given a few measurements
+13
+
+Figure 10: DeepM&Mnet for 2D electroconvection problem: results of parallel architecture. In this
+case, 20 measurements of each field are provided, which are marked with ∗. Left: results of the NN
+outputs (i.e., φ, u, v, c+ , c− ), right: point-wise difference.
+
+of φ, the neural network can produce the full field of φ. All other fields can be obtained
+by the pre-trained DeepONets inside the loop.
+4.2. DeepM&Mnet testing results
+We first investigate the performance of DeepM&Mnet for the 2D electroconvection
+problem, where the data is generated by NekTar with ∆Φ = 62.15. This corresponds to
+an input not seen by DeepM&M nor by the DeepONets, which are its building blocks.
+First, 20 measurements of each field are provided for the parallel architecture. The
+neural network contains 6 hidden layers and 100 neurons per layer. The hyperbolic
+tangent function is applied as the activation function. The neural network is trained
+by the Adam optimizer for 60,000 iterations with a learning rate 5 × 10−4 . For the
+loss function, we set λd = 10, λo = 1 and λr = 10−4 . To evaluate the operator
+loss, we randomly choose 1000 points inside the domain, namely Nop = 1000. The
+resulting fields of one typical training process are demonstrated in Figure 10. Point-wise
+differences between the NN outputs and the NekTar simulations are also given. The L2 norm errors of V are: φ = 0.80%, u = 3.14%, v = 1.85%, c+ = 3.24%, c− = 2.97%.
+In addition, we can obtain the solutions from the DeepONet outputs V 0 . The L2 -norm
+errors of V 0 are: φ0 = 0.58%, u0 = 1.34%, v0 = 0.70%, c+0 = 0.68%, c−0 = 0.78%.
+Next, we also investigate the effect of the number of sensors (Ndata ). Figure 11
+shows the convergence of the relative L2 -norm errors with respect to the number of
+measurements. For comparison, we perform data fitting using a standard neural network for the same problem, in which the operator loss Lop is not considered, namely
+L = λd Ldata + λr L2 (θ). We can see from the figure that without the DeepONet constraints, the neural network requires hundreds of sensors to obtain good accuracy (less
+than 10%) for every state variable. However, only 10 measurements of each field are
+sufficient for DeepM&Mnet to achieve the same accuracy. Note that the sensors are
+14
+
+Figure 11: DeepM&Mnet for 2D electroconvection problem: relative L2 -norm errors with respect to
+the number of measurements (Ndata ). The DeepM&Mnet results are from the neural network (namely
+V ∈ {φ, u, v, c+ , c− }) of the parallel architecture. For each setting, 5 independent training processes
+with randomly-distributed sensors are applied. The mean errors and the standard deviations are
+computed.
+
+randomly distributed inside the domain. Therefore, we perform 5 independent training
+processes with different sensor locations, and then compute the mean errors and standard deviations. In this assessment, we use sensors for all the state variables. However,
+similar performance of DeepM&Mnet can be obtained if we only have the data measurements of φ. The reason is that those pre-trained DeepONets Gu,v,c+ ,c− can provide
+strong constraints on the other variables.
+Moreover, we also demonstrate the influence of the number of operator evaluation
+points, namely Nop . We use 20 measurements for each condition. The relative L2 norm errors are demonstrated in Figure 12. We find that with more evaluation points
+for DeepONets the results are more accurate, since there are more constraints on the
+solutions (NN outputs). Similarly, 5 independent training processes are applied and
+the mean errors and standard deviations are given in the plots.
+For testing the series architecture of DeepM&Mnet, only the data of φ is given. An
+example of the resulting fields is shown in Figure 13. In this case, 20 measurements of φ
+are provided and Nop = 1000. The results of the other fields can be generated from the
+pre-trained DeepONets. As shown in the figure, the outputs are very consistent with
+the simulation. The relative The L2 -norm errors are: φ0 = 0.76%, u0 = 3.75%, v0 =
+1.72%, c+0 = 2.70%, c−0 = 1.96%.
+
+15
+
+Figure 12: DeepM&Mnet for 2D electroconvection problem: relative L2 -norm errors with respect
+to the number of operator evaluation points (Nop ). The DeepM&Mnet results are from the neural
+network (namely V ∈ {φ, u, v, c+ , c− }) of the parallel architecture. For each setting, 5 independent
+training processes with randomly-distributed sensors are applied. The mean errors and the standard
+deviations are computed.
+
+Figure 13: DeepM&Mnet for 2D electroconvection problem: results of series architecture. In this
+case, 20 measurements of φ are provided, which are marked with ∗. Left: results of the DeepONets
+0
+0
+outputs (i.e., φ0 , u0 , v 0 , c+ , c− ), right: point-wise difference.
+
+16
+
+The results shown above indicate that DeepM&Mnets can infer full fields of electroconvection accurately with a very small number of measurements. For conventional
+numerical methods, in which the physical model is generally required, it is difficult and
+time-consuming to solve such assimilation problem. On the contrary, the proposed
+DeepM&Mnet framework is flexible since the DeepONets are pre-trained offline and
+are used in a “plug-and-play” mode. It is also efficient as the DeepONets are fixed and
+only a simple NN is required to train. In this paper, the training of a DeepM&Mnet
+takes about 20-30 minutes on a single GPU (NVIDIA Quadro RTX 6000).
+5. Summary
+In this paper, we first demonstrate the effectiveness of DeepONets for complex fluid
+systems using the multiphysics of electroconvection as a benchmark. We train several
+DeepONets to predict one of the coupled fields from the rest of the fields. In our
+example, we use 15 different conditions corresponding to a range of applied electric
+potentials to form the training dataset. Upon training, the DeepONets can predict all
+fields very accurately and efficiently for any condition when the input is given.
+More importantly, in this paper, we propose a novel framework, the DeepM&Mnet,
+which allows to integrate the pre-trained DeepONets and a few measurements from
+any of the fields, to produce the full fields of the coupled system. In DeepM&Mnets,
+we use a neural network as the surrogate model of the multiphysics solutions, and use
+the pre-trained DeepONets as the constraints for the solutions. For both parallel and
+series DeepM&Mnets, we find that only a few measurements are sufficient to infer the
+full fields of the electroconvection, even if measurements are not available for all state
+variables. The DeepM&Mnet, which can be considered as a simple data assimilation
+framework, is much more flexible and efficient than any other conventional numerical
+method in terms of dealing with such assimilation problem. Note that in order to use
+the DeepM&Mnets, the building blocks - the DeepONets - are required to be pre-trained
+with labeled data. However, as shown in the paper, preparing the training data is very
+flexible and the training can be done offline. Once the DeepONets have been trained
+and embedded in the the DeepM&Mnet, it is straightforward to predict the solutions
+of a complex multiphysics and multiscale system when only a few measurements are
+available. More broadly, the results in this paper show that the new framework can be
+used for any type of multiphysics and multiscale problems, for example in hypersonics
+with finite chemistry, and we will report such results in future work.
+Acknowledgements
+The authors acknowledge support from DARPA/CompMods HR00112090062 and
+DOE/PhILMs DE-SC0019453.
+Appendix A. DeepONet training: MSE loss vs. MAPE loss
+As mentioned in Section 3, we apply the MAPE loss to the DeepONets training
+for Gu,v due to the large range of the velocity magnitude in the electroconvection
+17
+
+MSEl
+os
+s
+
+MAPEl
+os
+s
+
+(
+b)
+
+(
+a
+)
+
+Figure A.1: Predictions of Gu with different losses: (a) 2D fields and errors of u-velocity (the first row
+is Gu with MSE loss and the second is Gu with MAPE loss); (b) 1D profiles at y = 0.5. The testing
+example shown here is the case when ∆Φ = 13.4.
+
+problem. If we use a MSE loss for such multiscale prediction, the training loss and the
+back-propagation process will be dominated by those velocities with larger magnitudes,
+as the small-scale velocities contribute little to the NN optimization. Therefore, the
+MAPE loss is better for the DeepONets that are required to predict multiscale values.
+A comparison between the MSE and MAPE losses applied to Gu is shown here.
+We learn from Figure 5 that the u-velocity is a multiscale state variable. In particular,
+the magnitude of the velocity is approximately zero (10−4 ) when ∆Φ is small (e.g.,
+∆Φ = 13.4), while it is in the order of 100 when ∆Φ is large (e.g., ∆Φ = 62.15). The
+prediction errors of Gu with MSE loss and MAPE loss are given in Table A.1. We can
+see that the Gu with MAPE loss performs much better than the one with MSE loss for
+∆Φ = 13.4. Although for ∆Φ = 62.15, for Gu with MAPE loss we get larger errors,
+it is still very accurate as the relative L2 -norm error is only 1.65%. To demonstrate
+the superiority of the MAPE loss for Gu , we show the predicted fields with different
+losses in Figure A.1. The DeepONet with MSE loss fails to predict the flow pattern at
+∆Φ = 13.4 accurately, while the prediction of Gu with MAPE loss is very consistent
+with the NekTar high-fidelity simulation.
+Table A.1: Prediction errors of Gu with MSE loss and MAPE loss.
+
+Gu
+MSE loss
+MAPE loss
+
+∆Φ = 13.4
+∆Φ = 62.15
+MSE
+L2 error
+MSE
+L2 error
+−8
+−5
+5.41 × 10
+45.27% 1.10 × 10
+0.88%
+1.92 × 10−9 8.54% 3.89 × 10−5 1.65%
+
+18
+
+Appendix B. Effect of L2 regularization for DeepM&Mnet
+The loss function of DeepM&Mnet training, given in Equ. (4), is composed of a
+data term, an operator term and a L2 regularization term for the trainable parameters.
+The L2 regularization plays an important role in avoiding overfitting for data-friven
+methods. In this section, we present an example showing the effect of the L2 regularization.
+We use the 1D electroconvection as the benchmark here. For 1D electroconvection,
+the electric potential φ and the concentration c− are functions of y. We train two
+independent DeepONets Gφ and Gc− , where Gφ takes c− (y) as input and outputs
+φ(y), while Gc− performs oppositely. We generate 24 training trajectories for the
+1D electroconvection at various values of ∆Φ, namely ∆Φ = 5, 10, . . . , 120. For the
+individual DeepONet, two hidden layers and 100 neurons per layer are applied for both
+branch net and trunk net. Upon training, the DeepONets Gφ and Gc− can predict one
+field from another very accurately.
+Finally, we can construct the parallel DeepM&Mnet architecture, which is illustrated in Figure B.2. A neural network is used to approximate the solutions of φ(y)
+and c− (y). We apply the proposed DeepM&Mnet to infer the profiles in the case of
+∆Φ = 77.6. The results with different loss functions are demonstrated in Figure B.3.
+Five measurements, which are uniformly distributed along y direction, are used for
+each coupled field. We find that in the case where the L2 regularization is not considered, the loss diverges and the solutions are overfitting to the measurements. This
+phenomenon is observed frequently when we perform ensemble simulations. On the
+contrary, the DeepM&Mnet with L2 regularization in the loss function is much more
+robust and attains consistent results with good accuracy for every simulation.
+
+Figure B.2: DeepM&Mnet for 1D electroconvection problem: schematic of the parallel architecture.
+Here, the neural network (NN) is used to approximate the 1D coupled solutions (i.e., φ and c− ). The
+pretrained DeepONets Gφ and Gc− are fixed and form constraints for the NN outputs.
+
+References
+[1] S. L. Brunton, B. R. Noack, P. Koumoutsakos, Machine learning for fluid mechanics, Annual Review of Fluid Mechanics 52 (2020) 477–508.
+19
+
+Figure B.3: Parallel DeepM&Mnet for 1D electroconvection problem: results with different loss functions for ∆Φ = 77.6. First row: loss without L2 regularization; second row: loss with L2 regularization.
+Left: training loss; middle: solution of φ(y); right: solution of c− (y). Here, 5 measurements are used
+for each coupled field (i.e., φ and c− ). Overfitting is observed in the case without L2 regularization.
+
+[2] K. Duraisamy, G. Iaccarino, H. Xiao, Turbulence modeling in the age of data,
+Annual Review of Fluid Mechanics 51 (2019) 357–377.
+[3] D. Fan, L. Yang, M. S. Triantafyllou, G. E. Karniadakis, Reinforcement learning
+for active flow control in experiments, arXiv preprint arXiv:2003.03419 (2020).
+[4] M. Raissi, P. Perdikaris, G. E. Karniadakis, Physics-informed neural networks:
+A deep learning framework for solving forward and inverse problems involving
+nonlinear partial differential equations, Journal of Computational Physics 378
+(2019) 686–707.
+[5] J. Sirignano, K. Spiliopoulos, DGM: A deep learning algorithm for solving partial
+differential equations, Journal of Computational Physics 375 (2018) 1339–1364.
+[6] J. Han, A. Jentzen, E. Weinan, Solving high-dimensional partial differential equations using deep learning, Proceedings of the National Academy of Sciences 115
+(2018) 8505–8510.
+[7] Z. Long, Y. Lu, B. Dong, PDE-Net 2.0: Learning PDEs from data with a numericsymbolic hybrid deep network, Journal of Computational Physics 399 (2019)
+108925.
+
+20
+
+[8] M. Raissi, Z. Wang, M. S. Triantafyllou, G. E. Karniadakis, Deep learning of
+vortex-induced vibrations, Journal of Fluid Mechanics 861 (2019) 119–137.
+[9] M. Raissi, A. Yazdani, G. E. Karniadakis, Hidden fluid mechanics: Learning
+velocity and pressure fields from flow visualizations, Science 367 (2020) 1026–
+1030.
+[10] L. Sun, H. Gao, S. Pan, J.-X. Wang, Surrogate modeling for fluid flows based on
+physics-constrained deep learning without simulation data, Computer Methods in
+Applied Mechanics and Engineering 361 (2020) 112732.
+[11] X. Jin, S. Cai, H. Li, G. E. Karniadakis, NSFnets (Navier-Stokes Flow nets):
+Physics-informed neural networks for the incompressible Navier-Stokes equations,
+arXiv preprint arXiv:2003.06496 (2020).
+[12] J. Ling, A. Kurzawski, J. Templeton, Reynolds averaged turbulence modelling
+using deep neural networks with embedded invariance, Journal of Fluid Mechanics
+807 (2016) 155–166.
+[13] D. Zhang, L. Lu, L. Guo, G. E. Karniadakis, Quantifying total uncertainty in
+physics-informed neural networks for solving forward and inverse stochastic problems, Journal of Computational Physics 397 (2019) 108850.
+[14] G. Pang, L. Lu, G. E. Karniadakis, fPINNs: Fractional physics-informed neural
+networks, SIAM Journal on Scientific Computing 41 (2019) A2603–A2626.
+[15] Y. Chen, L. Lu, G. E. Karniadakis, L. Dal Negro, Physics-informed neural networks for inverse problems in nano-optics and metamaterials, Optics Express 28
+(2020) 11618–11633.
+[16] A. Yazdani, L. Lu, M. Raissi, G. E. Karniadakis, Systems biology informed deep
+learning for inferring parameters and hidden dynamics, bioRxiv (2020).
+[17] S. H. Rudy, S. L. Brunton, J. L. Proctor, J. N. Kutz, Data-driven discovery of
+partial differential equations, Science Advances 3 (2017) e1602614.
+[18] M. Raissi, P. Perdikaris, G. E. Karniadakis, Physics informed deep learning
+(part II): Data-driven discovery of nonlinear partial differential equations, arXiv
+preprint arXiv:1711.10561 (2017).
+[19] K. Hornik, M. Stinchcombe, H. White, et al., Multilayer feedforward networks are
+universal approximators., Neural Networks 2 (1989) 359–366.
+[20] T. Chen, H. Chen, Approximations of continuous functionals by neural networks
+with application to dynamic systems, IEEE Transactions on Neural Networks 4
+(1993) 910–918.
+
+21
+
+[21] T. Chen, H. Chen, Universal approximation to nonlinear operators by neural networks with arbitrary activation functions and its application to dynamical systems,
+IEEE Transactions on Neural Networks 6 (1995) 911–917.
+[22] L. Lu, P. Jin, G. E. Karniadakis, DeepONet: Learning nonlinear operators for
+identifying differential equations based on the universal approximation theorem of
+operators, arXiv preprint arXiv:1910.03193 (2019).
+[23] A. Mani, K. M. Wang, Electroconvection Near Electrochemical Interfaces: Experiments, Modeling, and Computation, Annual Review of Fluid Mechanics 52
+(2020) 509–529.
+[24] I. Rubinstein, B. Zaltzman, Electro-osmotically induced convection at a permselective membrane, Physical Review E 62 (2000) 2238.
+[25] B. Zaltzman, I. Rubinstein, Electro-osmotic slip and electroconvective instability,
+Journal of Fluid Mechanics 579 (2007) 173–226.
+[26] S. Rubinstein, G. Manukyan, A. Staicu, I. Rubinstein, B. Zaltzman, Direct observation of a nonequilibrium electro-osmotic instability, Physical Review Letters
+101 (2008) 236101.
+[27] C. L. Druzgalski, M. B. Andersen, A. Mani, Direct numerical simulation of electroconvective instability and hydrodynamic chaos near an ion-selective surface,
+Physics of Fluids 25 (2013) 110804.
+[28] E. Karatay, C. L. Druzgalski, A. Mani, Simulation of chaotic electrokinetic transport: Performance of commercial software versus custom-built direct numerical
+simulation codes, Journal of Colloid and Interface Science 446 (2015) 67–76.
+[29] E. Karatay, M. B. Andersen, M. Wessling, A. Mani, Coupling between buoyancy
+forces and electroconvective instability near ion-selective surfaces, Physical Review
+Letters 116 (2016) 194501.
+[30] C. L. Druzgalski, A. Mani, Statistical analysis of electroconvection near an ionselective membrane in the highly chaotic regime, Physical Review Fluids 1 (2016)
+073601.
+[31] S. V. Pham, H. Kwon, B. Kim, J. K. White, G. Lim, J. Han, Helical vortex formation in three-dimensional electrochemical systems with ion-selective membranes,
+Physical Review E 93 (2016) 033114.
+[32] Y. Zhu, N. Zabaras, P.-S. Koutsourelakis, P. Perdikaris, Physics-constrained deep
+learning for high-dimensional surrogate modeling and uncertainty quantification
+without labeled data, Journal of Computational Physics 394 (2019) 56–81.
+
+22
+
+[33] S. Bhatnagar, Y. Afshar, S. Pan, K. Duraisamy, S. Kaushik, Prediction of aerodynamic flow fields using convolutional neural networks, Computational Mechanics
+64 (2019) 525–545.
+[34] S. Cai, S. Zhou, C. Xu, Q. Gao, Dense motion estimation of particle images via
+a convolutional neural network, Experiments in Fluids 60 (2019) 73.
+[35] J. Kim, C. Lee, Prediction of turbulent heat transfer using convolutional neural
+networks, Journal of Fluid Mechanics 882 (2020).
+[36] G. E. Karniadakis, S. Sherwin, Spectral/hp Element Methods for Computational
+Fluid Dynamics, Oxford University Press, 2005.
+[37] L. Lu, X. Meng, Z. Mao, G. E. Karniadakis, DeepXDE: A deep learning library
+for solving differential equations, arXiv preprint arXiv:1907.04502 (2019).
+
+23
+
+

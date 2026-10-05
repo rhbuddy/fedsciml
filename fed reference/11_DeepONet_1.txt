@@ -1,0 +1,2231 @@
+DeepONet: Learning nonlinear operators for identifying differential
+equations based on the universal approximation theorem of
+operators
+
+arXiv:1910.03193v3 [cs.LG] 15 Apr 2020
+
+Lu Lu1 , Pengzhan Jin2 , and George Em Karniadakis1
+1
+
+2
+
+Division of Applied Mathematics, Brown University, Providence, RI 02912, USA
+LSEC, ICMSEC, Academy of Mathematics and Systems Science, Chinese Academy of Sciences,
+Beijing 100190, China
+
+Abstract
+While it is widely known that neural networks are universal approximators of continuous functions,
+a less known and perhaps more powerful result is that a neural network with a single hidden layer can
+approximate accurately any nonlinear continuous operator [5]. This universal approximation theorem
+is suggestive of the potential application of neural networks in learning nonlinear operators from data.
+However, the theorem guarantees only a small approximation error for a sufficient large network, and does
+not consider the important optimization and generalization errors. To realize this theorem in practice,
+we propose deep operator networks (DeepONets) to learn operators accurately and efficiently from a
+relatively small dataset. A DeepONet consists of two sub-networks, one for encoding the input function
+at a fixed number of sensors xi , i = 1, . . . , m (branch net), and another for encoding the locations for the
+output functions (trunk net). We perform systematic simulations for identifying two types of operators,
+i.e., dynamic systems and partial differential equations, and demonstrate that DeepONet significantly
+reduces the generalization error compared to the fully-connected networks. We also derive theoretically
+the dependence of the approximation error in terms of the number of sensors (where the input function is
+defined) as well as the input function type, and we verify the theorem with computational results. More
+importantly, we observe high-order error convergence in our computational tests, namely polynomial
+rates (from half order to fourth order) and even exponential convergence with respect to the training
+dataset size.
+
+1
+
+Introduction
+
+The universal approximation theorem states that neural networks can be used to approximate any continuous
+function to arbitrary accuracy if no constraint is placed on the width and depth of the hidden layers [7, 11].
+However, another approximation result, which is yet more surprising and has not been appreciated so far,
+states that a neural network with a single hidden layer can approximate accurately any nonlinear continuous
+functional (a mapping from a space of functions into the real numbers) [3, 18, 25] or (nonlinear) operator (a
+mapping from a space of functions into another space of functions) [5, 4].
+Before reviewing the approximation theorem for operators, we introduce some notation, which will be
+used through this paper. Let G be an operator taking an input function u, and then G(u) is the corresponding
+output function. For any point y in the domain of G(u), the output G(u)(y) is a real number. Hence, the
+network takes inputs composed of two parts: u and y, and outputs G(u)(y) (Fig. 1A). Although our goal is
+to learn operators, which take a function as the input, we have to represent the input functions discretely, so
+that network approximations can be applied. A straightforward and simple way, in practice, is to employ the
+1
+
+function values at sufficient but finite many locations {x1 , x2 , . . . , xm }; we call these locations as “sensors”
+(Fig. 1A). Next, we state the following theorem due to Chen & Chen [5], see appendix for more details.
+Theorem 1 (Universal Approximation Theorem for Operator). Suppose that σ is a continuous nonpolynomial function, X is a Banach Space, K1 ⊂ X, K2 ⊂ Rd are two compact sets in X and Rd ,
+respectively, V is a compact set in C(K1 ), G is a nonlinear continuous operator, which maps V into C(K2 ).
+k , θ k , ζ ∈ R, w ∈ Rd , x ∈ K ,
+Then for any  > 0, there are positive integers n, p, m, constants cki , ξij
+j
+1
+k
+k
+i
+i = 1, . . . , n, k = 1, . . . , p, j = 1, . . . , m, such that
+
+
+m
+X
+k
+G(u)(y) −
+cki σ 
+ξij
+u(xj ) + θik  σ(wk · y + ζk ) < 
+|
+{z
+}
+j=1
+k=1 i=1
+trunk
+{z
+}
+|
+p X
+n
+X
+
+(1)
+
+branch
+
+holds for all u ∈ V and y ∈ K2 .
+A
+
+Inputs & Output
+
+u: function
+
+u(x1 )
+u(x2 )
+···
+u(xm )
+
+Network
+
+y ∈ Rd
+
+B
+
+Training data
+Output function G(u)
+Input function u
+at random location y
+at fixed sensors x1 , . . . , xm
+xm
+x2
+x1
+G
+G(u)(y) ∈ R
+xm
+x1 x2 .
+..
+..
+.
+D Unstacked DeepONet
+
+C Stacked DeepONet
+Branch net1
+
+u
+
+u(x1 )
+u(x2 )
+···
+u(xm )
+
+b1
+
+Branch net2
+
+b2
+
+...
+
+...
+
+Branch netp
+
+bp
+t1
+
+y
+
+Trunk net
+
+b1
+
+u
+
+×
+
+u(x1 )
+u(x2 )
+···
+u(xm )
+
+Branch net
+
+b2
+
+...
+bp
+
+G(u)(y)
+t1
+
+t2
+
+y
+
+...
+
+Trunk net
+
+×
+
+G(u)(y)
+
+t2
+
+...
+tp
+
+tp
+
+Figure 1: Illustrations of the problem setup and architectures of DeepONets. (A) The network to learn
+an operator G : u 7→ G(u) takes two inputs [u(x1 ), u(x2 ), . . . , u(xm )] and y. (B) Illustration of the training
+data. For each input function u, we require that we have the same number of evaluations at the same scattered
+sensors x1 , x2 , . . . , xm . However, we do not enforce any constraints on the number or locations for the
+evaluation of output functions. (C) The stacked DeepONet in Theorem 1 has one trunk network and p
+stacked branch networks. (D) The unstacked DeepONet has one trunk network and one branch network.
+This approximation theorem indicates the potential application of neural networks to learn nonlinear
+operators from data, i.e., similar to what the deep learning community is currently doing, that is learning
+2
+
+functions from data. However, this theorem does not inform us how to learn operators effectively. Considering
+the classical image classification task as an example, the universal approximation theorem of neural networks
+for functions [7, 11] shows that fully-connected neural networks (FNNs) are capable to approximate the
+ground-truth classification function accurately, but in practice the performance of FNNs is far from networks
+with specific architectures, such as the widely-used convolutional neural networks (CNN) [14] or the more
+recent capsule neural network (CapsNet) [27]. The performance gap lies in the fact that the accuracy of
+NNs can be characterized by dividing the total error into three main types: approximation, optimization, and
+generalization [1, 17, 13, 16]. The universal approximation theorems only guarantee a small approximation
+error for a sufficiently large network, but they do not consider the optimization error and generalization error
+at all, which are equally important and often dominant contributions to the total error in practice. Useful
+networks should be easy to train, i.e., exhibit small optimization error, and generalize well to unseen data,
+i.e., exhibit small generalization error.
+To demonstrate the capability and effectiveness of learning nonlinear operators by neural networks, we
+setup the problem as general as possible by using the weakest possible constraints on the sensors and training
+dataset. Specifically, the only condition required is that the sensor locations {x1 , x2 , . . . , xm } are the same
+but not necessarily on a lattice for all input functions u, while we do not enforce any constraints on the
+output locations y (Fig. 1B). To learn operators accurately and efficiently, we propose a specific network
+architecture, the deep operator network (DeepONet), to achieve smaller total error. We will demonsrate that
+the DeepONet significantly improves generalization based on a design of two sub-networks, the branch net
+for the input function and the trunk-net for the location to evaluate the output function.
+We consider two types of operators, i.e., dynamic systems (e.g., in the form of ordinary differential
+equations, ODEs) and partial differential equations (PDEs). Dynamic systems are typically described by
+difference or differential equations, and identification of a nonlinear dynamic plant is a major concern in
+control theory. Some works [22, 33] used neural networks to identify dynamic systems, but they only
+considered the dynamic systems described by difference equations. Some other works [20, 24, 23, 9] predict
+the evolution of a specific dynamic system rather than identifying the system behavior for new unseen input
+signals. The network architectures they employed includes FNNs [24], recurrent neural networks (RNNs)
+[20], reservoir computing [20], residual networks [23], autoencoder [9], neural ordinary differential equations
+[6], and neural jump stochastic differential equations [12]. For identifying PDEs, some works treat the input
+and output function as an image, and then use CNNs to learn the image-to-image mapping [30, 34], but this
+approach can be only applied to the particular type of problems, where the sensors of the input function
+u are distributed on a equispaced grid, and the training data must include all the G(u)(y) values with y
+also on a equispaced grid. In another approach without this restriction, PDEs are parametrized by unknown
+coefficients, and then only the coefficient values are identified from data [2, 26, 31, 21, 15]. Alternatively, a
+generalized CNN based on generalized moving least squares [28] can be used for unstructured data, but it
+can only approximate local operators and is not able to learn other operators like an integral operator.
+The paper is organized as follows. In Section 2, we present two network architectures of DeepONet:
+the stacked DeepONet and the unstacked DeepONet, and then introduce the data generation procedure.
+In Section 3, we present a theoretical analysis on the number of sensors required to represent the input
+function accurately for approximating ODE operators. In Section 4, we test the performance of FNN, stacked
+DeepONet, and unstacked DeepONet for different examples, and demonstrate the accuracy and convergence
+rates of unstacked DeepONet. Finally, we conclude the paper in Section 5.
+
+3
+
+2
+
+Methodology
+
+2.1
+
+Deep operator networks (DeepONets)
+
+We focus on learning operators in a more general setting, where the only requirement for the training dataset
+is the consistency of the sensors {x1 , x2 , . . . , xm } for input functions. In this general setting, the network
+inputs consist of two separate components: [u(x1 ), u(x2 ), . . . , u(xm )]T and y (Fig. 1A), and the goal is to
+achieve good performance by designing the network architecture. One straightforward solution is to directly
+employ a classical network, such as FNN, CNN or RNN, and concatenate two inputs together as the network
+input, i.e., [u(x1 ), u(x2 ), . . . , u(xm ), y]T . However, the input does not have any specific structure, and thus
+it is not meaningful to choose networks like CNN or RNN. Here we use FNN as the baseline model.
+In high dimensional problems, y is a vector with d components, so the dimension of y does not match the
+dimension of u(xi ) for i = 1, 2, . . . , m any more. This also prevents us from treating u(xi ) and y equally, and
+thus at least two sub-networks are needed to handle [u(x1 ), u(x2 ), . . . , u(xm )]T and y separately. Although
+the universal approximation theorem (Theorem 1) does not have any guarantee on the total error, it still
+provides us a network structure in Eq. 1. Theorem 1 only considers a shallow network with one hidden
+layer, so we extend it to deep networks, which have more expressivity than shallow ones. The architecture
+we propose is shown in Fig. 1C, and the details are as follows. First there is a “trunk” network, which takes
+y as the input and outputs [t1 , t2 , . . . , tp ]T ∈ Rp . In addition to the trunk network, there are p “branch”
+networks, and each of them takes [u(x1 ), u(x2 ), . . . , u(xm )]T as the input and outputs a scalar bk ∈ R for
+k = 1, 2, . . . , p. We merge them together as in Eq. 1:
+G(u)(y) ≈
+
+p
+X
+
+bk tk .
+
+k=1
+
+We note that the trunk network also applies activation functions in the last layer, i.e., tk = σ(·) for
+k = 1, 2, . . . , p, and thus this trunk-branch network can also be seen as a trunk network with each weight in
+the last layer parameterized by another branch network instead of the classical single variable. We also note
+that in Eq. 1 the last layer of each bk branch network does not have bias. Although bias is not necessary in
+Theorem 1, adding bias may increase the performance by reducing the generalization error. In addition to
+adding bias to the branch networks, we may also add a bias b0 ∈ R in the last stage:
+G(u)(y) ≈
+
+p
+X
+
+bk tk + b0 .
+
+(2)
+
+k=1
+
+In practice, p is at least of the order of 10, and using lots of branch networks is computationally and
+memory expensive. Hence, we merge all the branch networks into one single branch network (Fig. 1D),
+i.e., a single branch network outputs a vector [b1 , b2 , . . . , bp ]T ∈ Rp . In the first DeepONet (Fig. 1C),
+there are p branch networks stacked parallel, so we name it as “stacked DeepONet”, while we refer to the
+second DeepONet (Fig. 1D) as “unstacked DeepONet”. All versions of DeepONets are implemented in
+DeepXDE [15], a user-friendly Python library designed for scientific machine learning (https://github.
+com/lululxvi/deepxde).
+DeepONet is a high-level network architecture without defining the architectures of its inner trunk and
+branch networks. To demonstrate the capability and good performance of DeepONet alone, we choose the
+simplest FNN as the architectures of the sub-networks in this study. It is possible that using convolutional
+layers we could further improve accuracy. However, convolutional layers usually work for square domains
+with {x1 , x2 , . . . , xm } on a equispaced grid, so as alternative and for a more general setting we may use the
+“attention” mechanism [29].
+4
+
+Embodying some prior knowledge into neural network architectures usually induces good generalization.
+This inductive bias has been reflected in many networks, such as CNN for images and RNN for sequential
+data. The success of DeepONet even using FNN as its sub-networks is also due to its strong inductive bias.
+The output G(u)(y) has two independent inputs u and y, and thus using the trunk and branch networks
+explicitly is consistent with this prior knowledge. More broadly, G(u)(y) can be viewed as a function of y
+conditioning on u. Finding an effective way to represent the conditioning input is still an open question, and
+different approaches have been proposed, such as feature-wise transformations [8].
+
+2.2
+
+Data generation
+
+The input signal u(x) of the process plays an important role in system identification. Clearly, the input
+signal is the only possibility to influence the process in order to gather information about its response, and
+the quality of the identification signal determines an upper bound on the accuracy that in the best case can
+be achieved by any model. In this study, we mainly consider two function spaces: Gaussian random field
+(GRF) and orthogonal (Chebyshev) polynomials.
+We use the mean-zero GRF:
+u ∼ G(0, kl (x1 , x2 )),
+where the covariance kernel kl (x1 , x2 ) = exp(−kx1 − x2 k2 /2l2 ) is the radial-basis function (RBF) kernel
+with a length-scale parameter l > 0. The length-scale l determines the smoothness of the sampled function,
+and larger l leads to smoother u.
+Let M > 0 and Ti are Chebyshev polynomials of the first kind. We define the orthogonal polynomials
+of degree N as:
+(N −1
+)
+X
+Vpoly =
+ai Ti (x) : |ai | ≤ M .
+i=0
+
+We generate the dataset from Vpoly by randomly sampling ai from [−M, M ] to get a sample of u.
+After sampling u from the chosen function spaces, we solve the ODE systems by Runge-Kutta (4, 5)
+and PDEs by a second-order finite difference method to obtain the reference solutions. We note that one
+data point is a triplet (u, y, G(u)(y)), and thus one specific input u may appear in multiple data points with
+different values of y. For example, a dataset of size 10000 may only be generated from 100 u trajectories,
+and each evaluates G(u)(y) for 100 y locations.
+
+3
+
+Number of sensors for identifying nonlinear dynamic systems
+
+In this section, we investigate how many sensor points we need to achieve accuracy ε for identifying nonlinear
+dynamic systems. Suppose that the dynamic system is subject to the following ODE system:
+ d
+dx s(x) = g(s(x), u(x), x) ,
+(3)
+s(a) = s0
+where u ∈ V (a compact subset of C[a, b]) is the input signal, and s : [a, b] → RK is the solution of system
+(3) serving as the output signal.
+Let G be the operator mapping the input u to the output s, i.e., Gu satisfies
+Z x
+(Gu)(x) = s0 +
+g((Gu)(t), u(t), t)dt.
+a
+
+5
+
+Now, we choose uniformly m + 1 points xj = a + j(b − a)/m, j = 0, 1, · · · , m from [a, b], and define the
+function um (x) as follows:
+um (x) = u(xj ) +
+
+u(xj+1 ) − u(xj )
+(x − xj ), xj ≤ x ≤ xj+1 , j = 0, 1, · · · , m − 1.
+xj+1 − xj
+
+Denote the operator mapping u to um by Lm , and let Um = {Lm (u)|u ∈ V }, which is obviously a
+compact subset of C[a, b] since V is compact and continuous operator Lm keeps the compactness.
+Naturally,
+S∞
+:=
+:=
+Wm
+V ∪ Um as the union of two compact sets is also compact. Then, set W
+i=1 Wi , and Lemma 7
+points out that W is still a compact set. Since G is a continuous operator, G(W ) is compact in C([a, b]; RK ).
+The subsequent discussions are mainly within W and G(W ). For convenience of analysis, we assume that
+g(s, u, x) satisfies the Lipschitz condition with respect to s and u on G(W ) × W , i.e., there is a constant
+c > 0 such that
+kg(s1 , u, x) − g(s2 , u, x)k2 ≤ cks1 − s2 k2
+.
+kg(s, u1 , x) − g(s, u2 , x)k2 ≤ c|u1 − u2 |
+
+Note that this condition is easy to achieve, for instance, as long as g is differentiable with respect to s and u
+on G(W ) × W .
+For u ∈ V, um ∈ Um , there exists a constant κ(m, V ) depending on m and compact space V , such that
+max |u(x) − um (x)| ≤ κ(m, V ),
+
+x∈[a,b]
+
+κ(m, V ) → 0 as m → ∞.
+
+(4)
+
+When V is GRF with RBF kernel, we have κ(m, V ) ∼ m12 l2 , see Appendix C for the proof. Based on the
+these concepts, we have the following theorem.
+Theorem 2. Suppose that m is a positive integer making c(b − a)κ(m, V )ec(b−a) less than ε, then for any
+d ∈ [a, b], there exist W1 ∈ Rn×(m+1) , b1 ∈ Rm+1 , W2 ∈ RK×n , b2 ∈ RK , such that
+k(Gu)(d) − (W2 · σ(W1 · [u(x0 )
+
+···
+
+u(xm )]T + b1 ) + b2 )k2 < ε
+
+holds for all u ∈ V .
+Proof. The proof can be found in Appendix B.
+
+4
+
+Simulation results
+
+In this section, we first show that DeepONets have better performance than FNNs due to the smaller
+generalization error even in the easiest linear problem, and then demonstrate the capability of DeepONets
+for three nonlinear ODE and PDE problems. In all problems, we use the Adam optimizer with learning rate
+0.001, and the number of iterations is chosen to guarantee the training is convergent. The other parameters
+and network sizes are listed in Tables 1 and 2, unless otherwise stated. The codes of all examples are
+published in GitHub (https://github.com/lululxvi/deepxde).
+
+4.1
+
+A simple 1D dynamic system
+
+A 1D dynamic system is described by
+ds(x)
+= g(s(x), u(x), x),
+dx
+
+x ∈ [0, 1],
+
+with an initial condition s(0) = 0. Our goal is to predict s(x) over the whole domain [0, 1] for any u(x).
+6
+
+Table 1: Default parameters for each problem, unless otherwise stated. We note that one data point is a
+triplet (u, y, G(u)(y)), and thus one specific input u may generate multiple data points with different values
+of y.
+Case
+
+u space
+
+# Sensors m
+
+# Training
+
+# Test
+
+# Iterations
+
+4.1.1
+4.1.2
+4.2
+4.3
+
+GRF (l = 0.2)
+GRF (l = 0.2)
+GRF (l = 0.2)
+GRF (l = 0.2)
+
+100
+100
+100
+100
+
+10000
+10000
+10000
+
+100000
+100000
+100000
+1000000
+
+50000
+100000
+100000
+500000
+
+Other parameters
+
+k = 1, T = 1
+
+Table 2: DeepONet size for each problem, unless otherwise stated.
+
+4.1.1
+
+Case
+
+Network type
+
+Trunk depth
+
+Trunk width
+
+Branch depth
+
+Branch width
+
+4.1
+4.2
+4.3
+
+Stacked/Unstacked
+Unstacked
+Unstacked
+
+3
+3
+3
+
+40
+40
+100
+
+2
+2
+2
+
+40
+40
+100
+
+Linear case: g(s(x), u(x), x) = u(x)
+
+We first consider a linear problem by choosing g(s(x), u(x), x) = u(x), which is equivalent to learning the
+antiderivative operator
+Z
+x
+
+G : u(x) 7→ s(x) =
+
+u(τ )dτ.
+0
+
+As the baseline, we train FNNs to learn the antiderivative operator. To obtain the best performance of FNNs,
+we grid search the three hyperparameters: depth from 2 to 4, width from 10 to 2560, and learning rate
+from 0.0001 to 0.01. The mean squared error (MSE) of the test dataset with learning rate 0.01, 0.001, and
+0.0001 are shown in Fig. 2. Although we only choose depth up to 4, the results show that increasing the
+depth further does not improve the error. Among all these hyperparameters, the smallest test error ∼ 10−4
+is obtained for the network with depth 2, width 2560, and learning rate 0.001. We observe that when the
+network is small, the training error is large and the generalization error (the difference between test error
+and training error) is small, due to small expressivity. When the network size increases, the training error
+decreases, but the generalization error increases. We note that FNN has not reached the overfitting region,
+where the test error increases.
+Compared to FNNs, DeepONets have much smaller generalization error and thus smaller test error.
+Here we do not aim to find the best hyperparameters, and only test the performance of the two DeepONets
+listed in Table 2. The training trajectory of an unstacked DeepONet with bias is shown in Fig. 3A, and the
+generalization error is negligible. We observe that for both stacked and unstacked DeepONets, adding bias
+to branch networks and Eq. (2) reduces both training and test errors (Fig. 3B); DeepONets with bias also
+have smaller uncertainty, i.e., more stable for training from random initialization (Fig. 3B). Compared to
+stacked DeepONets, although unstacked DeepONets have larger training error, the test error is smaller, due
+to the smaller generalization error. Therefore, unstacked DeepONets with bias achieve the best performance.
+In addition, unstacked DeepONets have fewer number of parameters than stacked DeepONets, and thus can
+be trained faster using much less memory.
+
+7
+
+A 101
+
+D2W10: Train
+D3W160: Train
+D4W2560: Train
+
+100
+
+Depth 2: Train
+Depth 2: Test
+Depth 3: Train
+Depth 3: Test
+Depth 4: Train
+Depth 4: Test
+
+10-3
+MSE
+
+MSE
+
+10-1
+
+B 10-2
+
+D2W10: Test
+D3W160: Test
+D4W2560: Test
+
+10-2
+10-3
+
+10-4
+
+10-4
+10-5
+
+0
+
+C 100
+
+10000
+
+20000
+30000
+# Iterations
+
+D2W10: Train
+D3W160: Train
+D4W2560: Train
+
+10-1
+10-2
+
+40000
+
+50000
+
+MSE
+
+MSE
+
+Depth 2: Train
+Depth 2: Test
+Depth 3: Train
+Depth 3: Test
+Depth 4: Train
+Depth 4: Test
+
+10-6
+
+10-8
+
+10-7
+
+E 100
+
+20000
+30000
+# Iterations
+D2W10: Train
+D3W160: Train
+D4W2560: Train
+
+10-1
+10-2
+
+40000
+
+50000
+
+D2W10: Test
+D3W160: Test
+D4W2560: Test
+
+10-5
+
+10
+
+10-5
+
+Depth 2: Train
+Depth 2: Test
+Depth 3: Train
+Depth 3: Test
+Depth 4: Train
+Depth 4: Test
+
+10-6
+10-7
+10-8
+
+10-7
+10000
+
+20000
+30000
+# Iterations
+
+40000
+
+1000
+
+10-4
+
+10-6
+
+0
+
+100
+Width
+
+10-3
+
+MSE
+
+10-4
+
+10-9
+
+F 10-2
+
+10-3
+MSE
+
+10-5
+
+10-7
+
+10-6
+
+10000
+
+1000
+
+10-4
+
+10-5
+
+0
+
+100
+Width
+
+10-3
+
+10-4
+
+10-8
+
+10
+
+D 10-2
+
+D2W10: Test
+D3W160: Test
+D4W2560: Test
+
+10-3
+
+10-8
+
+10-5
+
+50000
+
+10-9
+
+10
+
+100
+Width
+
+1000
+
+Figure 2: Errors of FNNs trained to learn the antiderivative operator (linear case). (A and B) Learning
+rate 0.01. (C and D) Learning rate 0.001. (E and F) Learning rate 0.0001. (A, C, E) The solid and
+dash lines are the training error and test error during the training process, respectively. The blue, red and
+green lines represent FNNs of size (depth 2, width 10), (depth 3, width 160), and (depth 4, width 2560),
+respectively. (B, D, F) The blue, red and green lines represent FNNs of depth 2, 3 and 4, respectively. The
+shaded regions in (D) are the one-standard-derivation (SD) from 10 runs with different training/test data and
+network initialization. For clarity, only the SD of learning rate 0.001 is shown (Fig. D). The number of
+sensors for u is m = 100.
+
+8
+
+A
+
+B
+
+100
+
+Train
+Test
+
+10-1
+
+10-4
+
+Train
+Test
+
+MSE
+
+MSE
+
+10-2
+10-3
+
+10-5
+
+10-4
+10-5
+10-6
+
+0
+
+10000
+
+20000 30000
+# Iterations
+
+40000
+
+50000
+
+10-6
+
+FNN
+(best)
+
+Stacked
+(no bias)
+
+Stacked Unstacked Unstacked
+(bias)
+(no bias)
+(bias)
+
+Figure 3: Errors of DeepONets trained to learn the antiderivative operator (linear case). (A) The
+training trajectory of an unstacked DeepONet with bias. (B) The training/test error for stacked/unstacked
+DeepONets with/without bias compared to the best error of FNNs. The error bars are the one-standardderivation from 10 runs with different training/test data and network initialization.
+4.1.2
+
+Nonlinear case: g(s(x), u(x), x) = −s2 (x) + u(x)
+
+Next we consider a nonlinear problem with g(s(x), u(x), x) = −s2 (x)+u(x). Because s(x) may explode for
+certain u, we compute the test MSE by removing the 1‰ worst predictions. During the network training, the
+training MSE and test MSE of both stacked and unstacked DeepONets decrease, but the correlation between
+training MSE and test MSE of unstacked DeepONets is tighter (Fig. 4A), i.e., smaller generalization error.
+This tight correlation between training and test MSE of unstacked DeepONets is also observed across multiple
+runs with random training dataset and network initialization (Fig. 4B). Moreover, the test MSE and training
+MSE of unstacked DeepONets follow almost a linear correlation
+MSEtest ≈ 10 × MSEtrain − 10−4 .
+
+Fig. 4C shows that unstacked DeepONets have smaller test MSE due to smaller generalization error.
+DeepONets work even for out-of-distribution predictions, see three examples of the prediction in Fig. 5. In
+the following study, we will use unstacked DeepONets.
+
+4.2
+
+Gravity pendulum with an external force
+
+The motion of a gravity pendulum with an external force is described as
+ds1
+= s2 ,
+dt
+ds2
+= −k sin s1 + u(t),
+dt
+with an initial condition s(0) = 0, and k is determined by the acceleration due to gravity and the length of
+the pendulum. This problem is characterized by three factors: (1) k, (2) maximum prediction time T , and
+(3) input function space. The accuracy of learned networks is determined by four factors: (1) the number of
+sensor points m; (2) training dataset size; (3) network architecture, (4) optimizer. We investigate the effects
+of these factors on the accuracy.
+4.2.1
+
+Number of sensors
+
+The number of sensors required to distinguish two input functions depends on the value of k, prediction time
+T , and the input function space. For the case with k = 1, T = 1 and l = 0.2, when the number of sensors
+9
+
+B 10-3
+
+C 10-3
+
+10-2
+10-4
+
+ing
+ain
+
+Tr
+
+10-4
+
+Stacked
+Unstacked
+
+10-5 -5
+10
+
+10-4 10-3 10-2
+Train MSE
+
+MSE
+
+10-3
+
+10-1
+
+Train
+Test
+
+10-4
+
+Test MSE
+
+Test MSE
+
+A 10-1
+
+10-5
+
+10-5
+
+Stacked
+Unstacked
+10x-10-4
+10-5
+
+10-6
+
+10-4
+
+Train MSE
+
+Stacked Unstacked
+
+Figure 4: Nonlinear ODE: unstacked DeepONets have smaller generalization error and smaller test
+MSE than stacked DeepONets. (A) The correlation between the training MSE and the test MSE of one
+stacked/unstacked DeepONet during the training process. (B) The correlation between the final training
+MSE and test MSE of stacked/unstacked DeepONets in 10 runs with random training dataset and network
+initialization. The training and test MSE of unstacked DeepONets follow a linear correlation (black dash
+line). (C) The mean and one-standard-derivation of data points in B.
+
+u(x) = x
+Ref.
+DeepONet
+
+0.4
+
+0.4
+s(x)
+
+s(x)
+
+0.2
+0.1
+
+0.3
+
+0.3
+0.2
+0.1
+
+0
+0.2
+
+0.4
+
+x
+
+0.6
+
+0.8
+
+1
+
+-0.1
+
+0.2
+0.1
+0
+
+0
+0
+
+u(x) = sin(2πx)
+
+0.4
+
+Ref.
+DeepONet
+
+0.5
+
+0.3
+
+-0.1
+
+u(x) = sin(πx)
+
+0.6
+
+s(x)
+
+0.5
+
+0
+
+0.2
+
+0.4
+
+x
+
+0.6
+
+0.8
+
+1
+
+-0.1
+
+Ref.
+DeepONet
+0
+
+0.2
+
+0.4
+
+x
+
+0.6
+
+0.8
+
+1
+
+Figure 5: Nonlinear ODE: predictions of a trained unstacked DeepONet on three out-of-distribution
+input signals. The blue and red lines represent the reference solution and the prediction of a DeepONet.
+
+10
+
+m is small, the error decays exponentially as we increase the number of sensors, Fig. 6A):
+MSE ∝ 4.6−#sensors .
+When m is already large, the effect of increasing m is negligible. The transition occurs at ∼10 sensors, as
+indicated by the arrow.
+To predict s for a longer time, more sensors are required (Fig. 6B). For example, predicting until T = 5
+requires ∼25 sensors. If the function u is less smooth corresponding to smaller l, it also requires more
+sensors (Fig. 6C). However, the number of sensors is not sensitive to k (Fig. 6D). Although it is hard to
+quantify the exact dependency of m on T and l, by fitting the computational results we show that
+√
+m ∝ T and m ∝ l−1 .
+In Theorem 2, m should be large enough to make T ecT κ(m, V ) small. In Appendix C we show theoretically
+that m ∝ l−1 for the GRF function space with RBF kernel, which is consistent with our computational result
+here. T ecT in the bound is loose compared to the computational results.
+A
+10-2
+
+Train
+Test
+
+B
+
+MSE
+
+10-5
+
+10-4
+
+10-4
+
+10-5
+
+10-5
+
+10-6
+
+10-6
+
+10-7
+
+10-7
+
+10-7
+101
+# Sensors
+
+102
+
+10-3
+
+10-4
+
+10-6
+
+10-7
+
+10-2
+
+l=0.3: Train
+l=0.3: Test
+l=0.2: Train
+l=0.2: Test
+l=0.1: Train
+l=0.1: Test
+
+10-3
+
+10-5
+
+10-6
+
+100
+
+10-3
+
+10-2
+∼4.6-x
+
+D
+
+10-2
+
+10-1
+
+10-3
+10-4
+
+C
+
+100
+
+100
+
+T=1: Train
+T=1: Test
+T=2: Train
+T=2: Test
+T=5: Train
+T=5: Test
+
+101
+# Sensors
+
+102
+
+100
+
+101
+# Sensors
+
+102
+
+100
+
+k=10: Train
+k=10: Test
+k=1: Train
+k=1: Test
+k=0.1: Train
+k=0.1: Test
+
+101
+# Sensors
+
+Figure 6: Gravity pendulum: required number of sensors for different T , k and l. (A) Training MSE
+(square symbols) and test MSE (circle symbols) decrease as the number of sensors increases in the case
+k = 1, T = 1 and l = 0.2. Training and test MSE versus the number of sensors in different conditions of
+(B) T , (C) l, and (D) k. For clarity, the SD is not shown. The arrow indicates where the rate of the error
+decay diminishes.
+
+4.2.2
+
+Error tendency and convergence
+
+Here we investigate the error tendency under different conditions, including prediction time, network size,
+and training dataset size. We first observe that both the training and test errors grow exponentially with the
+maximum prediction time (Fig. 7A):
+MSE ∝ 8T .
+
+We note that the error is not the error at time T but the average error over the domain [0, T ], because we
+predict the s(t) for any t ∈ [0, T ]. As shown in Fig. 6B, 100 sensor points are sufficient for T = 5, and
+thus the possible reasons for increased error are: (1) the network is too small, and (2) training data is not
+sufficient. Because the error in T = 1 is already very small, to leverage the error, we use T = 3 in the
+following experiments. By varying the network width, we can observe that there is a best width to achieve
+11
+
+102
+
+the smallest error (Fig. 7B). It is reasonable that increasing the width from 1 to 100 would decrease the error,
+but the error would instead increase when the width further increases. This could be due to the increased
+optimization error, and a better learning rate may be used to find a better network.
+To examine the effect of training dataset size, we choose networks of width 100 to eliminate the network
+size effect. The training, test, and generalization errors using different dataset size are shown in Fig. 7C and
+D, and we have
+(
+(
+e−x/2000 , for small dataset
+e−x/2000 , for small dataset
+MSEtest ∝
+,
+MSE
+∝
+,
+gen
+x−0.5 ,
+for large dataset
+x−1 ,
+for large dataset
+where x is the number of training data points. It is surprising that test error and generalization error have
+exponential convergence for training dataset size < 104 . Even for large dataset, the convergence rate of
+x−1 for the generalization error is still higher than the classical x−0.5 in the learning theory [19]. This fast
+convergence confirms the exceptional performance of DeepONets, especially in the region of small dataset.
+10-1
+
+A
+
+100
+
+Train
+Test
+
+10-2
+
+MSE
+
+10-4
+10-5
+8T
+
+10-7
+10-8
+
+1
+
+2
+
+3
+Time
+
+4
+
+5
+
+10-2
+
+Train
+Test
+
+10-1
+
+10-3
+
+10-6
+
+B
+
+10-3
+
+10-2
+
+10-4
+
+10-3
+
+10-5
+
+10-4
+
+10-6
+
+10-5
+
+10-7
+
+10-6
+
+1
+
+10
+
+Width
+
+100
+
+C
+
+10-8
+1000 103
+
+10-2
+
+Train
+Test
+
+D
+
+10-3
+
+e-x/2000
+
+10-4
+10-5
+
+104
+# Train data
+
+105
+
+10-6 3
+10
+
+x-0.5
+Gen.
+Test
+
+x-1
+
+104
+# Train data
+
+Figure 7: Gravity pendulum: error tendency and convergence. (A) Both training error (blue) and test
+error (red) increase fast for long-time prediction if we keep the network size fixed at width 40 and the training
+data size fixed at 10000 points. (B) Training and test errors first decrease and then increase, when network
+width increases (T = 3). (C) Test error decreases when more training data are used (T = 3, width 100).
+(D) Test error and generalization error have exponential convergence for small training dataset, and then
+converge with rate x−0.5 and x−1 , respectively (T = 3, width 100).
+
+4.2.3
+
+Input function spaces
+
+Next we investigate the effect of different function spaces, including GRF with different length scale l and the
+space of Chebyshev polynomials with different number of bases. For a fixed sensor number, we observe that
+there exists a critical length scale, around where the training and test errors change rapidly, see the arrows
+in Fig. 8A and B. This sharp transition around the critical value is also observed in the space of Chebyshev
+polynomials with different number of bases (Fig. 8B). The relations between the critical values and the
+sensor numbers are
+√
+l ∝ m−1 and #Bases ∝ m.
+The inverse relation between l and m is consistent with the theoretical results in Appendix C and the
+computational results in Section 4.2.1. Therefore, when the function space complexity increases, one may
+increase m to capture the functions well.
+
+12
+
+105
+
+A 10-2
+10-3
+
+10-4
+
+10-5
+10-6
+
+10-5
+10-6
+
+10-7
+0.01
+
+m=100: Train
+m=100: Test
+m=200: Train
+m=200: Test
+m=400: Train
+m=400: Test
+
+10-3
+
+MSE
+
+10-4
+MSE
+
+B 10-2
+
+m=10: Train
+m=10: Test
+m=20: Train
+m=20: Test
+m=40: Train
+m=40: Test
+
+0.1
+Length scale
+
+10-7
+
+1
+
+10 20 30 40 50 60 70 80 90 100
+# Chebyshev bases
+
+Figure 8: Gravity pendulum: errors for different input function spaces. Training error (solid line) and
+test error (dash line) for (A) GRF function space with different length scale l. The colors correspond to the
+number of sensors as shown in the inset. (B) Chebyshev polynomials for different number of basis functions.
+
+4.3
+
+Diffusion-reaction system with a source term
+
+A diffusion-reaction system with a source term u(x) is described by
+∂s
+∂2s
+= D 2 + ks2 + u(x),
+∂t
+∂x
+
+x ∈ [0, 1], t ∈ [0, 1],
+
+with zero initial/boundary conditions, where D = 0.01 is the diffusion coefficient, and k = 0.01 is the
+reaction rate. We use DeepONets to learn the operator mapping from u(x) to the PDE solution s(x, t). In
+the previous examples, for each input u, we only use one random point of s(x) for training, and instead we
+may also use multiple points of s(x). To generate the training dataset, we solve the diffusion-reaction system
+using a second-order implicit finite difference method on a 100 by 100 grid, and then for each s we randomly
+select P points out of these 10000 = 100 × 100 grid points (Fig. 9A). Hence, the dataset size is equal to the
+product of P by the number of u samples. We confirm that the training and test datasets do not include the
+data from the same s.
+We investigate the error tendency with respect to (w.r.t.) the number of u samples and the value of P .
+When we use 100 random u samples, the test error decreases first as P increases (Fig. 9B), and then saturates
+due to other factors, such as the finite number of u samples and fixed neural network size. We observe a
+similar error tendency but with less saturation as the number of u samples increases with P fixed (Fig. 9C).
+In addition, in this PDE problem the DeepONet is able to learn from a small dataset, e.g., a DeepONet can
+reach the test error of ∼ 10−5 when it is only trained with 100 u samples (P = 1000). We recall that we
+test on 10000 grid points, and thus on average each location point only has 100 × 1000/10000 = 10 training
+data points.
+Before the error saturates, the rates of convergence w.r.t. both P and the number of u samples obey a
+polynomial law in the most of the range (Figs. 10A and B). The rate of convergence w.r.t. P depends on
+the number of u samples, and more u samples induces faster convergence until it saturates (the blue line
+in Fig. 10C). Similarly, the rate of convergence w.r.t. the number of u samples depends on the value of P
+(the red line in Fig. 10C). In addition, in the initial range of the convergence, we observe an exponential
+convergence (Figs. 10D and E) as in Section 4.2.2. The coefficient 1/k in the exponential convergence e−x/k
+also depends on the number of u samples or the value of P (Fig. 10F). It is reasonable that the convergence
+rate in Figs. 10C and F increases with the number of u samples or the value of P , because the total number
+13
+
+A
+
+A random u sample
+
+2
+
+s(x, t) at P random locations
+
+1
+0.8
+
+1
+
+(xi, ti)
+
+t
+
+u(x)
+
+0.6
+0.4
+
+0
+
+0.2
+-1
+
+0
+
+B
+
+0.2
+10-1
+
+0.4
+
+x
+
+0.6
+
+0.8
+
+0
+
+1
+
+0
+
+0.2
+
+0.4
+
+C
+
+# u = 100
+Train
+Test
+
+10-2
+10-3
+
+0.6
+
+100
+
+0.8
+
+1
+
+- Training data from one u
+(u, (x1, t1), s(x1, t1))
+(u, (x2, t2), s(x2, t2))
+...
+(u, (xP, tP), s(xP, tP))
+- Repeat for different u
+
+P = 100
+Train
+Test
+
+10-1
+10-2
+
+10-4
+
+MSE
+
+MSE
+
+10-3
+
+10-5
+
+10-4
+
+10-6
+
+10-5
+
+10-7
+
+10-6
+
+10-8
+10-9
+10
+
+x
+
+0.5
+0.4
+0.3
+0.2
+0.1
+0
+-0.1
+-0.2
+-0.3
+-0.4
+-0.5
+
+100
+P
+
+10-7
+10
+
+1000
+
+100
+#u
+
+1000
+
+Figure 9: Learning a diffusion-reaction system. (A) (left) An example of a random sample of the input
+function u(x). (middle) The corresponding output function s(x, t) at P different (x, t) locations. (right)
+Pairing of inputs and outputs at the training data points. The total number of training data points is the product
+of P times the number of samples of u. (B) Training error (blue) and test error (red) for different values of the
+number of random points P when 100 random u samples are used. (C) Training error (blue) and test error
+(red) for different number of u samples when P = 100. The shaded regions denote one-standard-derivation.
+
+14
+
+of training data points is equal to P × #u. However, by fitting the points, it is surprising that there is a clear
+tendency in the form of either ln(x) or e−x , which we cannot fully explain yet, and hence more theoretical
+and computational investigations are required.
+
+x-1.4
+
+10-2
+MSE
+
+x-2.2
+
+10-3
+
+10-2
+10-3
+
+x-2.4
+
+x-2.9
+x-3.3
+x-3.7
+
+10-4
+
+x-2.4
+
+10-5
+100
+P
+
+D 10-1
+
+1000
+
+E
+
+e-x/23
+
+10-2
+
+e-x/13
+
+MSE
+
+100
+#u
+
+10-1
+
+20
+
+30
+
+2.4 - 5.1e-x/31
+
+1
+0
+
+50
+
+100
+
+50
+
+100
+
+50
+
+60
+
+70
+
+10
+
+20
+
+30
+
+40
+#u
+
+50
+
+60
+
+70
+
+0
+
+#u
+P
+
+200
+
+400
+
+200
+
+400
+
+Rate w.r.t. P (Fig. D)
+Rate w.r.t. # u (Fig. E)
+0.1 - 0.2e-x/37
+
+0.05
+40
+P
+
+400
+
+2
+
+0.1
+
+10-4
+
+200
+
+0.5 + 0.5ln(x)
+
+0.15
+
+e-x/7.6
+
+P
+
+3
+
+0.2
+
+e-x/9.2
+e-x/9.0
+
+100
+
+Rate w.r.t. P (Fig. A)
+Rate w.r.t. # u (Fig. B)
+
+4
+
+F
+
+e-x/10
+
+10-3
+
+10-5
+10
+
+1000
+
+e-x/16
+
+10-2
+
+e-x/10
+
+10-3
+
+10
+
+5
+
+50
+
+1/k
+
+10-5
+10
+
+10-4
+
+P = 50
+P = 100
+P = 200
+P = 400
+
+x-2.6
+
+MSE
+
+10-4
+
+C
+
+10-1
+
+Rate of convergence
+
+B
+# u = 50
+# u = 100
+# u = 200
+# u = 400
+
+MSE
+
+A 10-1
+
+0.04ln(x) - 0.1
+50
+
+100
+
+#u
+
+200
+
+400
+
+Figure 10: Error convergence rates for different number of training data points. (A) Convergence of
+test error with respect to P for different number of u samples. (B) Convergence of test error with respect
+to the number of u samples for different values of P . (C) The polynomial rates of convergence versus the
+number of u samples or the values of P . (D) Exponential convergence of test error with respect to P for
+different number of u samples. (E) Exponential convergence of test error with respect to the number of u
+samples for different values of P . (F) The coefficient 1/k in the exponential convergence e−x/k versus the
+number of u samples or the values of P .
+
+5
+
+Conclusion
+
+In this paper, we formulate the problem of learning operators in a more general setup, and propose DeepONets
+to learn nonlinear operators. In DeepONets, we first construct two sub-networks to encode input functions and
+location variables separately, and then merge them together to compute the output. We test DeepONets on four
+ordinary/partial differential equation problems, and show that DeepONets can achieve small generalization
+errors by employing this inductive bias. In our simulations, we study systematically the effects on the test
+error of different factors, including the number of sensors, maximum prediction time, the complexity of the
+space of input functions, training dataset size, and network size. We observe different order polynomial and
+even exponential error convergence with respect to the training dataset size. To the best of our knowledge, this
+is the first time exponential convergence is observed in deep learning. Moreover, we derive theoretically the
+dependence of approximation error on different factors, which is consistent with our computational results.
+
+15
+
+Despite the aforementioned achievements, more work should be done both theoretically and computationally. For example, there have not been any theoretical results of network size for operator approximation,
+similar to the bounds of width and depth for function approximation [10]. We also do not understand
+theoretically yet why DeepONets can induce small generalization errors. On the other hand, in this paper
+we use fully-connected neural networks for the two sub-networks, but as we discussed in Section 2.1, we can
+also employ other network architectures, such as convolutional neural networks or “attention” mechanism.
+These modifications may improve further the accuracy of DeepONets.
+
+6
+
+Acknowledgments
+
+We thank Yanhui Su of Fuzhou University for the help on Theorem 2. We thank Zhongqiang Zhang of Worcester Polytechnic Institute for the proof in Appendix C. This work is supported by the DOE PhILMs project
+(No. de-sc0019453), the AFOSR grant FA9550-17-1-0013, and the DARPA-AIRA grant HR00111990025.
+The work of Pengzhan Jin is partially supported by the Major Project on New Generation of Artificial
+Intelligence from the Ministry of Science and Technology of China (Grant No. 2018AAA010100).
+
+References
+[1] L. Bottou and O. Bousquet. The tradeoffs of large scale learning. In Advances in Neural Information
+Processing Systems, pages 161–168, 2008.
+[2] S. L. Brunton, J. L. Proctor, and J. N. Kutz. Discovering governing equations from data by sparse
+identification of nonlinear dynamical systems. Proceedings of the National Academy of Sciences,
+113(15):3932–3937, 2016.
+[3] T. Chen and H. Chen. Approximations of continuous functionals by neural networks with application
+to dynamic systems. IEEE Transactions on Neural Networks, 4(6):910–918, 1993.
+[4] T. Chen and H. Chen. Approximation capability to functions of several variables, nonlinear functionals,
+and operators by radial basis function neural networks. IEEE Transactions on Neural Networks,
+6(4):904–910, 1995.
+[5] T. Chen and H. Chen. Universal approximation to nonlinear operators by neural networks with arbitrary
+activation functions and its application to dynamical systems. IEEE Transactions on Neural Networks,
+6(4):911–917, 1995.
+[6] T. Q. Chen, Y. Rubanova, J. Bettencourt, and D. K. Duvenaud. Neural ordinary differential equations.
+In Advances in Neural Information Processing Systems, pages 6571–6583, 2018.
+[7] G. Cybenko. Approximation by superpositions of a sigmoidal function. Mathematics of Control,
+Signals and Systems, 2(4):303–314, 1989.
+[8] V. Dumoulin, E. Perez, N. Schucher, F. Strub, H. d. Vries, A. Courville, and Y. Bengio. Feature-wise
+transformations. Distill, 2018. https://distill.pub/2018/feature-wise-transformations.
+[9] N. B. Erichson, M. Muehlebach, and M. W. Mahoney. Physics-informed autoencoders for Lyapunovstable fluid flow prediction. arXiv preprint arXiv:1905.10866, 2019.
+[10] B. Hanin. Universal function approximation by deep neural nets with bounded width and ReLU
+activations. arXiv preprint arXiv:1708.02691, 2017.
+16
+
+[11] K. Hornik, M. Stinchcombe, and H. White. Multilayer feedforward networks are universal approximators. Neural Networks, 2(5):359–366, 1989.
+[12] J. Jia and A. R. Benson. Neural jump stochastic differential equations. arXiv preprint arXiv:1905.10403,
+2019.
+[13] P. Jin, L. Lu, Y. Tang, and G. E. Karniadakis. Quantifying the generalization error in deep learning in
+terms of data distribution and neural network smoothness. arXiv preprint arXiv:1905.11427, 2019.
+[14] A. Krizhevsky, I. Sutskever, and G. E. Hinton. Imagenet classification with deep convolutional neural
+networks. In Advances in Neural Information Processing Systems, pages 1097–1105, 2012.
+[15] L. Lu, X. Meng, Z. Mao, and G. E. Karniadakis. DeepXDE: A deep learning library for solving
+differential equations. arXiv preprint arXiv:1907.04502, 2019.
+[16] L. Lu, Y. Shin, Y. Su, and G. E. Karniadakis. Dying ReLU and initialization: Theory and numerical
+examples. arXiv preprint arXiv:1903.06733, 2019.
+[17] L. Lu, Y. Su, and G. E. Karniadakis. Collapse of deep and narrow neural nets. arXiv preprint
+arXiv:1808.04947, 2018.
+[18] H. N. Mhaskar and N. Hahm. Neural networks for functional approximation and system identification.
+Neural Computation, 9(1):143–159, 1997.
+[19] M. Mitzenmacher and E. Upfal. Probability and computing: randomization and probabilistic techniques
+in algorithms and data analysis. Cambridge university press, 2017.
+[20] G. Neofotistos, M. Mattheakis, G. D. Barmparis, J. Hizanidis, G. P. Tsironis, and E. Kaxiras. Machine
+learning with observers predicts complex spatiotemporal behavior. arXiv preprint arXiv:1807.10758,
+2018.
+[21] G. Pang, L. Lu, and G. E. Karniadakis. fPINNs: Fractional physics-informed neural networks. SIAM
+Journal on Scientific Computing, 41(4):A2603–A2626, 2019.
+[22] J. C. Patra, R. N. Pal, B. Chatterji, and G. Panda. Identification of nonlinear dynamic systems using
+functional link artificial neural networks. IEEE transactions on systems, man, and cybernetics, part b
+(cybernetics), 29(2):254–262, 1999.
+[23] T. Qin, K. Wu, and D. Xiu. Data driven governing equations approximation using deep neural networks.
+Journal of Computational Physics, 2019.
+[24] M. Raissi, P. Perdikaris, and G. E. Karniadakis. Multistep neural networks for data-driven discovery
+of nonlinear dynamical systems. arXiv preprint arXiv:1801.01236, 2018.
+[25] F. Rossi and B. Conan-Guez. Functional multi-layer perceptron: A non-linear tool for functional data
+analysis. Neural Networks, 18(1):45–60, 2005.
+[26] S. H. Rudy, S. L. Brunton, J. L. Proctor, and J. N. Kutz. Data-driven discovery of partial differential
+equations. Science Advances, 3(4):e1602614, 2017.
+[27] S. Sabour, N. Frosst, and G. E. Hinton. Dynamic routing between capsules. In Advances in Neural
+Information Processing Systems, pages 3856–3866, 2017.
+
+17
+
+[28] N. Trask, R. G. Patel, B. J. Gross, and P. J. Atzberger. GMLS-Nets: A framework for learning from
+unstructured data. arXiv preprint arXiv:1909.05371, 2019.
+[29] A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin.
+Attention is all you need. In Advances in Neural Information Processing Systems, pages 5998–6008,
+2017.
+[30] N. Winovich, K. Ramani, and G. Lin. ConvPDE-UQ: Convolutional neural networks with quantified
+uncertainty for heterogeneous elliptic partial differential equations on varied domains. Journal of
+Computational Physics, 2019.
+[31] D. Zhang, L. Lu, L. Guo, and G. E. Karniadakis. Quantifying total uncertainty in physics-informed
+neural networks for solving forward and inverse stochastic problems. Journal of Computational Physics,
+397:108850, 2019.
+[32] Z. Zhang and G. E. Karniadakis. Numerical methods for stochastic partial differential equations with
+white noise. Springer, 2017.
+[33] H. Zhao and J. Zhang. Nonlinear dynamic system identification using pipelined functional link artificial
+recurrent neural network. Neurocomputing, 72(13-15):3046–3054, 2009.
+[34] Y. Zhu, N. Zabaras, P.-S. Koutsourelakis, and P. Perdikaris. Physics-constrained deep learning for
+high-dimensional surrogate modeling and uncertainty quantification without labeled data. Journal of
+Computational Physics, 394:56–81, 2019.
+
+A
+
+Neural networks to approximate nonlinear operators
+
+We list in Table 3 the main symbols and notations that are used throughout this paper.
+
+X
+Rd
+K
+C(K)
+V
+u(x)
+s(x)
+f
+G
+(TW)
+σ
+{x1 , x2 , . . . , xm }
+n, p
+N
+M
+
+Table 3: Notations.
+a Banach space with norm k · kX
+Euclidean space of dimension d
+a compact set in a Banach space
+Banach space of all continuous functions defined on K with norm kf kC(K) = maxx∈K |f (x)|
+a compact set in C(K)
+an input function/signal
+an output function/signal
+a function or functional
+an operator
+all the Tauber-Wiener functions
+an activation function
+m sensor points
+neural network size hyperparameters in Theorems 4 and 5
+number of basis functions
+value of some upper bound
+
+Let C(K) denote the Banach space of all continuous functions defined on a compact set K ⊂ X with
+sup-norm kf kC(K) = maxx∈K |f (x)|, where X is a Banach space. We first review the definition and
+sufficient condition of Tauber-Wiener (TW) functions [5], and the definition of continuous operator.
+18
+
+Definition 1 (TW).
+PN If a function σ : R → R (continuous or discontinuous) satisfies that all the linear
+combinations i=1 ci σ(λi x + θi ), λi ∈ R, θi ∈ R, ci ∈ R, i = 1, 2, . . . , N , are dense in every C([a, b]),
+then σ is called a Tauber-Wiener (TW) function.
+Theorem 3 (Sufficient condition for TW). Suppose that σ is a continuous function, and σ ∈ S 0 (R)
+(tempered distributions), then σ ∈ (T W ), if and only if σ is not a polynomial.
+It is easy to verify that all the activation functions we used nowadays, such as sigmoid, tanh and ReLU,
+are TW functions.
+Definition 2 (Continuity). Let G be an operator between topological spaces X and Y . We call G continuous
+if for every  > 0, there exists a constant δ > 0 such that
+kG(x) − G(y)kY < 
+for all x, y ∈ X satisfying kx − ykX < δ.
+We recall the following two main theorems of approximating nonlinear continuous functionals and
+operators due to Chen & Chen [5].
+Theorem 4 (Universal Approximation Theorem for Functional). Suppose that σ ∈ (T W ), X is a Banach
+Space, K ⊂ X is a compact set, V is a compact set in C(K), f is a continuous functional defined on V ,
+then for any  > 0, there are a positive integer n, m points x1 , . . . , xm ∈ K, and real constants ci , θi , ξij ,
+i = 1, . . . , n, j = 1, . . . , m, such that
+
+
+n
+m
+X
+X
+f (u) −
+ci σ 
+ξij u(xj ) + θi  < 
+i=1
+
+j=1
+
+holds for all u ∈ V .
+Theorem 5 (Universal Approximation Theorem for Operator). Suppose that σ ∈ (T W ), X is a Banach
+Space, K1 ⊂ X, K2 ⊂ Rd are two compact sets in X and Rd , respectively, V is a compact set in C(K1 ), G
+is a nonlinear continuous operator, which maps V into C(K2 ), then for any  > 0, there are positive integers
+k , θ k , ζ ∈ R, w ∈ Rd , x ∈ K , i = 1, . . . , n, k = 1, . . . , p, j = 1, . . . , m, such
+n, p, m, constants cki , ξij
+j
+1
+k
+k
+i
+that
+
+
+p X
+n
+m
+X
+X
+k
+G(u)(y) −
+cki σ 
+ξij
+u(xj ) + θik  σ(wk · y + ζk ) < 
+k=1 i=1
+
+j=1
+
+holds for all u ∈ V and y ∈ K2 .
+Both Theorems 4 and 5 require the compactness of the function space. In fact, the function space
+like C([0, 1]) is “too large” for real applications, so it is suitable to consider a smaller space with compactness property. The necessary and sufficient conditions of the compactness are given by the following
+Arzelà–Ascoli Theorem.
+Definition 3 (Uniform Boundedness). Let V be a family of real-valued functions on the set K. We call V
+uniformly bounded if there exists a constant M such that
+|f (x)| ≤ M
+for all f ∈ V and all x ∈ K.
+19
+
+Definition 4 (Equicontinuity). Let V be a family of real-valued functions on the set K. We call V
+equicontinuous if for every  > 0, there exists a δ > 0 such that
+|f (x) − f (y)| < 
+for all f ∈ V and all x, y ∈ K satisfying |x − y| < δ.
+Theorem 6 (Arzelà–Ascoli Theorem). Let X be a Banach space, and K ⊂ X be a compact set. A subset
+V of C(K) is pre-compact (has compact closure) if and only if V is uniformly bounded and equicontinuous.
+
+B
+
+Number of sensors for identifying nonlinear dynamic systems
+
+Lemma 7. W :=
+
+S∞
+
+i=1 Wi is compact.
+
+Proof. At first, we prove that W is pre-compact. For any ε > 0, by (4), there exists an m0 such that
+ε
+ku − Lm (u)kC < ,
+4
+
+∀u ∈ V, ∀m > m0 .
+
+Since Wm0 is a compact set subject to equicontinuity, there exists a δ > 0 such that
+ε
+|x − y| < δ ⇒ |u(x) − u(y)| < ,
+2
+
+∀u ∈ Wm0 , ∀x, y ∈ [a, b].
+
+Now for all u ∈S
+W and all x, y ∈ [a, b], |x − y| < δ, if u ∈ Wm0 , naturally we have |u(x) − u(y)| < 2ε < ε,
+otherwise, u ∈ ∞
+i=m0 +1 Ui . Suppose that u = Lm (v), m > m0 , v ∈ V , then there holds
+|u(x) − u(y)| =|u(x) − v(x) + v(x) − v(y) + v(y) − u(y)|
+
+≤|Lm (v)(x) − v(x)| + |v(x) − v(y)| + |Lm (v)(y) − v(y)|
+
+≤2kLm (v) − vkC + |v(x) − v(y)|
+ε ε
+<2 · + = ε,
+4 2
+
+which shows the quicontinuity of W . In addition, it is obvious that W is uniformly bounded, so that we
+know W is pre-compact by applying the Arzelà–Ascoli Theorem.
+Next we show that W is close. Let {wi }∞
+i=1 ⊂ W be a sequence which converges to a w0 ∈ C[a, b].
+If there exists an m such that {wi } ⊂ Wm , then w0 ∈ Wm ⊂ W . Otherwise, there is a subsequence
+{Lin (vin )} of {wi } such that vin ∈ V and in → ∞ as n → ∞. Then we have
+kvin − w0 kC =kvin − Lin (vin ) + Lin (vin ) − w0 kC
+
+≤kvin − Lin (vin )kC + kLin (vin ) − w0 kC
+
+≤κ(in , V ) + kLin (vin ) − w0 kC ,
+which implies that w0 = limn→∞ vin ∈ V ⊂ W .
+Next we show the proof of Theorem 2.
+
+Proof. For u ∈ V and um ∈ Um , according to the bound (4) and the Lipschitz condition, we can derive that
+Z d
+Z d
+k(Gu)(d) − (Gum )(d)k2 ≤ c
+k(Gu)(t) − (Gum )(t)k2 dt + c
+|u(t) − um (t)|dt
+a
+a
+Z d
+≤ c
+k(Gu)(t) − (Gum )(t)k2 dt + c(b − a)κ(m, V ).
+a
+
+20
+
+By Gronwall inequality, we have
+k(Gu)(d) − (Gum )(d))k2 ≤ c(b − a)κ(m, V )ec(b−a) .
+Define Sm = {(u(x0 ), u(x1 ), · · · , u(xm )) ∈ Rm+1 |u ∈ V } which is a compact set in Rm+1 , and there
+is a bijective mapping between Sm and Um . Furthermore, we define a vector-valued function on Sm by
+ϕ(u(x0 ), u(x1 ), · · · , u(xm )) = (Gum )(d).
+For any ε > 0, make m large enough so that c(b − a)κ(m, V )ec(b−a) < ε. By universal approximation
+theorem of neural network for high-dimensional functions, there exist W1 ∈ Rn×(m+1) , b1 ∈ Rm+1 , W2 ∈
+RK×n , b2 ∈ RK , such that
+kϕ(u(x0 ), · · · , u(xm ))−(W2 ·σ(W1 ·[u(x0 )
+
+···
+
+u(xm )]T +b1 )+b2 )k2 < ε−c(b−a)κ(m, V )ec(b−a) .
+
+Hence we have
+k(Gu)(d) − (W2 · σ(W1 · [u(x0 )
+
+···
+
+u(xm )]T + b1 ) + b2 )k2
+
+≤k(Gu)(d) − (Gum )(d)k2 + k(Gum )(d) − (W2 · σ(W1 · [u(x0 )
+<c(b − a)κ(m, V )ec(b−a) + ε − c(b − a)κ(m, V )ec(b−a) = ε.
+
+···
+
+u(xm )]T + b1 ) + b2 )k2
+
+In summary, by choosing the value of m so that it makes c(b − a)κ(m, V )ec(b−a) less than ε is sufficient
+to achieve accuracy ε.
+
+C
+
+Gaussian random field with the radial-basis function kernel
+2
+
+Suppose that X(t) ∼ G(0, exp(− |x−y|
+)). Then
+l2
+Z
+Z
+√
+√
+1
+1
+1
+1
+l2 ω 2
+l2 ω 2
+4
+2
+4
+(l) cos(ωt) exp(−
+(l) 2 sin(ωt) exp(−
+X(t) = 2(π)
+)dW (ω) − 2(π)
+)dB(ω),
+8
+8
+R+
+R+
+where W and B are independent standard Brownian motions [32]. Apply the change of variable λ = lω and
+write X(t) as
+Z
+Z
+√
+√
+1
+1
+λ
+λ2
+λ
+λ2
+X(t) = 2(π) 4
+cos( t) exp(− )dW (λ) − 2(π) 4
+sin( t) exp(− )dB(λ).
+l
+8
+l
+8
+R+
+R+
+Applying a linear interpolation Π1 on the interval [ti , ti+1 ], then
+Z
+1
+λ
+λ2
+2
+E[(X(t) − Π1 X(t)) ] = 2(π) 2
+((I − Π1 ) cos( t))2 exp(− )dλ
+l
+4
+R+
+Z
+1
+λ
+λ2
++ 2(π) 2
+((I − Π1 ) sin( t))2 exp(− )dλ
+l
+4
+R+
+Z
+2
+1
+λ
+λ
+≤ (π) 2 (ti+1 − ti )4
+( )4 exp(− )dλ
+4
+R+ l
+4
+(ti+1 − ti )
+,
+= 24π
+l4
+where we recalled the error estimate of the linear interpolation on [a, b] (by Taylor’s expansion)
+1
+|(I − Π1 )g(t)| = (b − a)2 |f 00 (ξ)|,
+2
+21
+
+where ξ lies in between a and b. Then by the Borel-Cantelli lemma, we have
+|X(t) − Π1 X(t)| ≤ C
+
+(ti+1 − ti )2−
+,
+l2
+
+ > 0,
+
+where C is an absolute value of a Gaussian random variable with a finite variance. Therefore, taking a
+piecewise linear interpolation of X(t) with m points will lead to convergence with order O( m12 l2 ).
+
+22
+
+

@@ -1,0 +1,3106 @@
+Fourier-DeepONet: Fourier-enhanced deep operator networks for
+full waveform inversion with improved accuracy, generalizability,
+and robustness
+
+arXiv:2305.17289v2 [cs.LG] 24 Jul 2023
+
+Min Zhu1,2 , Shihang Feng3 , Youzuo Lin2 , and Lu Lu1,*
+1
+
+Department of Statistics and Data Science, Yale University, New Haven, CT 06511, USA
+2
+Earth and Environmental Sciences Division, Los Alamos National Laboratory, Los
+Alamos, NM 87544, USA
+3
+Theoretical Division, Los Alamos National Laboratory, Los Alamos, NM 87544, USA
+*
+Corresponding author. Email: lulu1@seas.upenn.edu
+
+Abstract
+Full waveform inversion (FWI) infers the subsurface structure information from seismic waveform data by solving a non-convex optimization problem. Data-driven FWI has been increasingly studied with various neural network architectures to improve accuracy and computational
+efficiency. Nevertheless, the applicability of pre-trained neural networks is severely restricted
+by potential discrepancies between the source function used in the field survey and the one
+utilized during training. Here, we develop a Fourier-enhanced deep operator network (FourierDeepONet) for FWI with the generalization of seismic sources, including the frequencies and
+locations of sources. Specifically, we employ the Fourier neural operator as the decoder of
+DeepONet, and we utilize source parameters as one input of Fourier-DeepONet, facilitating the
+resolution of FWI with variable sources. To test Fourier-DeepONet, we develop three new and
+realistic FWI benchmark datasets (FWI-F, FWI-L, and FWI-FL) with varying source frequencies, locations, or both. Our experiments demonstrate that compared with existing data-driven
+FWI methods, Fourier-DeepONet obtains more accurate predictions of subsurface structures in
+a wide range of source parameters. Moreover, the proposed Fourier-DeepONet exhibits superior
+robustness when handling data with Gaussian noise or missing traces and sources with Gaussian noise, paving the way for more reliable and accurate subsurface imaging across diverse real
+conditions.
+
+Keywords: Full waveform inversion; Deep learning; Fourier-DeepONet; Benchmark datasets;
+Generalizability; Robustness
+
+1
+
+Introduction
+
+Full waveform inversion (FWI) is a powerful tool used in the field of geophysics for imaging subsurface structures. It provides high-resolution images of geological formations, helping to enhance our
+comprehension of the Earth’s crust and facilitating the identification of natural resources [1]. FWI
+is governed by partial differential equations (PDEs) and can be solved as a non-convex optimization problem. However, FWI remains a challenging optimization procedure due to its ill-posedness,
+nonlinearity, and high computational complexity [2].
+
+1
+
+With the development of deep learning techniques, data-driven approaches have been extensively studied in FWI for different neural network architectures, such as encoder-decoder-based
+convolutional neural networks (CNNs) [3, 4], recurrent neural networks (RNNs) [5, 6], generative
+adversarial networks (GANs) [7], and so on. The utilization of data-driven FWI has been shown to
+provide accurate inversion results in an efficient manner [8, 9]. An extensive overview of data-driven
+seismic inversion methods can be found in Lin et al. [9].
+The adoption of machine learning approaches for FMI presents various challenges. One such
+challenge pertains to the issue of generalization, which is the capacity of a machine learning model
+to exhibit competent performance on data that it has not previously encountered. Some prior
+research has proposed several approaches to address this challenge as listed below.
+1. Build a large, diverse, and realistic dataset. Liu et al. [10] generated a substantial
+quantity of realistic models containing dense layers, faults, and salt bodies through mathematical representation. In contrast, Feng et al. [11] extracted velocity maps from numerous
+natural images. Alzahrani and Shragge [12] contributed to the development of velocity map
+training data by contrasting the generalization abilities of geologically inspired and purely
+geometric training sets. Meanwhile, Deng et al. [13] investigated the correlation between
+dataset complexity and the generalization ability of the trained network.
+2. Build a network with strong generalization ability. Zhang and Lin [7] employed a
+generative model trained with 1-fault velocity maps and evaluated its efficacy in predicting
+0-fault and 2-fault maps. Aharchaou and Baumstein [14] constructed a U-net using data
+obtained from ocean-bottom nodes to extract low-frequency components, which could assist
+FWI in a wide-azimuth towed-steamer survey. Li et al. [15] developed a hybrid network
+that incorporates fully convolutional layers, an attention mechanism, and a residual unit to
+estimate velocity models from common source point gathers.
+3. Incorporate governing physics into the purely data-driven method [16]. Ren et al.
+[17] introduced a wave-equation-based forward modeling network cell for simulating seismic
+wave equations. Jin et al. [18] and Dhara and Sen [19] established a connection between
+forward modeling and CNN in a loop, which transformed FWI into an unsupervised learning paradigm. Zhu et al. [20] integrated neural networks into the optimization of FWI by
+representing the velocity model with a generative neural network.
+Although these methods prioritize the generalization of velocity models and networks, the generalization of source (and receiver components) has not yet been explored. The source wavelet is,
+however, an important component of the FWI process, a small disturbance in the source wavelet
+will lead to large discrepancies in the inverted model [21, 22]. Hence, a good generalization of the
+source wavelet is crucial in a successful inversion.
+Another challenge of the data-driven FWI is model robustness, which is usually defined as
+the sensitivity of models to noise or outliers in the input data. Several studies have explored
+methods for improving the robustness of machine learning models. Miyato et al. [23] introduced
+adversarial training methods for semi-supervised text classification tasks, making use of the virtual
+adversarial training method, which is effective in improving the robustness of the model against
+adversarial perturbations and also leads to improved generalization performance. Lecuyer et al. [24]
+proposed a method for training models with provable guarantees on their robustness to adversarial
+examples, using techniques from the field of differential privacy. Hoffman et al. [25] proposed
+Jacobian regularization, a technique that increases the classification margins of neural networks,
+thereby improving the robustness of the model. However, few studies of robustness focused on
+2
+
+the field of data-driven FWI. Thus, more work is needed to understand the optimal strategies for
+improving the robustness of data-driven FWI models, and how to balance the trade-off between
+robustness and accuracy. Ultimately, the goal is to develop models that can reliably and accurately
+image subsurface structures across a range of different datasets and conditions.
+In this work, we aim to address the aforementioned FWI challenges of generalization and robustness by developing a new machine learning approach. Our method is developed based on deep
+operator networks (DeepONets) [26, 27], which have emerged as a powerful tool in computational
+science and engineering, as they offer a novel way to model complex physical systems and solve
+PDEs [28, 29, 30, 31, 32, 33, 34]. A DeepONet comprises two constituent sub-networks: a “trunk”
+network and a “branch” network. Recent works [35, 36, 37] showed that the DeepONet has satisfactory robustness against inputs with noise. Taking linear instability waves in high-speed boundary
+layers as an example, when Gaussian noise of 0.1% standard deviation is added to the input during
+testing, the error of DeepONet is almost unchanged, while the error of CNN experiences a substantial increase, by two orders of magnitude [35]. Even if Gaussian noise is up to 1%, the error of
+DeepONet only experiences a minor increase (< 2%) [36]. This example demonstrates the better
+robustness of DeepONet over traditional neural networks.
+The vanilla DeepONet uses an inner product as the decoding mechanism to construct the
+output [26], which results in blurred outputs of subsurface structures as observed in our experiments. Here, we incorporate more sophisticated networks as decoders, facilitating the production
+of clearer and more accurate predictions. Specifically, we develop a Fourier-enhanced DeepONet
+(Fourier-DeepONet) by utilizing U-FNO [38] (a block combining Fourier neural operator [39] and
+U-Net [40]) as the decoder. In addition, in contrast to the vanilla DeepONet, whose trunk net utilizes output function coordinates as input, we propose employing source parameters as the inputs
+of the trunk net. By adopting this approach, we facilitate the data-driven model of full waveform
+inversion with sources of variable frequencies and locations. To validate its performance, we develop three new FWI benchmark datasets (FWI-F, FWI-L, and FWI-FL) with varying sources. In
+comparison to existing data-driven FWI techniques, such as InversionNet [4] and VelocityGAN [7],
+Fourier-DeepONet exhibits a considerably enhanced accuracy and generalizability. Moreover, our
+experiments show that Fourier-DeepONet is much more robust when confronted with inputs containing noise or absent traces.
+The paper is organized as follows. In Section 2, we first introduce the problem setup of FWI
+and the OpenFWI benchmark dataset, and then we generate three new benchmark datasets (FWIF, FWI-L, and FWI-FL) with varying source frequencies and locations. In Section 3, after briefly
+introducing the vanilla DeepONet, we propose Fourier-DeepONet in parameter spaces. In Section 4,
+we compare the performance of Fourier-DeepONet and two baseline models for the three collections
+of benchmark datasets. Section 5 summarizes the paper and discusses some future directions.
+
+2
+
+Full waveform inversion
+
+We first introduce the problem setup of seismic FWI and forward modeling in Section 2.1 and then
+present the datasets in Section 2.2.
+
+2.1
+
+Problem setup
+
+The acoustic wave equation is a second-order PDE that describes the propagation of sound waves
+or pressure waves in a fluid or solid medium. The following is the governing equation of acoustic
+
+3
+
+waves in an isotropic medium with a uniform density:
+∇2 p(r, t) −
+
+1 ∂ 2 p(r, t)
+= s(r, t),
+c(r)2 ∂t2
+
+where t is time, r the spatial location, s is the source function, p is the pressure wavefield, and c
+is the velocity map of the subsurface medium. In this work, we focus on two-dimensional acoustic
+wave equation, i.e.,
+1
+∂ 2 p(x, z, t)
+∇2 p(x, z, t) −
+= s(x, z, t),
+c(x, z)2
+∂t2
+where x is horizontal location (length), and z is vertical location (depth). Here, we use a point
+source near the surface at z = 10 m generated by Ricker wavelet, and the expression of source
+function is
+s(x, z, t) = s0 (t; f )δ(x − xs , z − 10),
+(1)
+where
+
+2 2 2
+
+s0 (t; f ) = (1 − 2π 2 f 2 t2 )e−π f t
+
+is the amplitude of the Ricker wavelet (Fig. 14B) with frequency f , δ represents the Dirac delta
+function, and xs is the predetermined horizontal location of the source.
+We utilize the seismic forward modeling algorithm [41] to solve pressure wavefield from velocity maps, which utilizes finite difference methods with zero initial conditions. Additionally, the
+absorbing boundary [42] condition is employed to account for the wave attenuation and prevent
+wave reflection at the edges of the simulation domain. We use g to denote the forward modeling
+operator, i.e.,
+p = g(c; s).
+In contrast, FWI aims to derive velocity maps c from pressure wavefield p. In practice, however,
+only a limited number of receivers can be used to acquire pressure wavefield, and the receivers are
+typically placed on the surface (i.e., z = 0). To compensate for the missing subsurface pressure
+wavefield, we usually consider having the surface pressure wavefield data for multiple sources.
+Specifically, we assume that we have five source functions {sA , sB , sC , sD , sE } at different locations
+(Fig. 1), and for a source function si with i ∈ {A, B, C, D, E}, the corresponding pressure wavefield
+is pi = g(c; si ). We denote the pressure wavefield at surface by pi,0 (x, t) = pi (x, z = 0, t). Since
+pi,0 (x, t) is only the data collected by receivers on the surface, we call pi,0 (x, t) seismic data instead
+of pressure wavefield in the rest of the paper. Then, the problem of FWI is defined as learning the
+mapping
+[pA,0 , pB,0 , pC,0 , pD,0 , pE,0 ] 7→ c.
+Fig. 1 is a schematic illustration of forward modeling and FWI. The five red stars on the top
+of the velocity map are the five point sources utilized to generate seismic data. Each source is
+corresponding to one column of seismic data in Fig. 1. The resolution of seismic data in space is 10
+m, i.e., the distance between two adjacent receivers is 10 m. The resolution in time is 0.001 second,
+and the total time is one second. In this study, we not only consider clean seismic data, but also
+noisy seismic data and seismic data with missing traces, as shown in Fig. 1.
+In the rest of the paper, the figures of seismic data and velocity maps will carry the same labels
+and colorbars as presented in Fig 1. For the sake of conciseness, these elements will not be included
+in subsequent figures.
+
+4
+
+Figure 1: Schematic illustration of forward modeling and FWI. Forward modeling generates
+seismic data from velocity maps, while the purpose of FWI is to infer velocity maps from seismic
+data measurements. The five red stars in the velocity map are the five point sources utilized to
+generate seismic data. The seismic data can be clean, noisy, or with missing traces.
+
+5
+
+2.2
+
+Datasets
+
+The availability of large-scale datasets with a variety of subsurface structures provides a comprehensive testbed for evaluating and enhancing machine learning models for FWI. We first introduce
+an existing collection of benchmark datasets OpenFWI in Section 2.2.1 and then generate three
+new collections of benchmark datasets (FWI-F, FWI-L, and FWI-FL) in Section 2.2.2.
+2.2.1
+
+OpenFWI
+
+OpenFWI [13] is a collection of benchmark datasets on data-driven seismic FWI. In this study, we
+choose velocity maps of four datasets from OpenFWI: “FlatVel-B” (FVB), “CurveVel-A” (CVA),
+“CurveFault-A” (CFA), and “Style-A” (STA), see examples in Fig. 2.
+• The FVB dataset is designed for situations with flat layers and clear interfaces, representing
+relatively simple scenarios, where layers are horizontally oriented without much variation.
+• The CVA dataset is intended for situations involving curved layers with distinct interfaces.
+This dataset poses greater complexity compared to the FVB dataset, as the presence of curved
+layers creates further complications in the process of subsurface imaging.
+• The CFA dataset is developed for scenarios that involve curved layers and discontinuities
+resulting from faults in velocity maps. The existence of faults increases the intricacy of the
+subsurface imaging process, making it more difficult to acquire precise velocity maps.
+• The STA dataset is generated through style transfer techniques applied to natural images,
+signifying that the dataset draws inspiration from actual geological formations. This dataset
+aims to offer a more authentic depiction of subsurface imaging situations.
+The number of training/testing cases for FVB, CVA, CFA, and STA are 24K/6K, 24K/6K, 48K/6K,
+and 60K/7K, respectively.
+
+FlatVel-B (FVB)
+
+CurveVel-A (CVA) CurveFault-A (CFA)
+
+Style-A (STA)
+
+Velocity map
+
+Seismic data
+
+Figure 2: Examples of velocity maps (top row) and seismic data (bottom row) for FVB,
+CVA, CFA and STA datasets. The seismic data comes from the source C in Fig. 1.
+
+6
+
+2.2.2
+
+FWI-F, FWI-L, and FWI-FL
+
+According to Eq. (1), the Ricker wavelet source has two main parameters: frequency f and horizontal location xs . OpenFWI adopts fixed values for all parameters: the source frequencies are fixed at
+15 Hz, and the five sources are uniformly distributed on the surface, whose horizontal coordinates
+are 0, 172.5, 345, 517.5, and 690 m. Here, we generate three new datasets that vary in terms of
+source frequencies, locations, or both.
+• FWI-F: The source frequency is ranging from 5 to 25 Hz.
+• FWI-L: We allow the middle three sources (B, C, and D) to move up to 50 m either to the
+left or the right, while the sources at the boundaries (A and E) can move towards the center.
+Hence, the possible horizontal coordinates of the five sources are [0, 50], [122.5, 222.5], [295,
+295], [467.5, 567.5], and [640, 690] m, and the source spacing varies between 72.5 and 272.5
+m.
+• FWI-FL: The source frequency and location follow the patterns of FWI-F and FWI-L, respectively.
+The number of training/testing cases is the same as OpenFWI. Table 1 displays the source frequencies and locations for the four datasets.
+Table 1: Source frequencies and locations of different datasets. The source frequency and
+location in OpenFWI are fixed, whereas in FWI-F, FWI-L, and FWI-FL, the source frequencies,
+locations, and both frequencies and locations vary, respectively.
+
+3
+
+Dataset
+
+Frequency
+(Hz)
+
+Source A
+
+Source B
+
+Location (m)
+Source C
+
+Source D
+
+Source E
+
+OpenFWI
+FWI-F
+FWI-L
+FWI-FL
+
+15
+[5, 25]
+15
+[5, 25]
+
+0
+0
+[0, 50]
+[0, 50]
+
+172.5
+172.5
+[122.5, 222.5]
+[122.5, 222.5]
+
+345
+345
+[295, 295]
+[295, 295]
+
+517.5
+517.5
+[467.5, 567.5]
+[467.5, 567.5]
+
+690
+690
+[640, 690]
+[640, 690]
+
+Methods
+
+Traditional deep learning methods generally focus on finite-dimensional data, such as images or time
+series, while DeepONet aims to learn mappings between infinite-dimensional function spaces [26].
+From the standpoint of computation, this operator regression approach provides the merit of simulating complex nonlinear systems without requiring neural network retraining. Once the DeepONet
+has been trained, it can be employed on new input functions, thereby yielding results considerably
+more rapidly than conventional numerical solvers. Moreover, the DeepONet exhibits adaptability,
+as it can be applied to simulation data, experimental data, or a fusion of both types. This flexibility allows for the incorporation of experimental data covering a broad range of spatio-temporal
+scales, thus empowering researchers to estimate dynamics more precisely by synthesizing existing
+datasets [43].
+
+7
+
+3.1
+
+Vanilla DeepONet
+
+We denote the input function by v defined on the domain D ⊂ Rd
+v : x 7→ v(x),
+
+x ∈ D,
+′
+
+and denote the output function by u defined on the domain D′ ⊂ Rd
+u : y 7→ u(y),
+
+y ∈ D′ .
+
+Let V and U be the spaces of v and u, respectively. Then, the mapping from the input function v
+to the output function u is denoted by an operator
+G : V ∋ v 7→ u ∈ U.
+The DeepONet [26] is a neural network architecture, tailored specifically to approximate nonlinear operators between functional spaces. A vanilla DeepONet consists of two separate networks:
+the “trunk” network that accepts the coordinates y ∈ D′ as input; and the “branch” network that
+uses a discretized function v as its input. We particularly assess v at m predetermined positions
+{x1 , x2 , x3 , . . . , xm } to acquire the pointwise evaluations v = {v(x1 ), v(x2 ), v(x3 ), . . . , v(xm )}. Then
+the network’s output is presented as
+u(y) ≈ G(v)(y) =
+
+r
+X
+
+bi (v)ti (y) + b0
+
+i=1
+
+
+
+where b1 , b2 , ..., br and t1 , t2 , ..., tr
+tively, and b0 ∈ R is a bias.
+
+3.2
+
+are the r outputs of the branch net and trunk net, respec-
+
+Fourier-DeepONet in parameter spaces
+
+In the context of FWI applications, the branch network is tailored to receive seismic data as input.
+Unlike the trunk network of vanilla DeepONet, which employs coordinates of output functions as
+input, we propose utilizing source parameters as input for the trunk network. Consequently, our
+DeepONet is established in the parameter space rather than the spatial-temporal domain. We
+denote the seismic data by p = [pA,0 , pB,0 , pC,0 , pD,0 , pE,0 ], and source parameters by ξ (ξ = f
+or ξ=[xsA , xsB , xsC , xsD , xsE ]), and then the problem of FWI with varying source parameters is
+defined as learning the mapping
+G : (p, ξ) 7→ c.
+First, we need to discretize the input function within a finite-dimensional space. We particularly
+assess each pi,0 at R predetermined receiver positions at the surface {x1 , x2 , x3 , . . . , xR } to acquire
+the pointwise evaluations, and each receiver records at T times {t1 , t2 , t3 , . . . , tT } in the wavefields.
+Here, R = 70, and T = 1000. Thus, discretized seismic data for each source i ∈ {A, B, C, D, E}
+is a matrix of shape (1000, 70), and the discretized seismic data p is a tensor of shape (1000, 70,
+5). The source parameter ξ is a vector that has a length of 1 for source frequencies, a length of
+5 for source locations, or a length of 6 for both source frequencies and locations. The FourierDeepONet output (i.e., velocity maps) is a function on the spatial domain. Thus, c needs also to
+be discretized within a finite-dimensional space. We particularly assess c at W × H predetermined
+positions, where W = 70 and H = 70 correspond to the horizontal and vertical extents of velocity
+maps. Thus, the discretized c is a matrix of shape (70, 70).
+8
+
+In Fourier-DeepONet, the branch net and trunk net encode the seismic data p and parameters
+ξ, respectively (Fig. 3A). We denote outputs of the branch and trunk nets by b and t:
+b = B(p) ∈ RT ×R×C ,
+t = T (ξ) ∈ RC ,
+where C is the number of channels, and the branch net B and trunk net T are two linear transformations to increase the number of channels to C. Here, C = 64. A merger operation is needed
+to merge branch and trunk outputs together. We compare three possible merger operations in
+Section 4.5.1. Here, we choose pointwise multiplication after tensor broadcasting as the merger
+operation:
+z0 = b ⊙ t,
+where z0 is the output of merger operation with the dimension of T × R × C. We need to transform
+the dimension from T × R × C to R × R × C to generate velocity maps c. However, for both the
+Fourier layer and U-Net layer, the dimension of input and output are the same. To solve this issue,
+we add a linear layer before the activation layer in each Fourier and U-Fourier layer.
+
+Figure 3: Fourier-DeepONet architecture. (A) Branch net and trunk net are two linear transformations lifting inputs to high dimensional space. Green circle represents the merger operation
+which denotes point-wise multiplication. (B) Fourier layer, adapted from [39]. (C) U-Fourier
+layer, adapted from [38]. (D) Projection layer Q. (E) Shapes of outputs zi in one channel,
+i ∈ {0, 1, 2, 3, 4}.
+Next, we utilize one Fourier layer (Fig. 3B) and three U-Fourier layers (Fig. 3C) as the merger
+net:
+
+z1 = σ W1′ F −1 (R1 · F (z0 )) + W1 · z0 + b1 ,
+9
+
+z2 = σ W2′ F −1 (R2 · F (z1 )) + U2 (z1 ) + W2 · z1 + b2
+
+
+
+,
+
+z3 = σ W3′ F −1 (R3 · F (z2 )) + U3 (z2 ) + W3 · z2 + b3
+
+
+
+,
+
+z4 = σ W4′ F −1 (R4 · F (z3 )) + U4 (z3 ) + W4 · z3 + b4
+
+
+
+,
+
+where z1 , z2 , z3 , and z4 are corresponding to the outputs of Fourier, U-Fourier 1, U-Fourier 2, and
+U-Fourier 3 in Table 2. Here, F is two-dimensional Fast Fourier Transform (FFT), F −1 is inverse
+two-dimensional FFT, U is an U-Net layer, R, W and W ′ are weight matrices, and b is a bias.
+For more details about Fourier layers and U-Fourier layers, see Refs. [35, 38, 39, 40]. We discuss
+other configurations of Fourier and U-Fourier layers in Section 4.5.2 and find the combination of
+one Fourier layer and three U-Fourier layers is a better choice given the balance of performance
+and efficiency. In the end, a non-linear transformation Q (Fig. 3D) is applied to project output of
+the last U-Fourier layer z4 to velocity map c.
+We note that to ensure that the shape is compatible with U-Net, at the beginning of the branch
+net, we use an extra padding layer to convert the dimension from 1000 × 70 × 64 to 1000 × 72 × 64.
+More details of the operations and shapes of Fourier-DeepONet are summarized in Table 2.
+Table 2: Fourier-DeepONet architecture. The merger net includes one Fourier layer and three
+U-Fourier layers. The output shape does not include the batch size dimension.
+
+3.3
+
+Operations
+
+Output shape
+
+Branch net
+Trunk net
+Merger operation
+
+Padding, Linear
+Linear
+Pointwise multiplication of branch and trunk outputs
+
+(1000, 72, 64)
+(64)
+(1000, 72, 64)
+
+Fourier
+U-Fourier 1
+U-Fourier 2
+U-Fourier 3
+Projection
+
+Add(Fourier2d+Conv1d), ReLU
+Add(Fourier2d+Conv1d+UNet2d), Linear, ReLU
+Add(Fourier2d+Conv1d+UNet2d), Linear, ReLU
+Add(Fourier2d+Conv1d+UNet2d), Linear, ReLU
+Linear, ReLU, Linear, Slicing
+
+(1000, 72, 64)
+(512, 72, 64)
+(256, 72, 64)
+(70, 72, 64)
+(70, 70)
+
+Baseline models
+
+To compare with Fourier-DeepONet, we present two widely-used data-driven FWI models, InversionNet [4] and VelocityGAN [7], as baseline models.
+InversionNet employs a fully-convolutional network composed of an encoder and a decoder to
+model the seismic inversion process. The encoder accepts 2D seismic data as input, represented
+as a matrix of time samples and receiver locations. The decoder generates a 2D velocity map,
+illustrating subsurface rock properties at varying depths and locations. The network is trained
+using supervised learning on a dataset containing paired seismic data and corresponding velocity
+maps. InversionNet has proven to be an efficient method for seismic inversion, achieving state-ofthe-art results on multiple benchmark datasets [7, 13, 18].
+VelocityGAN is based on the idea of generative adversarial networks (GANs) and comprises a
+generator and a discriminator. The generator features an encoder-decoder architecture, similar to
+InversionNet, which serves as a surrogate model for FWI. The discriminator, a CNN, is trained
+to differentiate between genuine and counterfeit velocity maps. The generator is trained to create
+velocity maps capable of deceiving the discriminator, promoting more accurate and realistic outcomes. Moreover, VelocityGAN also utilizes network-based deep transfer learning to enhance the
+10
+
+model’s robustness and generalization. This method involves fine-tuning a pre-trained model for
+a related task and employing it as the initial point for GAN training. This approach allows the
+model to learn more rapidly and efficiently by leveraging the knowledge already embedded in the
+pre-trained model.
+
+4
+
+Results
+
+In this section, we test the proposed Fourier-DeepONet on FWI with varying source frequencies
+(Section 4.1), locations (Section 4.2), or both (Section 4.3). We then evaluate the model robustness
+in Section 4.4 and discuss the architecture of Fourier-DeepONet in Section 4.5.
+The seismic data and velocity maps are normalized to range between -1 and 1 during training
+and testing. To evaluate the performances of different models, we adopt the following metrics [13]:
+(1) mean absolute error (MAE), (2) root mean squared error (RMSE), (3) structural similarity
+(SSIM), and (4) L2 relative error. MAE and RMSE are two commonly used evaluation metrics
+in regression problems, which quantify the differences between predicted values and actual values.
+MAE is calculated as the mean of the absolute differences between the predicted and actual values.
+RMSE is calculated as the square root of the mean of the squared differences between the predicted
+and actual values. By squaring the errors, it emphasizes larger errors compared to MAE. SSIM
+measures the similarity between two images based on how closely they match from a perceptual
+perspective [44], providing a representation of how humans perceive image quality. The L2 relative
+error is a metric used to measure the difference between predictions and ground truth by taking
+into account the magnitudes of the values. Smaller MAE, RMSE, and L2 relative error, or larger
+SSIM indicate better model performance.
+
+4.1
+
+Source frequencies
+
+The source frequency plays a crucial role in FWI, as it directly impacts the resolution and convergence of the subsurface velocity model. The source frequency determines the frequency content of
+the seismic wavelet used in the modeling process, which in turn affects the accuracy and stability of the inversion. Higher source frequencies lead to shorter wavelengths, which in turn provide
+higher-resolution images of the subsurface. This means that finer details and smaller geological
+features can be resolved when using higher frequencies. However, higher frequencies are also more
+susceptible to attenuation and noise, making it challenging to acquire high-quality data at higher
+frequencies. Moreover, low-frequency components of the source wavelet are essential for the overall
+convergence of the FWI process. Low frequencies help in building a macro velocity model that
+captures the large-scale structure of the subsurface, which acts as a good starting point for the
+inversion. If the source lacks low-frequency content, the inversion process may get trapped in local
+minima, leading to inaccurate results. Therefore, the choice of source frequency in FWI is critical
+for achieving accurate subsurface velocity models.
+The frequency content should be carefully considered to balance the trade-off between resolution
+and stability while ensuring the convergence of the inversion process. Despite the significance of
+source frequency in FWI, OpenFWI and most of other FWI datasets use a fixed source frequency.
+This simplification may not accurately represent real-world FWI problems, as it overlooks the complexities and challenges associated with varying source frequencies, which limit the generalizability
+of the models trained on such datasets. To better prepare data-driven FWI models for real-world
+scenarios, it is important to develop datasets and training strategies that consider varying source
+frequencies. This will ensure that the trained models can handle a broader range of FWI problems,
+improving their robustness and applicability in practical situations.
+11
+
+4.1.1
+
+Comparison with pretrained baseline models
+
+We use the dataset FWI-F with varying source frequencies introduced in Section 2.2.2. The parameters of FWI-F remain the same as in OpenFWI, except that the source frequencies are randomly
+distributed between 5 Hz and 25 Hz. We train Fourier-DeepONet on FWI-F, while we use the
+baseline models (InversionNet and VelocityGAN) pretrained on OpenFWI from Ref. [13].
+We compare the performance (MAE, RMSE, SSIM, and L2 relative error) of Fourier-DeepONet,
+InversionNet, and VelocityGAN in FVB, CVA, CFA, and STA datasets in Fig. 4. Fourier-DeepONet
+performs well for all datasets across a range of frequencies (Fig. 4, red lines). However, InversionNet and VelocityGAN (Fig. 4, blue and green lines) can only give accurate predictions when the
+frequency is 15 Hz. When the frequency deviates from 15 Hz, their performance is much poorer
+than Fourier-DeepONet. For example, for the FVB dataset with the source frequency as 15 Hz,
+the L2 relative errors of the three models are around 10%. However, when we reduce the source
+frequency to 10 Hz, the L2 relative errors of InversionNet and VelocityGAN increase significantly to
+150%, while the L2 relative error of Fourier-DeepONet is still about 10%. Thus, Fourier-DeepONet
+can accurately predict velocity maps for frequencies ranging from 5 Hz to 25 Hz, while InversionNet and VelocityGAN can only predict velocity maps for a fixed frequency, indicating their weak
+generalizability as also discussed in Refs. [4, 7].
+We find that the case of higher frequency is easier to learn than the case of lower frequency
+(Fig. 4). Specifically, for InversionNet and VelocityGAN, the error degrades faster when the frequency decreases than when the frequency increases. Similarly, for Fourier-DeepONet, the error
+is larger when the frequency is at 5 Hz than when the frequency is at 25 Hz. In addition, for
+InversionNet and VelocityGAN, when the frequency deviates significantly from 15 Hz (e.g., smaller
+than 10 Hz or larger than 25Hz for CFA), the error no longer increases, since the error is already
+very large (L2 relative error ∼200%).
+We show several examples of velocity maps predicted by the three models on FVB, CVA, CFA
+and STA datasets in Fig. 5. When the frequency is at 15 Hz, all three methods yield satisfactory
+predictions. However, when the frequency deviates slightly from 15 Hz, InversionNet and VelocityGAN show inaccurate predictions. When frequency increases, both InversionNet and VelocityGAN
+tend to underestimate values of velocity maps. In contrast, when frequency decreases, both InversionNet and VelocityGAN tend to overestimate values of velocity maps. Fourier-DeepONet always
+has accurate predictions in all cases.
+Another serious issue of InversionNet and VelocityGAN is that their predictions may have an
+incorrect number of layers. For example, in Fig. 5B, predictions of InversionNet and VelocityGAN
+split into two separate layers at the top layer if the frequency is not at 15 Hz.
+4.1.2
+
+Comparison with improved baseline models
+
+For the results described above, we utilize the pretrained InversionNet and VelocityGAN based on
+the OpenFWI datasets, while Fourier-DeepONet is trained with FWI-F. Here, we improve the two
+baseline models by training them with FWI-F.
+Even compared with improved baseline models, Fourier-DeepONet still outperforms them across
+all datasets at any frequency between 5 and 25 Hz (Fig. 6). We note that compared with the results
+using OpenFWI, both InversionNet and VelocityGAN achieve better results at frequencies far from
+15 Hz, but worse results at frequencies close to 15 Hz. This occurs because the source frequency
+of OpenFWI is fixed at 15 Hz, while the source frequency of FWI-F varies between 5 and 25
+Hz. Generally, VelocityGAN has lower errors than InversionNet, indicating that it has better
+generalizability, but both of them are significantly worse than Fourier-DeepONet.
+
+12
+
+0.8
+
+SSIM
+
+RMSE
+5
+
+CVA
+
+10
+
+15
+
+20
+
+Frequency (Hz)
+
+0.4
+
+0.4
+
+0.2
+
+0.2
+
+25
+
+5
+
+10
+
+15
+
+20
+
+Frequency (Hz)
+
+25
+
+5
+
+1.0
+
+0.8
+
+SSIM
+
+RMSE
+
+MAE
+
+0.5
+0.4
+
+0.2
+5
+
+CFA
+
+10
+
+15
+
+20
+
+Frequency (Hz)
+
+25
+
+5
+
+10
+
+15
+
+20
+
+Frequency (Hz)
+
+0.3
+
+25
+
+STA
+
+10
+
+15
+
+20
+
+Frequency (Hz)
+
+25
+
+0.6
+0.5
+
+2.0
+
+0.6
+0.4
+0.2
+
+0.0
+
+0.8
+0.7
+0.6
+0.5
+0.4
+0.3
+0.2
+0.1
+
+5
+
+10
+
+15
+
+20
+
+Frequency (Hz)
+
+0.2
+0.1
+5
+
+10
+
+15
+
+20
+
+Frequency (Hz)
+
+25
+
+5
+
+10
+
+15
+
+20
+
+Frequency (Hz)
+
+0.8
+0.6
+0.4
+0.2
+5
+
+10
+
+15
+
+20
+
+Frequency (Hz)
+
+25
+
+5
+
+10
+
+15
+
+20
+
+Frequency (Hz)
+
+25
+
+10
+
+15
+
+20
+
+25
+
+10
+
+15
+
+20
+
+25
+
+10
+
+15
+
+20
+
+25
+
+10
+
+15
+
+20
+
+25
+
+Frequency (Hz)
+
+Frequency (Hz)
+
+1.5
+1.0
+0.5
+0.0
+
+25
+
+SSIM
+
+MAE
+
+0.3
+
+0.0
+
+25
+
+RMSE
+
+0.4
+
+5
+
+0.8
+
+0.2
+5
+
+25
+
+1.0
+
+0.4
+
+0.2
+
+20
+
+5
+
+2.00
+1.75
+1.50
+1.25
+1.00
+0.75
+0.50
+0.25
+
+2.5
+
+0.6
+
+0.4
+
+15
+
+SSIM
+
+MAE
+
+0.6
+
+10
+
+Frequency (Hz)
+
+0.5
+
+0.8
+
+RMSE
+
+0.8
+
+5
+
+1.0
+
+1.0
+
+1.2
+
+1.0
+
+Frequency (Hz)
+
+1.5
+
+0.0
+
+25
+
+0.6
+
+0.4
+
+0.2
+
+20
+
+0.7
+
+0.6
+
+0.4
+
+15
+
+0.8
+
+0.8
+
+0.6
+
+10
+
+L 2 relative error
+
+MAE
+
+0.2
+
+2.0
+
+0.6
+
+0.6
+
+0.4
+
+0.0
+
+1.0
+0.8
+
+0.6
+
+0.0
+
+1.0
+
+L 2 relative error
+
+0.8
+
+1.2
+
+VelocityGAN
+
+L 2 relative error
+
+FVB1.0
+
+InversionNet
+
+L 2 relative error
+
+Fourier-DeepONet
+
+5
+
+Frequency (Hz)
+
+1.75
+1.50
+1.25
+1.00
+0.75
+0.50
+0.25
+5
+
+Frequency (Hz)
+
+Figure 4: Performance of three methods on four datasets (FVB, CVA, CFA, and STA)
+of different sources frequencies. Fourier-DeepONet is trained on FWI-F; InversionNet and
+VelocityGAN are trained on OpenFWI. Fourier-DeepONet performs better for all datasets across a
+wide range of frequencies, while InversionNet and VelocityGAN can only give accurate predictions
+when the frequency is 15 Hz.
+
+13
+
+A
+
+B
+
+C
+
+D
+
+E
+
+Figure 5: Examples of velocity maps predicted by three methods on four datasets with
+source frequencies from 13 to 17 Hz. (A) Ground truth of examples from FVB, CVA, CFA,
+and STA datasets. (B) Predictions for the FVB case. (C) Predictions for the CVA case. (D)
+Predictions for the CFA case. (E) Predictions for the STA case. The seismic data comes from the
+source C in Fig. 1.
+14
+
+Fourier-DeepONet
+
+FVB
+
+VelocityGAN
+0.35
+
+0.90
+
+0.04
+5
+
+CVA
+
+10
+
+15
+
+20
+
+Frequency (Hz)
+
+25
+
+0.80
+5
+
+0.18
+0.17
+0.16
+0.15
+0.14
+0.13
+0.12
+0.11
+
+10
+
+15
+
+20
+
+Frequency (Hz)
+
+25
+
+CFA
+
+10
+
+15
+
+20
+
+Frequency (Hz)
+
+25
+
+10
+
+15
+
+20
+
+Frequency (Hz)
+
+0.82
+0.80
+0.78
+0.76
+5
+
+10
+
+15
+
+20
+
+Frequency (Hz)
+
+0.74
+
+25
+
+5
+
+10
+
+15
+
+20
+
+Frequency (Hz)
+
+25
+
+SSIM
+
+0.92
+
+0.08
+
+0.91
+
+0.07
+
+0.03
+5
+
+STA
+0.095
+
+10
+
+15
+
+20
+
+Frequency (Hz)
+
+25
+
+0.06
+
+0.90
+5
+
+10
+
+15
+
+20
+
+Frequency (Hz)
+
+25
+
+5
+
+0.14
+
+0.090
+0.085
+0.080
+0.075
+0.070
+0.065
+
+SSIM
+
+MAE
+
+RMSE
+
+0.82
+
+15
+
+20
+
+25
+
+5
+
+10
+
+15
+
+20
+
+Frequency (Hz)
+
+25
+
+0.80
+
+0.15
+0.10
+
+0.32
+0.30
+0.28
+0.26
+0.24
+0.22
+0.20
+
+5
+
+10
+
+15
+
+20
+
+25
+
+10
+
+15
+
+20
+
+25
+
+10
+
+15
+
+20
+
+25
+
+10
+
+15
+
+20
+
+25
+
+Frequency (Hz)
+
+Frequency (Hz)
+
+5
+
+10
+
+15
+
+20
+
+Frequency (Hz)
+
+25
+
+0.18
+0.16
+0.14
+0.12
+0.10
+
+25
+
+0.84
+
+0.11
+10
+
+20
+
+0.86
+
+0.12
+
+Frequency (Hz)
+
+15
+
+0.88
+
+0.13
+
+5
+
+10
+
+Frequency (Hz)
+
+L 2 relative error
+
+MAE
+
+RMSE
+
+0.93
+
+0.09
+
+0.04
+
+L 2 relative error
+
+0.94
+
+0.10
+
+0.05
+
+0.20
+
+0.20
+
+0.95
+
+0.11
+
+0.25
+
+5
+
+0.12
+
+0.06
+
+0.30
+
+25
+
+SSIM
+
+MAE
+
+5
+
+5
+
+0.84
+
+RMSE
+
+0.11
+0.10
+0.09
+0.08
+0.07
+0.06
+
+0.85
+
+L 2 relative error
+
+0.06
+
+SSIM
+
+MAE
+
+RMSE
+
+0.08
+
+L 2 relative error
+
+0.95
+
+0.200
+0.175
+0.150
+0.125
+0.100
+0.075
+
+0.10
+
+0.02
+
+InversionNet
+
+5
+
+Frequency (Hz)
+
+0.28
+0.26
+0.24
+0.22
+5
+
+Frequency (Hz)
+
+Figure 6: Performance of three methods on four datasets (FVB, CVA, CFA, and STA)
+of different sources frequencies. All three models are trained on FWI-F. Fourier-DeepONet
+outperforms the two baseline models on all datasets at any frequency ranging from 5 to 25 Hz.
+
+15
+
+4.2
+
+Source locations
+
+The source location also plays a critical role in FWI, as it directly affects the illumination of the
+subsurface and the quality of the resulting velocity model. The source location includes the position
+and distribution of the sources that generate the seismic waves used in the modeling process,
+which in turn impacts the accuracy, coverage, and convergence of the inversion. Source locations
+significantly influence the illumination of the subsurface structures. Different source positions result
+in different wave propagation paths, which can either improve or degrade the visibility of specific
+geological features. Proper source location selection ensures adequate illumination of the target
+area, leading to more accurate velocity models. In areas with complex geological structures, such
+as salt bodies, the source location becomes even more critical. Proper source locations can help
+address issues like wave multipathing, which can severely affect the inversion process’s accuracy
+and convergence.
+Existing FWI datasets, such as OpenFWI, only consider uniformly distributed sources. Although this might be a good choice in some ideal scenarios, it may not accurately represent the
+complexities and challenges associated with real-world FWI problems. In practical scenarios, the
+ideal uniform distribution of source locations may not be feasible due to topographical constraints,
+environmental concerns, or logistical limitations. Using datasets with only uniform source location
+distribution can limit the generalizability of the models trained on such datasets. Real-world FWI
+problems often require working with varying source locations to adequately illuminate and cover
+the subsurface structure.
+4.2.1
+
+Overall performance
+
+The horizontal coordinates of the five sources in OpenFWI are 0, 172.5, 345, 517.5, and 690 m.
+To introduce variability in source locations, in datasets of FWI-L, we allow the sources to move
+within specified ranges, and the possible horizontal coordinates of the five sources are [0, 50], [122.5,
+222.5], [295, 295], [467.5, 567.5], and [640, 690] m. We train Fourier-DeepONet on FWI-L, while we
+use the baseline models (InversionNet and VelocityGAN) pretrained on OpenFWI from Ref. [13].
+The performance of the three models on FWI-L is shown in Table 3. In all of these four datasets,
+Fourier-DeepONet significantly outperforms the baseline models.
+4.2.2
+
+A particular test case for demonstration
+
+We further investigate the effect of source locations on prediction errors. As each source has its
+own location (i.e., in total five independent variables), it is not easy to visualize the results in a
+five-dimension space. To reduce the number of free variables, we fix the central source and move
+the other four sources equidistantly toward the center. In this setup, we only have one free variable:
+the shift distance from their default uniform locations for the four sources.
+Fig. 7 shows the quantitative results of the three methods on FWI-L datasets with only one
+free variable. Fourier-DeepONet performs well for all datasets across a range of source locations,
+with low errors and high SSIM values, while InversionNet and VelocityGAN can only give accurate
+predictions when the shift distance is zero. Their prediction errors increase with the source location
+further deviating away. We also provide a visualization of the resulting prediction in Fig. 8, which
+again demonstrates the strength of our proposed method by comparing it with InversionNet and
+VelocityGAN.
+
+16
+
+Fourier-DeepONet
+
+FVB
+
+SSIM
+
+RMSE
+
+0.6
+
+0.1
+0
+
+40
+
+0.18
+
+RMSE
+
+0.12
+
+0.14
+
+0.08
+
+0.12
+
+0.06
+0
+
+CFA
+
+20
+
+0.10
+
+40
+
+Distance (m)
+
+0
+
+20
+
+40
+
+0.225
+0.200
+0.175
+0.150
+0.125
+0.100
+0.075
+
+STA
+
+20
+
+40
+
+SSIM
+
+0.80
+20
+
+0.75
+
+40
+
+Distance (m)
+
+0.15
+
+Distance (m)
+
+0.10
+
+40
+
+SSIM
+
+RMSE
+
+MAE
+
+0.20
+
+40
+
+20
+
+0
+
+20
+
+40
+
+0
+
+Distance (m)
+
+20
+
+40
+
+Distance (m)
+
+20
+
+40
+
+20
+
+40
+
+20
+
+40
+
+0.25
+0.20
+0
+0.45
+0.40
+0.35
+0.30
+0.25
+0.20
+0.15
+0.10
+
+Distance (m)
+
+0.90
+0.85
+0.80
+0.75
+0.70
+0.65
+0.60
+0.55
+
+0.25
+
+20
+
+0
+
+40
+
+0.30
+
+40
+
+0.85
+
+0.30
+
+0
+
+20
+
+20
+
+Distance (m)
+
+0.35
+
+Distance (m)
+
+0.90
+
+0
+
+Distance (m)
+
+0.2
+0
+
+0.95
+
+RMSE
+
+MAE
+
+0
+
+0
+
+Distance (m)
+
+0.4
+
+40
+
+SSIM
+
+MAE
+
+0.16
+
+0.10
+
+20
+
+0.6
+
+Distance (m)
+
+0.850
+0.825
+0.800
+0.775
+0.750
+0.725
+0.700
+
+0.20
+
+0.14
+
+0
+
+L 2 relative error
+
+0.16
+
+20
+
+Distance (m)
+
+L 2 relative error
+
+CVA
+
+40
+
+0.5
+
+L 2 relative error
+
+MAE
+
+0.7
+
+0.2
+
+20
+
+L 2 relative error
+
+0.8
+
+0.3
+
+Distance (m)
+
+0.8
+
+0.9
+
+0.4
+
+0
+
+0.225
+0.200
+0.175
+0.150
+0.125
+0.100
+0.075
+0.050
+
+VelocityGAN
+
+0.5
+
+0.30
+0.25
+0.20
+0.15
+0.10
+0.05
+
+0.16
+0.14
+0.12
+0.10
+0.08
+0.06
+0.04
+0.02
+
+InversionNet
+
+0
+
+Distance (m)
+
+Distance (m)
+
+0.6
+0.5
+0.4
+0.3
+0.2
+
+0
+
+Distance (m)
+
+Figure 7: Performance of three methods on four datasets (FVB, CVA, CFA, and STA)
+of different distances from uniformly distributed sources. Fourier-DeepONet is trained on
+FWI-F; InversionNet and VelocityGAN are trained on OpenFWI. Fourier-DeepONet performs well
+for all datasets when distance is from 0 to 50 m, while InversionNet and VelocityGAN can only
+give accurate predictions when distance is 0, i.e., the sources are uniformly distributed from left
+boundary to right boundary.
+
+17
+
+A
+
+B
+
+C
+
+D
+
+E
+
+Figure 8: Examples of velocity maps predicted by three methods on four datasets at
+different distances from uniformly distributed sources. (A) Ground truth of examples from
+FVB, CVA, CFA, and STA datasets. (B) Predictions for the FVB case. (C) Predictions for the
+CVA case. (D) Predictions for the CFA case. (E) Predictions for the STA case. The seismic data
+comes from the source A in Fig. 1.
+18
+
+Table 3: Performance of three methods on FWI-L datasets. Fourier-DeepONet significantly
+outperforms InversionNet and VelocityGAN in all datasets. Bold font indicates the best performance for each dataset.
+Dataset
+Model
+MAE
+RMSE
+SSIM L2 relative error
+
+4.3
+
+FVB
+
+Fourier-DeepONet
+InversionNet
+VelocityGAN
+
+0.0211
+0.2008
+0.1995
+
+0.0674
+0.3460
+0.3533
+
+0.9709
+0.6475
+0.6328
+
+0.0700
+0.5816
+0.5855
+
+CVA
+
+Fourier-DeepONet
+InversionNet
+VelocityGAN
+
+0.0531
+0.1279
+0.1082
+
+0.1129
+0.1854
+0.1670
+
+0.8468
+0.7155
+0.7423
+
+0.2005
+0.3310
+0.3004
+
+CFA
+
+Fourier-DeepONet
+InversionNet
+VelocityGAN
+
+0.0232
+0.1154
+0.1215
+
+0.0635
+0.1828
+0.1892
+
+0.9571
+0.8338
+0.8310
+
+0.1039
+0.3490
+0.3514
+
+STA
+
+Fourier-DeepONet
+InversionNet
+VelocityGAN
+
+0.0596
+0.1842
+0.1942
+
+0.0999
+0.2513
+0.2651
+
+0.8980
+0.6834
+0.6390
+
+0.1994
+0.5277
+0.5546
+
+Source frequencies and locations
+
+In this section, we train and test Fourier-DeepONet on CVA dataset from FWI-FL. Given the
+poor performance of the baseline models on both the FWI-F and FWI-L datasets, we refrain from
+testing them on the FWI-FL dataset.
+The MAE, RMSE, SSIM, and L2 relative error of Fourier-DeepONet on testing dataset are
+0.0663, 0.1276, 0.8176, and 0.2302, respectively. The accuracy is similar to that of FourierDeepONet on FWI-F or FWI-L datasets. Examples of velocity maps predicted by Fourier-DeepONet
+for source frequencies at 10, 15, and 20 Hz are shown in Fig. 9, where the five sources are randomly
+distributed on the surface. The Fourier-DeepONet provides satisfactory predictions with varying
+source frequencies and locations.
+
+Ground Truth
+
+10 Hz
+
+15 Hz
+
+20 Hz
+
+Figure 9: Examples of velocity maps predicted by Fourier-DeepONet on CVA dataset
+from FWI-FL. The source frequencies range from 10 to 20 Hz. The five red stars in the velocity
+map are the five point sources utilized to generate seismic data.
+
+19
+
+4.4
+
+Robustness evaluation
+
+We evaluate the robustness of the three models in three aspects: testing input data with Gaussian
+noise, testing input data with missing traces, and Ricker wavelet source with noise. We again leverage both velocity maps and seismic data from OpenFWI datasets, meaning uniformly distributed
+sources with fixed frequency at 15 Hz are used.
+4.4.1
+
+Testing input data with noise
+
+Contaminating testing input data by adding noise is useful in evaluating the robustness of a model.
+Here, we use Gaussian noise to simulate noise that commonly occurs in real-world scenarios, such as
+sensor or measurement noise. The amount of added noise is controlled by specifying the standard
+deviation σ of the Gaussian distribution. In our experiment, the range of σ is from 0.01 to 1.
+We show that in all four datasets and different noise levels, Fourier-DeepONet performs much
+better than InversionNet and VelocityGAN (Fig. 10). Even if the standard deviation σ is up to
+0.1, the accuracy of Fourier-DeepONet is almost unaffected, while InversionNet and VelocityGAN
+fail under this circumstance. We also show some prediction examples with various noisy seismic
+inputs on FVB, CVA, CFA, and STA datasets in Fig. 11.
+4.4.2
+
+Testing input data with missing traces
+
+Missing traces can occur in FWI due to various reasons, such as irregularities in data acquisition,
+gaps in survey coverage, or loss of data during processing. While missing traces are common in realworld seismic datasets, the extent of their occurrence depends on the quality of the data acquisition
+and processing. The presence of missing traces can have a negative impact on the FWI results,
+potentially introducing artifacts or biases in the final subsurface property estimation. Therefore,
+the ability to deal with missing traces is crucial.
+To evaluate the robustness of the three models in the face of missing traces, we randomly select
+some receivers to be treated as missing traces by setting the values on these missing traces to
+zero. The number of missing traces ranges from 5 to 35 out of a total of 70 receivers. In tests
+on CVA, CFA, and STA datasets, Fourier-DeepONet significantly outperforms InversionNet and
+VelocityGAN, especially when the number of missing traces increases (Fig. 12). However, the three
+models have similar errors for FVB dataset, which may result from the simplicity of FVB dataset,
+and even when half of the receivers are missing, all three models can provide good predictions
+(SSIM > 0.75). Examples of inversion results with various numbers of missing traces on FVB,
+CVA, CFA, and STA datasets are shown in Fig. 13.
+4.4.3
+
+Ricker wavelet source with noise
+
+In our datasets, we use the Ricker wavelet as the amplitude of the source function. However, in
+practice, the sources that we impose on the surface are likely accompanied by noise. Here, we use
+Gaussian noise to simulate the noise added to the Ricker wavelet. The amount of added noise is
+controlled by specifying the standard deviation σ of the Gaussian distribution. In our experiment,
+the range of σ is from 0.001 to 0.1.
+Our results show that at all noise levels, the Fourier-DeepONet consistently outperforms InversionNet and VelocityGAN (Fig. 14). Even when the standard deviation σ reaches 0.1, the FourierDeepONet can still provide satisfactory predictions, while both the InversionNet and VelocityGAN
+fail under these conditions.
+
+20
+
+1.0
+
+1.0
+
+0.6
+
+0.8
+
+0.8
+
+0.6
+
+0.6
+
+0.4
+
+10 2
+
+10 1
+
+100
+
+Standard deviation of noise
+
+10 2
+
+SSIM
+
+RMSE
+
+MAE
+
+0.6
+0.5
+
+0.2
+10 2
+
+10 1
+
+100
+
+10 1
+
+100
+
+10 2
+
+Standard deviation of noise
+
+SSIM
+
+MAE
+
+RMSE
+
+0.6
+0.4
+0.2
+10 2
+
+10 1
+
+100
+
+0.25
+
+10 2
+
+10 1
+
+100
+
+MAE
+
+0.15
+
+10 2
+
+Standard deviation of noise
+
+0.9
+
+0.30
+
+0.8
+
+0.25
+
+0.7
+
+0.5
+
+0.15
+10 2
+
+10 1
+
+100
+
+Standard deviation of noise
+
+0.10
+
+10 2
+
+10 1
+
+100
+
+Standard deviation of noise
+
+0.4
+
+10 2
+
+10 1
+
+100
+
+Standard deviation of noise
+
+10 2
+
+10 1
+
+100
+
+10 2
+
+10 1
+
+100
+
+10 2
+
+10 1
+
+100
+
+1.75
+1.50
+1.25
+1.00
+0.75
+0.50
+0.25
+
+100
+
+0.6
+
+0.20
+
+0.10
+
+10 1
+
+100
+
+Standard deviation of noise
+
+Standard deviation of noise
+
+0.35
+
+RMSE
+
+0.20
+
+100
+
+0.9
+0.8
+0.7
+0.6
+0.5
+0.4
+0.3
+
+10 1
+
+1.75
+1.50
+1.25
+1.00
+0.75
+0.50
+0.25
+
+Standard deviation of noise
+
+0.8
+
+Standard deviation of noise
+
+10 1
+
+10 2
+
+Standard deviation of noise
+
+0.4
+10 2
+
+Standard deviation of noise
+
+100
+
+0.7
+
+0.4
+
+0.2
+
+10 1
+
+1.75
+1.50
+1.25
+1.00
+0.75
+0.50
+0.25
+0.00
+
+Standard deviation of noise
+0.8
+
+0.6
+
+0.4
+
+STA
+
+100
+
+0.8
+
+0.6
+
+0.6
+0.5
+0.4
+0.3
+0.2
+0.1
+0.0
+
+10 1
+
+Standard deviation of noise
+
+CVA0.8
+
+CFA
+
+0.2
+10 2
+
+SSIM
+
+0.0
+
+0.4
+
+0.2
+
+L 2 relative error
+
+0.2
+
+L 2 relative error
+
+0.4
+
+SSIM
+
+MAE
+
+RMSE
+
+0.8
+
+VelocityGAN
+
+Standard deviation of noise
+
+L 2 relative error
+
+FVB
+
+InversionNet
+
+L 2 relative error
+
+Fourier-DeepONet
+
+0.7
+0.6
+0.5
+0.4
+0.3
+0.2
+
+Standard deviation of noise
+
+Figure 10: Performance of three methods on four datasets (FVB, CVA, CFA, and
+STA) with different input noise levels during testing. Gaussian noise of different standard
+deviations is added to the input seismic data during testing. Fourier-DeepONet shows significantly
+better robustness than the baseline models against noise.
+
+21
+
+A
+
+B
+
+C
+
+D
+
+E
+
+Figure 11: Examples of velocity maps predicted by three methods on four datasets with
+various noisy seismic inputs. (A) Ground truth of examples from FVB, CVA, CFA, and STA
+datasets. (B) Predictions for the FVB case. (C) Predictions for the CVA case. (D) Predictions
+for the CFA case. (E) Predictions for the STA case. The seismic data comes from the source C in
+Fig. 1. The numbers in Figure panels B–D represent the standard deviations of the Gaussian noise
+added to the seismic inputs.
+22
+
+Fourier-DeepONet
+
+0.90
+
+SSIM
+
+RMSE
+
+0.20
+
+0.85
+
+0.15
+
+0.80
+
+0.10
+0
+
+CVA
+
+10
+
+20
+
+30
+
+0.75
+0
+
+No. of missing traces
+
+10
+
+20
+
+30
+
+0.85
+
+0.20
+
+0.30
+
+0.80
+
+0.25
+
+0.75
+
+0.10
+
+CFA
+
+10
+
+20
+
+0.10
+
+30
+
+No. of missing traces
+
+10
+
+20
+
+30
+
+No. of missing traces
+
+10
+
+20
+
+20
+
+0.1
+
+0.6
+
+30
+
+0
+0.275
+0.250
+0.225
+0.200
+0.175
+0.150
+0.125
+0.100
+
+MAE
+
+0
+
+10
+
+20
+
+30
+
+No. of missing traces
+
+L 2 relative error
+
+SSIM
+
+0.7
+
+10
+
+20
+
+30
+
+0
+
+No. of missing traces
+
+30
+
+10
+
+20
+
+30
+
+10
+
+20
+
+30
+
+0.3
+
+No. of missing traces
+
+10
+
+20
+
+0.80
+0.75
+0.70
+0.65
+10
+
+20
+
+0.60
+
+30
+
+No. of missing traces
+
+0
+
+0.6
+0.4
+0.2
+
+30
+
+0.85
+
+0
+
+0.8
+
+0
+
+No. of missing traces
+
+0.90
+
+RMSE
+
+STA
+
+10
+
+0.2
+
+No. of missing traces
+
+20
+
+0.4
+
+0
+
+L 2 relative error
+
+0
+
+10
+
+0.5
+
+No. of missing traces
+
+0.8
+
+RMSE
+
+MAE
+
+0.1
+
+30
+
+1.0
+
+0.3
+
+0.2
+
+20
+
+0.6
+
+30
+
+0.9
+
+0.4
+
+0.3
+
+10
+
+No. of missing traces
+
+0.2
+0
+
+0.5
+
+0.4
+
+0.20
+0.18
+0.16
+0.14
+0.12
+0.10
+0.08
+0.06
+
+0
+
+0.60
+0
+
+0.2
+
+30
+
+0.65
+
+0.15
+0
+
+20
+
+SSIM
+
+0.05
+
+10
+
+0.70
+
+0.20
+
+0.3
+
+No. of missing traces
+
+SSIM
+
+MAE
+
+RMSE
+
+0.35
+
+0.4
+
+0.1
+0
+
+No. of missing traces
+
+0.25
+
+0.15
+
+L 2 relative error
+
+0.95
+
+0.25
+
+MAE
+
+0.175
+0.150
+0.125
+0.100
+0.075
+0.050
+0.025
+
+VelocityGAN
+
+L 2 relative error
+
+FVB
+
+InversionNet
+
+10
+
+20
+
+30
+
+No. of missing traces
+
+0.55
+0.50
+0.45
+0.40
+0.35
+0.30
+0.25
+0.20
+
+0
+
+No. of missing traces
+
+No. of missing traces
+
+Figure 12: Performance of three methods on four datasets (FVB, CVA, CFA, and STA)
+with different numbers of missing traces. Missing traces of seismic data are filled with zero
+values during testing. Fourier-DeepONet shows better robustness than the baseline models against
+missing traces.
+
+23
+
+A
+
+B
+
+C
+
+D
+
+E
+
+Figure 13: Examples of velocity maps predicted by three methods on four datasets with
+different number of missing traces. (A) Ground truth of examples from FVB, CVA, CFA,
+and STA datasets. (B) Predictions for the FVB case. (C) Predictions for the CVA case. (D)
+Predictions for the CFA case. (E) Predictions for the STA case. The seismic data comes from the
+source C in Fig. 1. The numbers in Figure panels B–D represent the numbers of missing traces.
+Missing traces of seismic data are filled with zero values during testing.
+24
+
+A
+
+B
+
+Figure 14: Performance of three methods on FVB dataset with different source noise
+levels during testing. (A) Four metrics of three methods. Gaussian noise of different standard
+deviations is added to the sources during testing. Fourier-DeepONet shows better robustness than
+the baseline models against source noise. (B) Examples of velocity map predicted by three methods
+for noise level 0.01, 0.02, and 0.1.
+
+25
+
+4.5
+
+Discussion about the architecture of Fourier-DeepONet
+
+In this section, we provide more comparisons of our proposed Fourier-DeepONet and other networks.
+4.5.1
+
+Comparison of different merger operations
+
+In this study, we select pointwise multiplication after tensor broadcasting as the merger operation
+in Fourier-DeepONet. Here, we compare multiplication to the other two operations: addition
+and concatenation. For the concatenation operation, we allocate 48 channels to the branch net
+and 16 channels to the trunk net. This results in 64 channels after the branch and trunk nets
+are concatenated, which is the same as the number of channels for multiplication and addition.
+Comparisons of three merger operations on the FVB datasets from FWI-F and FWI-L are shown
+in Table 4, respectively. In general, multiplication performs slightly better than the other two
+operations, but the differences are not significant. Following the convention of vanilla DeepONet,
+we choose multiplication as merger operation.
+Table 4: Comparison of three merger operations on the FVB datasets from FWI-F and
+FWI-L. Bold font indicates the best performance for different operations.
+
+4.5.2
+
+Dataset
+
+Operation
+
+MAE
+
+RMSE
+
+SSIM
+
+L2 relative error
+
+FWI-F
+
+Multiplication
+Addition
+Concatenation
+
+0.0297
+0.0359
+0.0336
+
+0.0849
+0.0957
+0.0868
+
+0.9527
+0.9393
+0.9470
+
+0.0960
+0.1154
+0.1079
+
+FWI-L
+
+Multiplication
+Addition
+Concatenation
+
+0.0211
+0.0218
+0.0215
+
+0.0674
+0.0658
+0.0690
+
+0.9709
+0.9708
+0.9688
+
+0.0700
+0.0708
+0.0726
+
+Comparison of Fourier and U-Fourier layers
+
+In this study, we adopt one Fourier layer and three U-Fourier layers as the merger net. Here,
+we test the accuracy and efficiency of Fourier-DeepONets using only Fourier layers or U-Fourier
+layers (Table 5). For the network with four Fourier layers, the testing error is the largest and
+training speed is the fastest. The network of four U-Fourier layers exhibits similar accuracy as the
+combination we adopted in this study. However, the network of four U-Fourier layers possesses
+more parameters and thus requires more training time. Therefore, the combination of one Fourier
+layer and three U-Fourier layers appears to be a better choice given the balance of performance
+and efficiency.
+Table 5: Comparison of three Fourier-DeepONets on the CVA dataset from FWI-L.
+The networks are trained on NVIDIA Tesla V100 SXM2 32 GB with a batch size of 32. Bold font
+indicates the best performance for different networks.
+
+1 Fourier and 3 U-Fourier layers
+4 Fourier layers
+4 U-Fourier layers
+
+MAE
+
+RMSE
+
+SSIM
+
+L2 relative error
+
+Speed
+(seconds/epoch)
+
+0.0531
+0.0648
+0.0506
+
+0.1129
+0.1232
+0.1131
+
+0.8468
+0.8209
+0.8429
+
+0.2005
+0.2182
+0.1997
+
+288
+218
+330
+
+26
+
+We show the prediction examples of the three networks in Fig. 15. The network consisting of
+four Fourier layers performs the worst, exhibiting blurriness at the interfaces, due to the truncation
+of modes with higher frequencies. However, Fourier layers are faster than U-Fourier layers, as
+they do not contain the computationally expensive U-Net component. The U-Net within U-Fourier
+layers can capture the features of higher frequencies that are missed by Fourier layers, leading to
+both higher accuracy and increased computational costs.
+
+Ground Truth
+
+1 Fourier + 3 U-Fourier layers
+
+4 U-Fourier layers
+
+4 Fourier layers
+
+Figure 15: An example of velocity map predicted by different Fourier-DeepONets on
+CVA dataset.
+4.5.3
+
+Comparison between Fourier-DeepONet and vanilla DeepONet
+
+The vanilla DeepONet uses an inner product as the decoding mechanism to construct the output [26]. Here, we compare the accuracy of Fourier-DeepONet and vanilla DeepONet. Both models
+have same training and testing datasets (FWI-L), number of parameters (28 million), training time
+(10 hours; NVIDIA Tesla V100 SXM2 32 GB).
+The accuracy of the two models are shown in Table 6. Fourier-DeepONet outperforms vanilla
+DeepONet on all datasets, especially on FVB and CFA datasets. Prediction examples of the two
+models on four datasets are shown in Fig. 16. For FVB, CVA, and CFA datasets, the predictions
+from the vanilla DeepONet exhibit obvious blurriness at the interfaces between adjacent layers. On
+the other hand, vanilla DeepONet provides satisfactory visualizations on the STA dataset, probably
+because the velocity maps of STA dataset are smoother than those of the other datasets and do
+not contain sharp interfaces between adjacent layers.
+
+5
+
+Conclusions
+
+In this paper, we developed the Fourier-enhanced deep operator network (Fourier-DeepONet) for
+solving FWI problems. Experiments show that Fourier-DeepONet is significantly more accurate
+than the baseline models (InversionNet and VelocityGAN) across a wide range of source parameters,
+indicating the superior generalizability of Fourier-DeepONet. The two baseline models can obtain
+relatively accurate results only when the sources are uniformly distributed and the frequencies are
+fixed at 15Hz. When the source frequencies or locations are not fixed, the L2 relative errors of
+the two baseline models are about 10 times greater than that of Fourier-DeepONet. Additionally,
+we evaluate the robustness of all three models in data with Gaussian noise or missing traces and
+sources with Gaussian noise, and Fourier-DeepONet exhibits superior robustness compared to the
+other two models.
+In the future, we will further examine cases where the sources are not Ricker wavelet. To
+this end, we will generate new seismic data with sources of various shapes, and then use the source
+27
+
+FVB
+
+Ground Truth
+
+Fourier-DeepONet
+
+Vanilla DeepONet
+
+CVA
+
+Ground Truth
+
+Fourier-DeepONet
+
+Vanilla DeepONet
+
+CFA
+
+Ground Truth
+
+Fourier-DeepONet
+
+Vanilla DeepONet
+
+STA
+
+Ground Truth
+
+Fourier-DeepONet
+
+Vanilla DeepONet
+
+Figure 16: Examples of velocity maps predicted by Fourier-DeepONet and vanilla DeepONet on the FVB, CVA, CFA, and STA datasets. Vanilla DeepONet exhibit blurriness at
+the interfaces between adjacent layer.
+
+28
+
+Table 6: Comparison of Fourier-DeepONet and vanilla DeepONet on FWI-L datasets.
+Fourier-DeepONet significantly outperforms vanilla DeepONet on all datasets. Bold font indicates
+the best performance for each dataset.
+Dataset
+
+Model
+
+MAE
+
+RMSE
+
+SSIM
+
+L2 relative error
+
+FVB
+
+Fourier-DeepONet
+Vanilla DeepONet
+
+0.0211
+0.0558
+
+0.0674
+0.1249
+
+0.9709
+0.8657
+
+0.0700
+0.1974
+
+CVA
+
+Fourier-DeepONet
+Vanilla DeepONet
+
+0.0531
+0.0715
+
+0.1129
+0.1215
+
+0.8468
+0.7817
+
+0.2005
+0.2167
+
+CFA
+
+Fourier-DeepONet
+Vanilla DeepONet
+
+0.0232
+0.0508
+
+0.0635
+0.1131
+
+0.9571
+0.8714
+
+0.1039
+0.1942
+
+STA
+
+Fourier-DeepONet
+Vanilla DeepONet
+
+0.0596
+0.0679
+
+0.0999
+0.1044
+
+0.8980
+0.8699
+
+0.1994
+0.2120
+
+amplitude values as trunk inputs. Moreover, Fourier-DeepONet could not only learn varying source
+locations but also adapt to different receiver locations. To accomplish this, we will take receiver
+locations as trunk inputs instead of source locations. On the other hand, to reduce the training
+dataset size, we could develop an unsupervised learning scheme by utilizing the governing equation
+of the problem [18, 45].
+
+Acknowledgement
+This work was supported by the U.S. Department of Energy (DOE) [DE-SC0022953], the Los
+Alamos National Laboratory (LANL) - Laboratory Directed Research and Development program
+under project number 20210542MFR, and the U.S. DOE Office of Fossil Energy’s Carbon Storage
+Research Program via the Science-Informed Machine Learning to Accelerate Real Time Decision
+Making for Carbon Storage (SMART-CS) Initiative.
+
+References
+[1] Jean Virieux and Stéphane Operto. An overview of full-waveform inversion in exploration
+geophysics. Geophysics, 74(6):WCC1–WCC26, 2009.
+[2] Zhigang Zhang, Zedong Wu, Zhiyuan Wei, Jiawei Mei, Rongxin Huang, and Ping Wang.
+FWI Imaging: Full-wavefield imaging through full-waveform inversion. In SEG International
+Exposition and Annual Meeting. OnePetro, 2020.
+[3] Mauricio Araya-Polo, Joseph Jennings, Amir Adler, and Taylor Dahlke. Deep-learning tomography. The Leading Edge, 37(1):58–66, 2018.
+[4] Yue Wu and Youzuo Lin. InversionNet: An efficient and accurate data-driven full waveform
+inversion. IEEE Transactions on Computational Imaging, 6:419–433, 2019.
+[5] Jian Sun, Zhan Niu, Kristopher A Innanen, Junxiao Li, and Daniel O Trad. A theory-guided
+deep-learning formulation and optimization of seismic waveform inversion theory-guided dl
+and seismic inversion. Geophysics, 85(2):R87–R99, 2020.
+
+29
+
+[6] Jian Sun, Kristopher A Innanen, and Chao Huang. Physics-guided deep learning for seismic
+inversion with hybrid training and uncertainty analysis. Geophysics, 86(3):R303–R317, 2021.
+[7] Zhongping Zhang and Youzuo Lin. Data-driven seismic waveform inversion: A study on the
+robustness and generalization. IEEE Transactions on Geoscience and Remote sensing, 58(10):
+6900–6913, 2020.
+[8] Siwei Yu and Jianwei Ma. Deep learning for geophysics: Current and future trends. Reviews
+of Geophysics, 59(3):e2021RG000742, 2021.
+[9] Youzuo Lin, James Theiler, and Brendt Wohlberg. Physics-guided data-driven seismic inversion: Recent progress and future opportunities in full-waveform inversion. IEEE Signal
+Processing Magazine, 40(1):115–133, 2023.
+[10] Bin Liu, Senlin Yang, Yuxiao Ren, Xinji Xu, Peng Jiang, and Yangkang Chen. Deep-learning
+seismic full-waveform inversion for realistic structural models. Geophysics, 86(1):R31–R44,
+2021.
+[11] Shihang Feng, Youzuo Lin, and Brendt Wohlberg. Multiscale data-driven seismic full-waveform
+inversion with field data study. IEEE Transactions on Geoscience and Remote Sensing, 60:
+1–14, 2021.
+[12] Hani Alzahrani and Jeffrey Shragge. Seismic velocity model building using neural networks:
+Training data design and learning generalization. Geophysics, 87(2):R193–R211, 2022.
+[13] Chengyuan Deng, Shihang Feng, Hanchen Wang, Xitong Zhang, Peng Jin, Yinan Feng, Qili
+Zeng, Yinpeng Chen, and Youzuo Lin. OpenFWI: Large-scale multi-structural benchmark
+datasets for full waveform inversion. In Thirty-sixth Conference on Neural Information Processing Systems Datasets and Benchmarks Track.
+[14] Mehdi Aharchaou and Anatoly Baumstein. Deep learning-based artificial bandwidth extension:
+Training on ultrasparse obn to enhance towed-streamer FWI. The Leading Edge, 39(10):718–
+726, 2020.
+[15] Fangda Li, Zhenwei Guo, Xinpeng Pan, Jianxin Liu, Yanyi Wang, and Dawei Gao. Deep
+learning with adaptive attention for seismic velocity inversion. Remote Sensing, 14(15):3810,
+2022.
+[16] George Em Karniadakis, Ioannis G Kevrekidis, Lu Lu, Paris Perdikaris, Sifan Wang, and Liu
+Yang. Physics-informed machine learning. Nature Reviews Physics, 3(6):422–440, 2021.
+[17] Yuxiao Ren, Xinji Xu, Senlin Yang, Lichao Nie, and Yangkang Chen. A physics-based neuralnetwork way to perform seismic full waveform inversion. IEEE Access, 8:112266–112277, 2020.
+[18] Peng Jin, Xitong Zhang, Yinpeng Chen, Sharon Xiaolei Huang, Zicheng Liu, and Youzuo
+Lin. Unsupervised learning of full-waveform inversion: Connecting cnn and partial differential
+equation in a loop. arXiv preprint arXiv:2110.07584, 2021.
+[19] Arnab Dhara and Mrinal Sen. Elastic-adjointnet: A physics-guided deep autoencoder to overcome crosstalk effects in multiparameter full-waveform inversion. In SEG/AAPG International
+Meeting for Applied Geoscience & Energy. OnePetro, 2022.
+
+30
+
+[20] Weiqiang Zhu, Kailai Xu, Eric Darve, Biondo Biondi, and Gregory C Beroza. Integrating
+deep neural networks with full-waveform inversion: Reparameterization, regularization, and
+uncertainty quantificationnnfwi. Geophysics, 87(1):R93–R109, 2022.
+[21] Dong Sun, Kun Jiao, D Vigh, and R Coates. Source wavelet estimation in full waveform
+inversion. In 76th EAGE Conference and Exhibition 2014, volume 2014, pages 1–5. EAGE
+Publications BV, 2014.
+[22] Ki Ha Lee and Hee Joon Kim. Source-independent full-waveform inversion of seismic data.
+Geophysics, 68(6):2010–2015, 2003.
+[23] Takeru Miyato, Andrew M Dai, and Ian Goodfellow. Adversarial training methods for semisupervised text classification. arXiv preprint arXiv:1605.07725, 2016.
+[24] Mathias Lecuyer, Vaggelis Atlidakis, Roxana Geambasu, Daniel Hsu, and Suman Jana. Certified robustness to adversarial examples with differential privacy. In 2019 IEEE Symposium
+on Security and Privacy (SP), pages 656–672. IEEE, 2019.
+[25] Judy Hoffman, Daniel A Roberts, and Sho Yaida. Robust learning with Jacobian regularization. arXiv preprint arXiv:1908.02729, 2019.
+[26] Lu Lu, Pengzhan Jin, Guofei Pang, Zhongqiang Zhang, and George Em Karniadakis. Learning
+nonlinear operators via deeponet based on the universal approximation theorem of operators.
+Nature machine intelligence, 3(3):218–229, 2021.
+[27] Pengzhan Jin, Shuai Meng, and Lu Lu. MIONet: Learning multiple-input operators via tensor
+product. SIAM Journal on Scientific Computing, 44(6):A3490–A3514, 2022.
+[28] Chensen Lin, Zhen Li, Lu Lu, Shengze Cai, Martin Maxey, and George Em Karniadakis.
+Operator learning for predicting multiscale bubble growth dynamics. The Journal of Chemical
+Physics, 154(10):104118, 2021.
+[29] Shengze Cai, Zhicheng Wang, Lu Lu, Tamer A Zaki, and George Em Karniadakis.
+DeepM&Mnet: Inferring the electroconvection multiphysics fields based on operator approximation by neural networks. Journal of Computational Physics, 436:110296, 2021.
+[30] Zhiping Mao, Lu Lu, Olaf Marxen, Tamer A Zaki, and George Em Karniadakis. DeepM&Mnet
+for hypersonics: Predicting the coupled flow and finite-rate chemistry behind a normal shock
+using neural-network approximation of operators. Journal of computational physics, 447:
+110698, 2021.
+[31] Lu Lu, Raphaël Pestourie, Steven G Johnson, and Giuseppe Romano. Multifidelity deep neural
+operators for efficient learning of partial differential equations with application to fast inverse
+design of nanoscale heat transport. Physical Review Research, 4(2):023210, 2022.
+[32] Beichuan Deng, Yeonjong Shin, Lu Lu, Zhongqiang Zhang, and George Em Karniadakis. Approximation rates of deeponets for learning operators arising from advection–diffusion equations. Neural Networks, 153:411–426, 2022.
+[33] Zhongyi Jiang, Min Zhu, Dongzhuo Li, Qiuzi Li, Yanhua O Yuan, and Lu Lu. Fourier-MIONet:
+Fourier-enhanced multiple-input neural operators for multiphase modeling of geological carbon
+sequestration. arXiv preprint arXiv:2303.04778, 2023.
+31
+
+[34] Shunyuan Mao, Ruobing Dong, Lu Lu, Kwang Moo Yi, Sifan Wang, and Paris Perdikaris.
+PPDONet: Deep operator networks for fast prediction of steady-state solutions in disk-planet
+systems, 2023.
+[35] Lu Lu, Xuhui Meng, Shengze Cai, Zhiping Mao, Somdatta Goswami, Zhongqiang Zhang,
+and George Em Karniadakis. A comprehensive and fair comparison of two neural operators
+(with practical extensions) based on FAIR data. Computer Methods in Applied Mechanics and
+Engineering, 393:114778, 2022.
+[36] Patricio Clark Di Leoni, Lu Lu, Charles Meneveau, George Em Karniadakis, and Tamer A
+Zaki. Neural operator prediction of linear instability waves in high-speed boundary layers.
+Journal of Computational Physics, 474:111793, 2023.
+[37] Min Zhu, Handi Zhang, Anran Jiao, George Em Karniadakis, and Lu Lu. Reliable extrapolation of deep neural operators informed by physics or sparse observations. Computer Methods
+in Applied Mechanics and Engineering, 412:116064, 2023.
+[38] Gege Wen, Zongyi Li, Kamyar Azizzadenesheli, Anima Anandkumar, and Sally M Benson.
+U-FNO—an enhanced Fourier neural operator-based deep-learning model for multiphase flow.
+Advances in Water Resources, 163:104180, 2022.
+[39] Zongyi Li, Nikola Kovachki, Kamyar Azizzadenesheli, Burigede Liu, Kaushik Bhattacharya,
+Andrew Stuart, and Anima Anandkumar. Fourier neural operator for parametric partial
+differential equations. arXiv preprint arXiv:2010.08895, 2020.
+[40] Olaf Ronneberger, Philipp Fischer, and Thomas Brox. U-net: Convolutional networks
+for biomedical image segmentation. In Medical Image Computing and Computer-Assisted
+Intervention–MICCAI 2015: 18th International Conference, Munich, Germany, October 59, 2015, Proceedings, Part III 18, pages 234–241. Springer, 2015.
+[41] Peter Moczo, Johan OA Robertsson, and Leo Eisner. The finite-difference time-domain method
+for modeling of seismic wave propagation. Advances in Geophysics, 48:421–516, 2007.
+[42] Björn Engquist and Andrew Majda. Absorbing boundary conditions for numerical simulation
+of waves. Proceedings of the National Academy of Sciences, 74(5):1765–1766, 1977.
+[43] Irina Higgins. Generalizing universal function approximators. Nature Machine Intelligence, 3
+(3):192–193, 2021.
+[44] Zhou Wang, Alan C Bovik, Hamid R Sheikh, and Eero P Simoncelli. Image quality assessment:
+from error visibility to structural similarity. IEEE transactions on image processing, 13(4):
+600–612, 2004.
+[45] Sifan Wang, Hanwen Wang, and Paris Perdikaris. Learning the solution operator of parametric partial differential equations with physics-informed DeepONets. Science advances, 7(40):
+eabi8605, 2021.
+
+32
+
+

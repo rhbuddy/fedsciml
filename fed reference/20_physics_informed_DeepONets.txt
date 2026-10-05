@@ -1,0 +1,3307 @@
+L EARNING THE SOLUTION OPERATOR OF PARAMETRIC PARTIAL
+DIFFERENTIAL EQUATIONS WITH PHYSICS - INFORMED
+D EEP O NETS
+
+arXiv:2103.10974v1 [cs.LG] 19 Mar 2021
+
+Sifan Wang
+Graduate Group in Applied Mathematics
+and Computational Science
+University of Pennsylvania
+Philadelphia, PA 19104
+sifanw@sas.upenn.edu
+
+Hanwen Wang
+Graduate Group in Applied Mathematics
+and Computational Science
+University of Pennsylvania
+Philadelphia, PA 19104
+wangh19@sas.upenn.edu
+
+Paris Perdikaris
+Department of Mechanichal Engineering
+and Applied Mechanics
+University of Pennsylvania
+Philadelphia, PA 19104
+pgp@seas.upenn.edu
+
+March 23, 2021
+
+A BSTRACT
+Deep operator networks (DeepONets) are receiving increased attention thanks to their demonstrated
+capability to approximate nonlinear operators between infinite-dimensional Banach spaces. However,
+despite their remarkable early promise, they typically require large training data-sets consisting of
+paired input-output observations which may be expensive to obtain, while their predictions may
+not be consistent with the underlying physical principles that generated the observed data. In this
+work, we propose a novel model class coined as physics-informed DeepONets, which introduces an
+effective regularization mechanism for biasing the outputs of DeepOnet models towards ensuring
+physical consistency. This is accomplished by leveraging automatic differentiation to impose the
+underlying physical laws via soft penalty constraints during model training. We demonstrate that
+this simple, yet remarkably effective extension can not only yield a significant improvement in
+the predictive accuracy of DeepOnets, but also greatly reduce the need for large training data-sets.
+To this end, a remarkable observation is that physics-informed DeepONets are capable of solving
+parametric partial differential equations (PDEs) without any paired input-output observations, except
+for a set of given initial or boundary conditions. We illustrate the effectiveness of the proposed
+framework through a series of comprehensive numerical studies across various types of PDEs.
+Strikingly, a trained physics informed DeepOnet model can predict the solution of O(103 ) timedependent PDEs in a fraction of a second – up to three orders of magnitude faster compared a
+conventional PDE solver. The data and code accompanying this manuscript are publicly available at
+https://github.com/PredictiveIntelligenceLab/Physics-informed-DeepONets.
+
+1
+
+Introduction
+
+As machine learning (ML) methodologies take center stage across diverse disciplines in science and engineering, there
+is an increased interest in adopting data-driven methods to analyze, emulate, and optimize complex physical systems.
+The dynamic behavior of such systems is often described by conservation and constitutive laws expressed as systems of
+partial differential equations (PDEs) [1]. A classical task then involves the use of analytical or computational tools
+
+A PREPRINT - M ARCH 23, 2021
+
+to solve such equations across a range of scenarios, e.g. different domain geometries, input parameters, initial and
+boundary conditions (IBCs). Mathematically speaking, solving these so-called parametric PDE problems involves
+learning the solution operator that maps variable input entities to the corresponding latent solutions of the underlying
+PDE system. Tackling this task using traditional tools (e.g. finite element methods [2]) bears a formidable cost, as
+independent simulations need to be performed for every different domain geometry, input parameter, or IBCs. This
+challenge has motivated a growing literature on reduced-order methods [3, 4, 5, 6, 7, 8, 9] that leverage existing data-sets
+to build fast emulators, often at the price of reduced accuracy, stability, and generalization performance [10, 11]. More
+recently, ML tools are actively developed to infer solutions of PDEs [12, 13, 14, 15, 16, 17, 18], however most existing
+tools can only accommodate a fixed given set of input parameters or IBCs. Nevertheless, these approaches have found
+wide applicability across diverse applications including fluid mechanics [19, 20], heat transfer [21], bio-engineering
+[22, 23], materials [24, 25, 26], and finance [27, 28], showcasing the remarkable effectiveness of ML techniques in
+learning black-box functions, even in high-dimensional contexts [29]. A natural question then arises: can ML methods
+be effective in building fast emulators for solving parametric PDEs?
+Solving parametric PDEs requires learning operators (i.e. maps between infinite-dimensional function spaces) instead
+of functions (i.e. maps between finite-dimensional vector spaces), thus defining a new and relatively under-explored
+realm for ML-based approaches. Neural operator methods [30, 31, 32] represent the solution map of parametric PDEs
+as an integral Hilbert-Schmidt operator, whose kernel is parametrized and learned from paired observations, either
+using local message passing on a graph-based discretization of the physical domain [30, 31], or using global Fourier
+approximations in the frequency domain [32]. By construction, neural operators methods are resolution independent
+(i.e. the model can be queried at any arbitrary input location), but they require large training data-sets, while their
+involved implementation often leads to slow and computationally expensive training loops. More recently, Lu et
+al. [33] has presented a novel operator learning architecture coined as DeepOnet that is motivated by the universal
+approximation theorem for operators [34, 35]. DeepOnets still require large annotated data-sets consisting of paired
+input-output observations, but they provide a simple and intuitive model architecture that is fast to train, while allowing
+for a continuous representation of the target output functions that is independent of resolution. Beyond deep learning
+approaches, operator-valued kernel methods [36, 37] have also been demonstrated as a powerful tool for learning
+nonlinear operators, and they can naturally be generalized to neural networks acting on function spaces [38], but their
+applicability is generally limited due to their computational cost. Here we should again stress that the aforementioned
+techniques enable inference in abstract infinite-dimensional Banach spaces [39]; a paradigm shift from current machine
+learning practice that mainly focuses on learning functions instead of operators. In fact, recent theoretical findings also
+suggest that the sample complexity of DeepOnets can circumvent the curse of dimensionality in certain scenarios [40].
+While the aforementioned methodologies have demonstrated early promise across a range of applications [41, 42, 43],
+their application to solving parametric PDEs faces two fundamental challenges. First, they require a large corpus
+of paired input-output observations. In many realistic scenarios, the acquisition of such data involves the repeated
+evaluation of expensive experiments or costly high-fidelity simulators, thus generating sufficient large training data-sets
+may be prohibitively expensive. In fact, ideally, one would wish to be able to train such models without any observed
+data at all (i.e. given only knowledge of the PDE form and its corresponding ICBs). The second challenge relates to
+the fact that, by construction, the methods outlined above can only return a crude approximation to the target solution
+operator in the sense that the predicted output functions are not guaranteed to satisfy the underlying PDE. Recent efforts
+[44, 16, 45, 46, 47] attempt to address some of these challenges by designing appropriate architectures and loss functions
+for learning discretized operators (i.e. maps between high-dimensional Euclidean spaces). Although these approaches
+can relax the requirement for paired input-output training data, they are limited by the resolution of their underlying
+mesh discretization, and, consequently, need modifications to their architecture for different resolutions/discretizations
+in order to achieve consistent convergence (if at all possible, as demonstrated in [30]).
+In this work, we aim to address the aforementioned challenges by exploring a simple, yet remarkably effective extension
+of the DeepONet framework [33]. Drawing motivation from physics-informed neural networks [14], we recognize that
+the outputs of a DeepONet model are differentiable with respect to their input coordinates, therefore allowing us to
+employ automatic differentiation [48, 49] to formulate an appropriate regularization mechanism for biasing the target
+output functions to satisfy the underlying PDE constraints. This yields a simple procedure for training physics-informed
+DeepONet models even in the absence of any training data for the latent output functions, except for the appropriate
+IBCs of a given PDE system. By constraining the outputs of a DeepONet to approximately satisfy an underlying
+governing law, we observe significant improvements in predictive accuracy (up to 1-2 orders of magnitude reduction in
+predictive errors), enhanced generalization performance even for out-of-distribution prediction and extrapolation tasks,
+as well as enhanced data-efficiency (up to 100% reduction in the number of examples required to train a DeepONet
+model). As such, we demonstrate how physics-informed DeepONet models can be used to solve parametric PDEs
+without any paired input-output observations; a setting for which existing approaches for operator learning in Banach
+spaces fall short. Moreover, a trained physics-informed DeepONet model can generate PDE solutions up to three orders
+
+2
+
+A PREPRINT - M ARCH 23, 2021
+
+of magnitude faster compared to traditional PDE solvers. Taken together, the computational infrastructure developed
+in this work can have broad technical impact in reducing computational costs and accelerating scientific modeling of
+complex non-linear, non-equilibrium processes across diverse applications including engineering design and control,
+Earth system science, and computational biology.
+The remaining of this paper is structured as follows. In section 2, we provide an overview of the DeepONet framework
+put forth by Lu et al. [33]. Section 3 provides a detailed discussion of our main technical contribution, namely the
+formulation of a physics-informed regularization mechanism for constraining the outputs of a DeepONet model to
+approximately satisfy an underlying PDE system. Our discussion is accompanied by an illustrative example that
+highlights the main advantages of the proposed approach in comparison to conventional DeepONets. Further, in section
+4 we present a series of comprehensive numerical studies to assess the performance of the proposed physics-informed
+DeepONet framework. Finally, section 5 concludes with a discussion of our main findings, potential pitfalls, and
+shortcomings, as well as future research directions emanating from this study.
+
+2
+
+Learning operators with DeepONets
+
+In this section, we present a brief overview of the DeepONet model architecture [33] with a special focus on learning
+solution operators of parametric PDEs. Here, the terminology "parametric PDEs" means that some parameters of a
+given PDE system are allowed to vary over a certain range. These input parameters may include, but are not limited to,
+the shape of the physical domain, the initial or boundary conditions, constant or variable coefficients (e.g. diffusion or
+reaction rates), source terms, etc. To describe such problems in their full generality, let (U, V, S) be a triplet of Banach
+spaces and N : U × S → V be a linear or nonlinear differential operator. We consider a parametric PDEs taking the
+form
+N (u, s) = 0,
+
+(2.1)
+
+where u ∈ U denotes the parameters (i.e. input functions), and s ∈ S is the corresponding unknown solutions of the
+PDE system. Specifically, we assume that, for any u ∈ U, there exists an unique solution s = s(u) ∈ U to 2.1 (subject
+to appropriate initial and boundary conditions). Then, we can define the solution operator G : A → U as
+G(u) = s(u)
+
+(2.2)
+
+Following the original formulation of Lu et. al. [33], we represent the solution map G by an unstacked DeepONet
+Gθ , where θ denotes all trainable parameters of the DeepOnet network. As illustrated in Figure 1, the unstacked
+DeepONet is composed of two separate neural networks referred to as the "branch net" and "trunk net", respectively.
+The branch net takes u as input and returns a features embedding [b1 , b2 , . . . , bq ]T ∈ Rq as output, where u =
+[u(x1 ), u(x2 ), . . . , u(xm )] represents a function u ∈ U evaluated at a collection of fixed locations {xi }m
+i=1 . The trunk
+net takes the continuous coordinates y as inputs, and outputs a features embedding [t1 , t2 , . . . , tq ]T ∈ Rq . To obtain the
+final output of the DeepONet, the outputs of the branch and trunk networks are merged together via a dot product. More
+specifically, a DeepONet Gθ prediction of a function u evaluated at y can be expressed by
+Gθ (u)(y) =
+
+q
+X
+k=1
+
+bk (u (x1 ) , u (x2 ) , . . . , u (xm )) tk (y),
+{z
+} | {z }
+|
+branch
+
+(2.3)
+
+trunk
+
+where θ denotes the collection of all trainable weight and bias parameters in the branch and trunk networks. These
+parameters can be optimized by minimizing the following mean square error loss
+L(θ) =
+
+N
+
+P
+
+N
+
+P
+
+2
+1 XX
+(i)
+(i)
+Gθ (u(i) )(yj ) − G(u(i) )(yj )
+N P i=1 j=1
+2
+
+q
+
+(2.4)
+
+1 XX X
+(i)
+(i)
+=
+bk (u(i) (x1 ), . . . , u(i) (xm ))tk (yj ) − G(u(i) )(yj ) ,
+N P i=1 j=1
+k=1
+
+(i)
+(i) P
+where {u(i) }N
+i=1 denotes N separate input functions sampled from U. For each u , {y }j=1 are P locations in the
+(i)
+
+(i)
+
+domain of G(u(i) ), and G(u(i) )(yj ) is the corresponding output data evaluated at yj . Contrary to the fixed sensor
+(i) P
+locations of {xi }m
+i=1 , we remark that the locations of {y }j=1 may vary for different i, thus allowing us to construct a
+continuous representation of the output functions s ∈ S.
+3
+
+A PREPRINT - M ARCH 23, 2021
+
+DeepONet
+Branch Net
+
+PDE
+
+Loss
+
+Minimize
+
+BC&IC
+
+Trunk Net
+
+Figure 1: Making DeepOnets physics-informed: The DeepONet architecture [33] consists of two sub-networks, the
+branch net for extracting latent representations of input functions, and the trunk net for extracting latent representations
+of input coordinates at which the output functions are evaluated. A continuous and differentiable representation of the
+output functions is then obtained by merging the latent representations extracted by each sub-network via a dot product.
+Automatic differentiation can then be employed to formulate appropriate regularization mechanisms for biasing the
+DeepOnet outputs to satisfy a given system of PDEs.
+Remark 2.1. In general, a DeepOnet training data-set is a triplet [u, y, G(u)(y)] with following structure
+
+
+  .  
+..
+..
+..
+.
+.
+
+
+ 
+ 
+y (i)  G(u(i) )(y (i) )
+ (i)
+
+
+
+
+u (x1 ), u(i) (x2 ), · · · , u(i) (xm )
+1
+1
+  (i)  
+ (i)
+(i) 
+(i)
+
+
+
+
+u (x1 ), u(i) (x2 ), · · · , u(i) (xm )
+y
+G(u
+)(y
+)
+  2  
+2 
+ .
+[u, y, G(u)(y)] = 
+, . ,
+..
+.
+
+
+
+..
+  ..  
+.
+
+
+ 
+
+
+
+
+
+(i)
+G(u(i) )(y (i) )
+
+u(i) (x1 ), u(i) (x2 ), · · · , u(i) (xm )
+yP 
+ 
+P 
+
+
+
+
+..
+..
+..
+.
+.
+.
+
+(2.5)
+
+It is important to highlight that each input function u(i) = [u(i) (x1 ), u(i) (x2 ), · · · , u(i) (xm )] repeats itself for P
+times. In other words, suppose that u ∈ U, G(u) ∈ V are scalar-valued functions, {u(i) }N
+i=1 are N sample functions,
+(i)
+(i)
+(i) P
+d
+and, for each sample u , G(u ) is evaluated at P different locations {y }j=1 ⊂ R , then the tensor dimensions
+constituting a DeepOnet training data-set u, y, G(u)(y) are (N × P, m), (N × P, d), (N × P, 1) respectively.
+Although DeepONets [33] and their variants (e.g. DeepM&Mnets [41]) have demonstrated great potential in approximating operators and solving multi-physics and multi-scale problems, it is worth pointing out that the learned operator
+may not be consistent with the underlying physical laws that generated the observed data (e.g., due to the finite capacity
+of neural networks or lack of sufficient training data). To illustrate this, let us consider a pedagogical example involving
+a simple initial value problem
+ds(x)
+= u(x), x ∈ [0, 1],
+dx
+with an initial condition s(0) = 0. Here, our goal is to learn the anti-derivative operator
+Z x
+G : u(x) −→ s(x) = s(0) +
+u(t)dt, x ∈ [0, 1].
+
+(2.6)
+
+(2.7)
+
+0
+
+To generate a training data-set, we randomly sample 10,000 different functions u from a zero-mean Gaussian process
+prior with an exponential quadratic kernel using a length scale of l = 0.2 [50]. We also obtain the corresponding 10,000
+ODE solutions s by integrating the ODE 2.6 using an explicit Runge-Kutta method (RK45) [51]. For each observed
+pair of (u, s), we choose m = 100 sensors {xi }m
+i=1 uniformly distributed on the time interval [0, 1] and randomly select
+P = 1 observations of s(·) in [0, 1]. To generate the test data-set, we repeat the same procedure with m = 100 and
+P = 100. The final test data-set contains 1, 000 different samples of random input functions u.
+4
+
+A PREPRINT - M ARCH 23, 2021
+
+0.0
+0.25
+0.00
+
+−0.2
+
+u(x)
+
+s(x)
+
+−0.1
+
+−0.3
+
+−0.25
+−0.50
+
+−0.4
+
+−0.75
+0.0
+
+0.5
+
+1.0
+
+0.0
+
+0.5
+
+x
+
+1.0
+
+x
+Exact
+
+ReLU
+
+Tanh
+
+Figure 2: Learning the anti-derivative operator: Predicted solution s(x) and residual u(x) versus the ground truth for a
+representative input function. The results are obtained by training a conventional DeepONet model [33] equipped with
+different activation functions after 40,000 iterations of gradient descent using the Adam optimizer.
+We represent the operator G using the unstacked DeepONet Gθ where both the branch net and the trunk net are
+two-layer fully-connected neural networks with 100 neurons per hidden layer. Each network is equipped with ReLU
+activation functions. The network parameters can be trained by minimizing the following loss
+N
+
+L(θ) =
+
+2
+1 X
+Gθ (u(i) )(y (i) ) − s(i) (y (i) ) ,
+N i=1
+
+(2.8)
+
+where u(i) = [u(i) (x1 ), u(i) (x2 ), . . . , u(i) (xm )] represent the input function, and s(i) (y (i) ) denotes the associated
+solution of equation 2.6 evaluated at y (i) .
+We train the DeepONet model by minimizing the above loss function via gradient descent using the Adam optimizer
+[52] for 40, 000 iterations. Note that the final output of DeepONet is a function of input coordinates x. Thus, we can
+compute the residual ds(x)
+dx of the inferred solution s(x) using automatic differentiation [49], and compare the computed
+ds(x)
+residual with u(x) at the sensors {xi }m
+i=1 . Figure 2 shows the comparison of the predicted s(x) and dx against the
+ground truth for one representative random sample from the test data-set. We can observe a good agreement between
+the predicted and the exact solution s(x) when using ReLU activation functions. However, the predicted residual ds(x)
+dx
+seems to approximate u(x) with step functions, which leads to a large approximation error. One may postulate that this
+is due to the non-smoothness of ReLU activations. However, as shown in the same Figure 2, similar poor predictions
+of both u(x) and s(x) are obtained by repeating the same process using a DeepONet equipped with tanh activations,
+under exactly the same hyper-parameter settings. Thus, despite the guarantee of universal approximation theorem for
+operators [34], it is possible that DeepONet models may not appropriately learn the correct solution operator in the
+sense that the predicted output functions are not compatible with the ground truth operator that generated the training
+data.
+
+3
+
+Physics-informed DeepONets
+
+Physics-informed neural networks (PINNs) [14] can seamlessly integrate the data measurements and physical governing
+laws by penalizing residuals of partial differential equations in the loss function of a neural network using automatic
+differentiation [49]. Motivated by PINNs and our findings in the previous section, we propose a novel model class
+referred to as "physics-informed" DeepONets that enables the DeepONet output functions to be consistent with physical
+constraints via minimizing the residual of the underlying governing laws in the same manner as PINNs. Specifically,
+we consider minimizing the following composite loss function
+L(θ) = Loperator (θ) + Lphysics (θ),
+
+(3.1)
+
+where Loperator (θ) is defined exactly the same as in equation 2.4 and
+N
+
+Lphysics (θ) =
+
+Q
+
+m
+
+2
+1 XXX
+(i)
+N (u(i) (xk ), Gθ (u(i) )(yj )) ,
+N Qm i=1 j=1
+k=1
+
+5
+
+(3.2)
+
+A PREPRINT - M ARCH 23, 2021
+
+Relative L2 error
+
+Relative L2 error of s
+
+Relative L2 error of u
+
+5.16e − 03 ± 4.58e − 03
+
+1.39e − 01 ± 5.58e − 02
+
+Model
+DeepONet (ReLU)
+
+1.89e − 01 ± 1.51e − 01
+
+DeepONet (Tanh)
+
+6.14e − 01 ± 2.36e − 01
+
+Physics-informed DeepONet (Tanh) 2.49e − 03 ± 2.74e − 03 6.29e − 03 ± 3.65e − 03
+Table 1: Learning anti-derivative operator: Mean and standard deviation of relative L2 prediction errors of DeepONet
+and physics-informed DeepONet equipped with ReLU or Tanh activations over 1,000 examples in the test data-set.
+
+0.0
+0.25
+0.00
+
+−0.2
+
+u(x)
+
+s(x)
+
+−0.1
+
+−0.3
+
+−0.25
+−0.50
+
+−0.4
+
+−0.75
+0.0
+
+0.5
+
+1.0
+
+0.0
+
+x
+
+0.5
+
+1.0
+
+x
+Exact
+
+Predicted
+
+Figure 3: Learning anti-derivative operator: Exact solution and residual versus the predictions of a trained physicsinformed DeepONet for the same input function as in Figure 2.
+
+(i)
+
+(i)
+where {yj }Q
+i=1 denotes a set of collocation points that are randomly sampled from the domain of G(u ), and used to
+approximately enforce a set of given physical constraints, typically described by systems of PDEs.
+
+To demonstrate the effectiveness of the proposed framework, let us revisit the numerical example shown in section 2 and
+use the proposed physics-informed DeepONet architecture to learn the anti-derivate operator. Specifically, we represent
+the operator G by a DeepONet where both branch net and the trunk are 5-layer fully-connected neural network with 50
+units per hidden layer. We also equip both networks with tanh activation functions. For this particular example, Loperator
+is exactly the same as in equation 2.8, while the physics loss can be formulated as
+N
+
+2
+
+m
+
+1 X X dGθ (u(i) )(y)
+Lphysics (θ) =
+− u(i) (xj ) .
+N m i=1 j=1
+dy
+y=xj
+
+(3.3)
+
+(i)
+
+In this example we consider Q = m and yj = xj for j = 1, 2, . . . , Q.
+Figure 3 presents the predicted s(x) and ds(x)
+dx for the same random sample (see Figure 2) by minimizing the loss
+function 3.1 for 40,000 iterations of gradient descent using the Adam optimizer. Evidently, both predictions achieve an
+excellent agreement with the corresponding reference solutions. This can be further verified by the mean of relative L2
+error of the model predictions reported table 1, from which we may conclude that the physics-informed DeepONet not
+only attains comparable accuracy to the original DeepONet, but also satisfies the underlying ODE constraint. Another
+crucial finding is that physics-informed DeepONets are data-efficient and therefore effective in small data regime. To
+illustrate this, we train both a DeepONet and a physics-informed DeepONet for different number of training data points
+(i.e, different number of samples u) and report the mean of the relative L2 error of s(x) over 1,000 realizations from the
+test data-set in Figure 4. We observe that conventional DeepONets require more than 10x training data to achieve the
+same accuracy as their physics-informed counterpart.
+The remarkable success of DeepONets is based on the assumption that there exists enough data to train the model offline.
+However, high-fidelity numerical simulations are often computationally expensive and the volume of useful experimental
+data is generally limited or even intractable for many practical scenarios. Strikingly, as will be demonstrated below, the
+proposed physics-informed DeepONet is capable of learning the solution operator of parametric PDEs even without
+any paired input-output data, except for appropriate initial or boundary conditions – a setting for which conventional
+DeepOnets [33] and other competing approaches for operator learning in Banach spaces [41, 42, 43] fall short.
+6
+
+A PREPRINT - M ARCH 23, 2021
+
+100
+
+Rel. L2 error
+
+Original
+Physics-informed
+
+10−1
+
+10−2
+
+10−3
+
+102
+
+103
+
+104
+
+# Train data
+Figure 4: Learning anti-derivative operator: Mean of the relative L2 prediction error of the original DeepONet [33]
+and the physics-informed DeepONet as a function of the number of u samples.
+
+4
+
+Numerical results
+
+To demonstrate the effectiveness of physics-informed DeepONets, we provide a series of comprehensive numerical
+studies for solving various types of parametric PDEs. In most examples, we model random input functions u(x) using
+mean-zero Gaussian random fields (GRF) [50] as
+u(x) ∼ GP (0, kl (x1 , x2 )) ,
+
+
+2
+with an exponential quadratic covariance kernel kl (x1 , x2 ) = exp − kx1 − x2 k /2l2 with a length scale parameter
+l > 0. The parameter l will be used to control the complexity of the sampled input functions, and in general larger
+l > 0 leads to smoother u.
+Throughout all benchmarks we will employ hyperbolic tangent activation functions (Tanh) and initialize the DeepOnet
+networks using the Glorot normal scheme [53], unless otherwise stated. All networks are trained via mini-batch
+stochastic gradient descent using the Adam optimizer [52] with default settings. Particularly, we set the batch size
+to be 10,000 and use exponential learning rate decay with a decay-rate of 0.9 every 1, 000 training iterations. The
+detailed hyper-parameters and computational cost for all examples are listed in Appendix B and C. The code and
+data accompanying this manuscript is publicly available https://github.com/PredictiveIntelligenceLab/
+Physics-informed-DeepONets.
+4.1
+
+The anti-derivative operator
+
+To illustrate the capability of physics-informed DeepONets in solving parametric differential equations, let us again
+consider a pedagogical example involving the anti-derivative operator 2.6 as discussed in section 2, 3, i.e.
+ds(x)
+= u(x),
+dx
+s(0) = 0.
+
+x ∈ [0, 1],
+
+(4.1)
+(4.2)
+
+Assuming that u(x) is exactly known, we aim to learn the solution operator from u(x) to the solution s(x) without any
+paired input-output data. To this end, we represent the operator by a DeepONet Gθ where both branch net and trunk net
+are 5-layer fully-connected neural networks with 50 neurons per hidden layer and equipped with tanh activations. The
+corresponding loss function is expressed as
+L(θ) = Loperator (θ) + Lphysics (θ)
+=
+
+N
+X
+
+(4.3)
+Q
+N X
+X
+
+2
+
+2
+1
+1
+dGθ (u(i) )(y)
+Gθ (u(i) )(0) +
+− u(i) (xj ) .
+N i=1
+N Q i=1 j=1
+dy
+y=xj
+
+(4.4)
+
+Here, u(i) = [u(i) (x1 ), u(i) (x2 ), . . . , u(i) (xm )], and we sample N = 10, 000 input functions u(x) from a GRF with
+length scale l = 0.2. Moreover, we take Q = m = 100 and {xj }Q
+j=1 are equi-spaced grid points in [0, 1]. From the
+expression of the loss function, it is worth emphasizing that all "training data" comes the measurements of u(x), and
+7
+
+A PREPRINT - M ARCH 23, 2021
+
+Relative L2 error
+Model
+DeepONet
+
+Relative L2 error of s
+
+Relative L2 error of u
+
+8.80e − 01 ± 4.72e − 01
+
+9.15e − 01 ± 1.86e − 01
+
+Physics-informed DeepONet
+3.25e − 03 ± 3.19e − 03 6.97e − 03 ± 3.95e − 03
+Table 2: Solving a 1D parametric ODE: Mean and standard deviation of the relative L2 prediction errors of a trained
+DeepONet and physics-informed DeepONet model over 1,000 examples in the test data-set.
+
+Point-wise error
+
+Exact
+Predicted
+
+0.3
+
+s(x)
+
+×10−4
+
+0.2
+0.1
+
+0.5
+
+0
+−2
+−4
+
+0.0
+0.0
+
+2
+
+1.0
+
+0.0
+
+x
+
+0.5
+
+1.0
+
+x
+(a)
+
+2
+
+Point-wise error
+
+u(x)
+
+1
+
+0
+
+−1
+
+Exact
+Predicted
+
+0.0
+
+0.5
+
+1
+
+0
+
+−1
+
+1.0
+
+x
+
+×10−2
+
+0.0
+
+0.5
+
+1.0
+
+x
+(b)
+
+Figure 5: Solving a 1D parametric ODE: (a)(b) Exact solution and residual versus the predictions of a trained
+physics-informed DeepONet for a representative input sample.
+
+the zero initial condition on s(0) (i.e. no other observations of s(x) are available). The test data-set is the same as
+discussed in section 2.
+We train the physics-informed DeepONet by minimizing the above loss function for 40,000 iterations via gradient
+descent using the Adam optimizer. Results for one representative input sample from the test data-set are presented in
+Figure 5. Additional visualizations for different input samples are provided in Appendix Figure 17. As it can be seen,
+an excellent agreement can be achieved between the physics-informed DeepONet predictions and the ground truth.
+Furthermore, we investigate the performance of the original DeepONet [33] in solving this parametric ODE example.
+To this end, we train a DeepONet by minimizing the loss function Loperator (θ) under exactly the same hyper-parameter
+setting. Representative predicted solutions s(x) for different input samples u are shown in Figure 6. We observe that
+the conventional DeepONet learns a degenerate map that can fit the initial condition s(0) = 0, but returns erroneous
+predictions for all x > 0. These observations can be further quantified in Table 2, which reports the mean and standard
+deviation of the relative L2 prediction error for the output functions s and their corresponding ODE residual u over
+1,000 examples in the test data-set. Remarkably, the proposed physics-informed DeepONet is trained in the absence of
+any paired input-output data, but still obtains comparable accuracy to the results shown in Table 1, where the model is
+trained with a large amount of paired input-output observations.
+8
+
+A PREPRINT - M ARCH 23, 2021
+
+0.0
+
+0.50
+
+−0.2
+
+1.0
+
+0.25
+
+s(x)
+
+s(x)
+
+−0.2
+
+s(x)
+
+s(x)
+
+0.0
+
+0.00
+
+−0.4
+
+−0.4
+0
+
+1
+
+0
+
+x
+
+−0.25
+
+1
+
+x
+
+0.0
+0
+
+1
+
+x
+Exact
+
+0.5
+
+0
+
+1
+
+x
+
+Predicted
+
+Figure 6: Solving a 1D parametric ODE: Exact solutions versus the predicted solutions of a trained DeepONet for four
+different input samples. We observe that the conventional DeepONet [33] learns a degenerate operator.
+Relative L2 error
+Architecture
+Fully-connected network
+
+Relative L2 error of s
+
+Relative L2 error of u
+
+3.48e − 1 ± 2.34e − 1
+
+6.81e − 1 ± 6.31e − 2
+
+Fourier feature network
+8.45e − 3 ± 6.65e − 3 8.25e − 3 ± 1.54e − 3
+Table 3: Solving a 1D parametric ODE with irregular input functions: Mean and standard deviation of the relative L2
+prediction errors of physics-informed DeepONet represented by different network architectures over 1,000 examples in
+the test data-set.
+
+More impressively, below, we show that physics-informed DeepONets can accommodate extremely irregular input
+functions by using appropriate trunk network architectures. To illustrate this, we consider a GRF with a length scale
+l = 0.01 as a prior on the input function space. We take Q = m = 200 and repeat the same data generation procedure
+as before. In this example, the training data-set contains N = 10, 000 different u samples, while the test data-set
+contains 1,000 realizations.
+Given that the input functions are sampled from a GRF with a relatively small length scale, the associated solutions are
+expected to exhibit high frequencies. Therefore, we represent the solution operator by a DeepONet with Fourier feature
+embeddings [54], which are able to learn high-frequency components more effectively. Generally, A random Fourier
+mapping γ is defined as
+
+
+cos(Bv)
+γ(v) =
+,
+(4.5)
+sin(Bv)
+where each entry in B ∈ Rm×d is sampled from a Gaussian distribution N (0, σ 2 ) and σ > 0 is a user-specified
+hyper-parameter. Then, a Fourier feature network [54] can be simply constructed using a random Fourier features
+mapping γ as a coordinate embedding of the inputs, followed by a conventional fully-connected neural network.
+In particular, we encode the input functions by a branch net that is a 5-layer fully-connected neural network with
+200 neurons per hidden layer. In addition, we apply a Fourier feature embedding [54] initialized with σ = 50 to
+the input coordinates y before passing the embedded inputs through a trunk network with the same architecture as
+the branch net. Then we train the physics-informed DeepONet for 300,000 iterations of gradient descent using the
+Adam optimizer. As can be seen in Figure 5, the predicted solutions s(x) and their corresponding ODE residuals u(x)
+obtained by the physics-informed DeepONet with Fourier feature networks are in excellent agreement with the growth
+truth. Moreover, the results of training the same physics-informed DeepONet without Fourier feature embeddings are
+presented in Appendix Figure 19. One may observe that using a conventional fully-connected trunk networks cannot
+accurately capture the high-frequency oscillations, leading to a large prediction error. These observations can be further
+quantified in Table 3, which summarizes the mean and standard derivation of the relative L2 prediction error of trained
+physics-informed DeepONets constructed with different network architectures. Although here we have illustrated
+that an appropriate network architecture plays a prominent role in the performance of DeepONets, a comprehensive
+investigation of DeepONet architectures is beyond the scope of the present study and will be investigated in future work.
+It is also worth pointing out that the trained physics-informed DeepONets is even capable of yielding accurate predictions
+for out-of-distribution test data. To illustrate this, we create a test data-set by sampling input functions from a GRF with
+a larger length-scale of l = 0.2 (recall that the training data for this case is generated using l = 0.01). The corresponding
+relative L2 prediction error averaged over 1, 000 test examples is measured as 7.12e − 03. Some visualizations of the
+model predictions for this out-of-distribution prediction task are shown in the Appendix, Figure 21.
+9
+
+A PREPRINT - M ARCH 23, 2021
+
+×10−3
+
+Point-wise error
+
+0.20
+
+s(x)
+
+0.15
+0.10
+0.05
+
+Exact
+Predicted
+
+0.00
+0.0
+
+0.5
+
+1.0
+
+0.5
+
+0.0
+
+1.0
+
+0.0
+
+x
+
+0.5
+
+1.0
+
+x
+(a)
+×10−2
+2
+
+Point-wise error
+
+u(x)
+
+2
+
+0
+
+−2
+0.0
+
+0.5
+
+1.0
+
+x
+
+1
+0
+−1
+0.0
+
+0.5
+
+1.0
+
+x
+(b)
+
+Figure 7: Solving a 1D parametric ODE with irregular input functions: (a)(b) Exact solutions and corresponding
+ODE residuals versus the predictions of a trained physics-informed DeepONet with Fourier feature embeddings (for a
+representative input function sampled from a GRF with length scale l = 0.01). Additional visualizations are provided
+in Appendix Figure 20.
+4.2
+
+Diffusion-reaction systems
+
+Our next example involves an implicit operator described by a nonlinear diffusion-reaction PDE with a source term
+u(x)
+∂s
+∂2s
+= D 2 + ks2 + u(x), (x, t) ∈ (0, 1] × (0, 1],
+(4.6)
+∂t
+∂x
+with the zero initial and boundary conditions, where D = 0.01 is the diffusion coefficient and k = 0.01 is the reaction
+rate. We aim to learn the solution operator for mapping source terms u(x) to the corresponding PDE solutions s(x)
+using a physics-informed DeepONet.
+We approximate the operator by a physics-informed DeepONet architecture Gθ , where the branch and trunk networks
+are two separate 5-layer fully-connected neural networks with 50 neurons per hidden layer. For a given input function
+u(i) , we define the corresponding PDE residual as
+(i)
+
+Rθ (x, t) =
+
+dGθ (u(i) )(x, t)
+d2 Gθ (u(i) )(x, t)
+−D
+− k[Gθ (u(i) )(x, t)]2 ,
+dt
+dx2
+
+(4.7)
+
+(i)
+(i)
+(i)
+N
+m
+where {u(i) }N
+i=1 = {[u (x1 ), u (x2 ), . . . , u (xm )]}i=1 represents the input functions, and {xi }i=1 is a collection
+of equi-spaced sensor locations in [0, 1]. The parameters of the physics-informed DeepONet can be trained by
+minimizing the loss function
+
+L(θ) = Loperator (θ) + Lphysics (θ)
+=
+
+(4.8)
+
+N P
+N Q
+2
+2
+1 XX
+1 X X (i) (i) (i)
+(i) (i)
+(i)
+Gθ (u(i) )(xu,j , tu,j ) +
+Rθ (xr,j , tr,j ) − u(i) (xr,j ) .
+N P i=1 j=1
+N Q i=1 j=1
+
+10
+
+(4.9)
+
+A PREPRINT - M ARCH 23, 2021
+
+Figure 8: Solving a parametric diffusion-reaction system: Exact solution versus the prediction of a trained physicsinformed DeepONet for a representative example in the test data-set.
+
+Rel. L2 error
+
+10−1
+
+10−2
+
+10−3
+
+DeepONet
+(Tanh)
+
+DeepONet
+(ReLU)
+
+Physics-informed
+DeepONet (Tanh)
+
+Figure 9: Solving a parametric diffusion-reaction system: Mean and standard deviation of the relative L2 prediction
+error of a trained DeepONet (with paired input-output training data) and a physics-informed DeepONet (without
+paired input-output training data) over 1, 000 examples in the test data-set. The mean and standard deviation of
+the relative L2 prediction are ∼ 1.92% ± 1.12% (DeepOnet) and ∼ 0.45% ± 0.16% (physics-informed DeepOnet),
+respectively. Remarkably, the physics-informed DeepONet yields a ∼ 80% improvement in prediction accuracy with a
+100% reduction in the data-set size required for training.
+
+(i)
+
+(i)
+
+Here, for each u(i) , {(xu,j , tu,j }P
+j=1 are uniformly sampled points from the boundary of [0, 1] × [0, 1] (excluding
+(i)
+
+(i)
+
+(i)
+
+(i)
+
+Q
+t = 1), while {(xr,j , tr,j )}Q
+j=1 is a set of collocation points satisfying xr,j = xj , and {tr,j )}j=1 are uniformly sampled
+in [0, 1]. Consequently, Loperator (θ) enforces the zero initial and boundary conditions, and Lphysics (θ) penalizes the
+parametric PDE residual at the Q collocation points. In this example, we set P = Q = 100 and randomly sample
+N = 10, 000 input functions u(x) from a GRF with length scale l = 0.2. To generate the test data-set, we sample
+N = 1, 000 input functions u(x) from the same GRF and solve the diffusion-reaction system using a second-order
+implicit finite difference method on a 100 × 100 equi-spaced grid [51]. Hence, the test data-set will contain 1, 000
+realizations evaluated on a 100 × 100 uniform grid.
+
+We train the physics-informed DeepONet by minimizing the loss function 4.8 for 120, 000 iterations of gradient descent
+using the Adam optimizer with default settings. Figure 8 shows the comparison between the predicted and the exact
+solution for a random test input sample. More visualizations for different input samples can be found in Appendix Figure
+23. We observe that the physics-informed DeepONet predictions achieve an excellent agreement with the corresponding
+reference solutions. Furthermore, we investigate the performance of a conventional DeepONet model [33] in the case
+where some training data are available. Specifically, we still use the same 10, 000 input functions sampled before and
+for each u, and we randomly select P = 100 solution measurements out of the associated reference numerical solutions
+on the 100 × 100 grid. Then, we train the conventional DeepONet model under exactly the same hyper-parameter
+settings. The mean and standard deviation of relative L2 errors of trained DeepONet and physics-informed DeepONet
+over the test data-set are visualized in Figure 9. The average relative L2 error of DeepONet and physics-informed
+DeepONet are ∼ 1.92% and ∼ 0.45%, respectively. Remarkably, in contrast to the conventional DeepONet that is
+trained on paired input-output measurements, the proposed physics-informed DeepONet can yield much more accurate
+predictions even without any paired training data (except for the initial and boundary conditions). In our experience,
+predictive accuracy can be generally improved by using a larger batch size during training. A study of the effect of
+batch size for training physics-informed DeepONets can be found in Appendix F.
+11
+
+A PREPRINT - M ARCH 23, 2021
+
+4.3
+
+Burgers’ equation
+
+To highlight the ability of the proposed framework to handle nonlinearity in the governing PDEs, we consider the 1D
+Burgers’ equation benchmark investigated in Li et. al. [32]
+ds
+ds
+d2 s
++s
+− ν 2 = 0, (x, t) ∈ (0, 1) × (0, 1],
+dt
+dx
+dx
+s(x, 0) = u(x), x ∈ (0, 1),
+
+(4.10)
+(4.11)
+
+with periodic boundary conditions
+s(0, t) = s(1, t),
+(4.12)
+ds
+ds
+(0, t) =
+(1, t),
+(4.13)
+dx
+dx
+where t ∈ (0, 1), the viscosity
+is set to ν = 0.01, and the initial condition u(x) is generated from a GRF ∼
+
+N 0, 252 (−∆ + 52 I)−4 satisfying the periodic boundary conditions. Our goal here is to use the proposed physicsinformed DeepONet model to learn the solution operator mapping initial conditions u(x) to the full spatio-temporal
+solution s(x, t) of the 1D Burgers’ equation.
+Suppose that the solution operator is approximated by a physics-informed DeepONet Gθ . For a specific input function
+u(i) , the PDE residual is defined by
+(i)
+
+Rθ (x, t) =
+
+dGθ (u(i) )(x, t)
+dGθ (u(i) )(x, t)
+d2 Gθ (u(i) )(x, t)
++ Gθ (u(i) )(x, t)
+−ν
+,
+dt
+dx
+dx2
+
+(4.14)
+
+where u(i) denotes the input function evaluated a collection of fixed sensors {xi }m
+i=1 that are uniformly spaced in [0, 1].
+Then, the physics-informed loss function is given by
+L(θ) = LIC (θ) + LBC (θ) + Lphysics (θ),
+
+(4.15)
+
+where
+N
+
+P
+
+LIC (θ) =
+
+2
+1 XX
+(i)
+(i)
+Gθ (u(i) )(xic,j , 0) − u(i) (xic,j )
+N P i=1 j=1
+
+LBC (θ) =
+
+2
+1 XX
+(i)
+(i)
+Gθ (u(i) )(0, tbc,j ) − Gθ (u(i) )(1, tbc,j )
+N P i=1 j=1
+
+N
+
+N
+
++
+
+(4.16)
+
+P
+
+(4.17)
+
+P
+
+1 X X dGθ (u(i) )(x, t)
+dGθ (u(i) )(x, t)
+−
+(i)
+(i)
+N P i=1 j=1
+dx
+dx
+(0,t
+(1,t
+)
+)
+bc,j
+
+Lphysics (θ) =
+
+Q
+N
+XX
+
+(4.18)
+
+bc,j
+
+2
+
+1
+(i) (i) (i)
+R (x , t ) .
+N Q i=1 j=1 θ r,j r,j
+(i)
+
+2
+
+(i)
+
+(4.19)
+(i)
+
+(i)
+
+(i)
+
+Q
+P
+Here, for every input sample u(i) , xic,j = xj and {(0, tic,j )}P
+j=1 , {(1, tic,j )}j=1 and {(xr,j , tr,j )}j=1 are randomly
+sampled in the computational domain for enforcing the initial and boundary conditions and the PDE residual, respectively.
+In this example, we take P = m = 100, Q = 2, 500.
+
+To obtain a set of training
+and test data, we randomly sample 2,000 input functions from a GRF ∼
+
+N 0, 252 (−∆ + 52 I)−4 , and select a subset of N = 1, 000 samples as training data. For each sample u, we
+solve the Burgers equation 4.10 using conventional spectral methods. Specifically, assuming periodic boundary conditions, we start from a given initial condition s(x, 0) = u(x), x ∈ [0, 1] and integrate the equation 4.10 up to the
+final time t = 1. Synthetic test data for this example are generated using the Chebfun package [55] with a spectral
+Fourier discretization and a fourth-order stiff time-stepping scheme (ETDRK4) [56] with time-step size 10−4 . Temporal
+snapshots of the solution are saved every ∆t = 0.01 to give us 101 snapshots in total. Consequently, the test data-set
+contains 1,000 realizations evaluated at a 100 × 101 spatio-temporal grid.
+We employ two separate 7-layer fully-connected neural networks to represent the branch net and the trunk net,
+respectively. Each network is equipped with Tanh activation functions and has 100 units per hidden layer. The
+physics-informed DeepONet is trained by minimizing the loss function 4.15 via gradient descent using the Adam
+optimizer for 200, 000 iterations. Figure 10c shows the predicted solution of a trained physics-informed DeepONet
+12
+
+A PREPRINT - M ARCH 23, 2021
+
+for the worst sample in the test data-set, with a resulting relative L2 error of 1.71e − 01. Moreover, a discrepancy
+between the exact and the predicted initial condition u(x) can be observed in Figure 10a. This indicates that the
+physics-informed DeepONet cannot accurately reconstruct the initial condition, which results in a large prediction error
+of the full solution. To enforce the initial condition and improve the performance of physics-informed DeepONet, we
+consider assigning weights to LIC (θ) and use a more powerful network architecture as the backbone of the branch net
+and the trunk net. Specifically, we modify the loss function 4.15 as
+L(θ) = λLIC (θ) + LBC (θ) + Lphysics (θ),
+
+(4.20)
+
+where λ is a hyper-parameter that aims to balance the interplay of different terms in the loss function. Moreover, we
+employ a simple modified fully-connected neural network proposed by Wang et. al [57], which has been empirically
+proven to outperform conventional multi-layer percerptron (MLP) networks. More details can be found in Appendix G.
+We train the physics-informed DeepONet using standard and modified MLP networks by minimizing the modified loss
+function 4.20 for different λ ∈ {1, 5, 10, 20, 50, 100} under exactly the same hyper-parameter setting. The resulting
+average relative L2 prediction errors are summarized in Figure 11a. Compared against conventional MLPs, the modified
+MLP architecture is capable of consistently yielding much better prediction accuracy, which can be further improved by
+assigning appropriate weights in the loss function. Among all these hyper-parameters, the smallest test error ∼ 1.38%
+is obtained for the modified fully-connected neural network with λ = 20. It is worth noting that the physics-informed
+DeepONet achieves the comparable accuracy compared to Fourier operator methods [32], albeit the latter is trained
+on a large corpus of paired input-output data. Furthermore, visualizations corresponding to the worst example in the
+test data-set are shown in Figure 10b and Figure 10d, respectively. One can see that model predictions achieve a good
+agreement against the reference solutions, with a the relative L2 error being reduced to 3.30%.
+Here, we must also emphasize that a trained physics-informed DeepONet model can rapidly predict the entire spatiotemporal solution of a given Burgers equation in ∼10ms. Inference with physics-informed DeepONets is trivially
+parallelizable, allowing for the solution of O(103 ) PDEs in a fraction of a second, yielding up to three orders of
+magnitude in speed up compared to a conventional spectral solver [55], see Appendix Figure 14.
+4.4
+
+Eikonal equation
+
+Our last example aims to highlight the capability of the proposed physics-informed DeepONet to handle different type
+of input functions. To this end, let us consider a two-dimensional Eikonal equation of the form
+k∇s(x)k2 = 1,
+s(x) = 0, x ∈ ∂Ω,
+
+(4.21)
+
+where x = (x, y) ∈ R2 denotes 2D spatial coordinates, Ω is an open domain with a piece-wise smooth boundary ∂Ω.
+A solution to the above equation is a signed distance function quantifying the distance of a point in Ω to the boundary
+∂Ω, i.e
+
+d(x, ∂Ω)
+if x ∈ Ω,
+s(x) =
+−d(x, ∂Ω) if x ∈ Ωc ,
+where d(·, ·) is the distance function defined by
+d(x, ∂Ω) := inf d(x, y).
+
+(4.22)
+
+y∈∂Ω
+
+Sign distance functions (SDFs) have recently sparked increased interest in the computer vision and graphics communities
+as a tool for shape representation learning [58]. This is because SDFs can continuously represent abstract shapes or
+surfaces implicitly as their zero-level-set, yielding high quality shape representations, interpolation and completion
+from partial and noisy input data [58].
+In this example, we seek to learn the solution map from a well-behaved closed curve Γ to its associated signed distance
+function, i.e the solution of the Eikonal equation defined in equation 4.21. To this end, we use a DeepONet Gθ to
+represent the unknown operator. This allows us to define the PDE residual
+s
+
+2 
+2
+dGθ (Γ(i) )(x, y)
+dGθ (Γ(i) )(x, y)
+(i)
+(i)
+Rθ (x, y) = k∇Gθ (Γ )(x, y)k2 =
++
+(4.23)
+dx
+dy
+2
+(i)
+
+(i)
+
+(i)
+
+(i)
+
+(i)
+
+(i)
+
+Here, Γ(i) = [(x1 , y1 ), (x2 , y2 ), . . . , (xm , ym )] denotes a parametrized curve evaluated at a set of fixed sensor
+(i) (i)
+locations {(xj , yj )}m
+j=1 . Then, a physics-informed DeepONet can be trained by minimizing the following loss
+13
+
+A PREPRINT - M ARCH 23, 2021
+
+Input sample
+
+Input sample
+0.5
+
+u(x)
+
+u(x)
+
+0.5
+0.0
+−0.5
+
+0.0
+−0.5
+
+0.0
+
+0.5
+
+1.0
+
+0.0
+
+0.5
+
+x
+Exact
+
+1.0
+
+x
+Predicted
+
+Exact
+
+(a)
+
+Predicted
+
+(b)
+
+(c)
+
+(d)
+
+Figure 10: Solving a parametric Burgers’ equation: (a)(c) Exact solution and the initial condition versus the predictions
+of a trained physics-informed DeepONet with a conventional MLP architecture. The resulting relative L2 error of the
+predicted solution is 17.10e − 01. (b)(d) Exact solution and the initial condition versus the predictions of a trained
+physics-informed DeepONet with a modified MLP architecture [57] and λ = 20. The resulting relative L2 error of the
+predicted solution is reduced to 3.31e − 02.
+function
+L(θ) = LBC (θ) + Lphysics (θ)
+=
+
+(4.24)
+
+N m
+N Q
+2
+2
+1 XX
+1 X X (i) (i) (i)
+(i) (i)
+Gθ (Γ(i) )(xj , yj ) +
+Rθ (xr,j , yr,j ) − 1 ,
+N m i=1 j=1
+N Q i=1 j=1
+
+(4.25)
+
+where LBC (θ) and Lphysics (θ) are used to impose the zero boundary condition and the PDE residual, respectively.
+(i)
+(i)
+Moreover, for each input curve Γ(i) , {(xr,j , yr,j )}Q
+j=1 are uniformly sampled in the given computational domain.
+Unlike the previous parametric PDE examples, it is worth noting that the "input functions" of this example are actually
+defining a variable computational domain. In the following we consider two case studies corresponding to different
+families of curves: parametric circles and airfoils.
+4.4.1
+
+Case I: Parametric circles
+
+We start with a simple case corresponding to circular boundaries ∂Ω centered at the origin, each having a different
+radius. In this case, the corresponding signed distance function that solves equation 4.21 can be analytically derived.
+14
+
+A PREPRINT - M ARCH 23, 2021
+
+0.07
+MLP
+Modified MLP
+
+0.05
+0.04
+0.03
+0.02
+0.01
+
+MLP
+Modified MLP
+Numerical solver
+
+102
+
+Time (sec)
+
+Rel. L2 error
+
+0.06
+
+101
+100
+10−1
+10−2
+
+100
+
+101
+
+102
+
+100
+
+101
+
+102
+
+103
+
+# PDEs solved
+
+λ
+
+(a)
+
+(b)
+
+Figure 11: Solving a parametric Burgers’ equation: (a) The average relative L2 error of training physics-informed
+DeepONets with standard or modified MLPs for different λ ∈ {1, 5, 10, 20, 50, 100} over 1,000 examples in the
+test data-set. The smallest errors for standard and modified MLPs are 2.80e − 02 and 1.38e − 02, respectively. (b)
+Computational cost (sec) for performing inference with a trained physics-informed DeepONet model (conventional or
+modified MLP architecture), as well as corresponding timing for solving a PDE with a conventional spectral solver [55].
+Strikingly, a trained physics informed DeepOnet model can predict the solution of O(103 ) time-dependent PDEs in a
+fraction of a second – up to three orders of magnitude faster compared to a conventional PDE solver. Reported timings
+are obtained on a single NVIDIA V100 GPU.
+
+Figure 12: Solving a parametric Eikonal equation (circles): Exact solutions versus the predicted solutions of a trained
+physics-informed DeepONet for a representative input sample. The black dots represent the location of sensors on the
+circular boundary.
+For example, suppose that Γ is a circle with radius r, then the signed distance function is given by
+p
+s(x, y) = x2 + y 2 − r
+
+(4.26)
+
+To generate a set of training data, we randomly choose N = 1, 000 circles with radii sampled from a uniform
+(i) (i)
+(i)
+distribution. Then, for each input circle Γ(i) with radius r(i) , we have {(xj , yj )}Q
+cos θj , r(i) sin θj )}Q
+j=1 = {(r
+j=1 ,
+Q
+where {θj }j=1 are evenly spaced in [0, 2π]. Here, we consider a computational domain D = [−2, 2] × [−2, 2] and we
+set m = 100, Q = 1, 000.
+The branch net and the trunk networks are two separate 6-layer fully-connected neural network with 50 neurons per
+hidden layer. We train the physics-informed DeepONet by minimizing the loss function 4.24 for 80, 000 iterations of
+gradient descent using the Adam optimizer. As shown in Figure 12, an excellent agreement can be achieved between
+the exact and the predicted signed distance functions for a representative example in the test data-set. The relative L2
+prediction error averaged over 1,000 examples in the test data-set is 4.22e − 03. More model predictions for different
+input samples can be found in Appendix Figure 28.
+4.4.2
+
+Case II: Parametric airfoils
+
+Next, we consider a more complex case where the parameterized curves correspond to airfoils of different shapes. To
+obtain a set of training and test data, we use the UIUC Airfoil Data Site [59] which contains a total of 1,552 airfoil
+geometries. We use the first 1,000 shapes as training data, and the rest are included in the test data-set. Without loss of
+generality, we normalize the airfoil shapes to have zero mean and unit variance.
+In this example, the computation domain is the unit square [−3, 3] × [−3, 3] and the branch net and the trunk net
+are two separate 6-layer fully-connected neural networks with 100 neurons per hidden layer. Both two networks are
+15
+
+A PREPRINT - M ARCH 23, 2021
+
+Figure 13: Solving a parametric Eikonal equation (airfoils): Top: Exact airfoil geometry versus the zero-level-set
+obtained from the predicted signed distance function for three different input examples in the test data-set. Bottom:
+Predicted signed distance function of a trained physics-informed DeepONet for three different airfoil geometries in the
+test data-set.
+
+equipped with ELU activation functions. We train the physics-informed DeepONet for 120, 000 iterations of gradient
+descent using the Adam optimizer. To evaluate the performance of the trained model, we visualize the zero-level set
+of the learned signed distance function and compare it with the exact airfoil geometry. As shown in Figure 13, the
+zero-level-sets achieve a good agreement with the exact airfoil geometries. From the results of these two case studies,
+one may conclude that the proposed framework is capable of achieving a relatively accurate approximation of the exact
+signed distance function.
+
+5
+
+Summary and Discussion
+
+This paper presents physics-informed DeepONets; a new model class for nonlinear operator learning in infinitedimensional Banach spaces. We illustrate how automatic differentiation can be leveraged to bias the outputs of
+DeepONets towards physically-consistent predictions for systems whose evolution can be described by systems of
+differential equations. By doing so, we observe significant improvements in predictive accuracy (up to 1-2 orders of
+magnitude reduction in predictive errors), enhanced generalization performance, as well as enhanced data-efficiency
+(up to 100% reduction in the number of examples required to train a DeepONet model). Strikingly, the proposed
+framework can be employed to solve parametric PDEs in an unsupervised manner, i.e. without any paired input-output
+observations. A series of comprehensive numerical studies demonstrate not only significant improvements in terms of
+predictive accuracy, but also a remarkable reduction number of training data required to train a DeepONet model.
+Despite the encouraging results presented here, numerous questions remain open and require further investigation.
+Motivated by the successful application of Fourier feature networks [54] in section 4.1, it is natural to ask: For a given
+parametric PDE, what is the optimal features embedding or network architecture for physics-informed DeepONets?
+Recently, Wang et. al. [60] proposed a multi-scale Fourier feature network to tackle PDEs with multi-scale behavior.
+Such an architecture may be potentially used as the backbone of the physics-informed DeepONet to learn multi-scale
+operators and solve multi-scale parametric PDEs. Another question arises from the possibility of achieving improved
+performance by assigning weights in the physics-informed DeepOnet loss function, as discussed in section 4.3. It
+has been shown that these weights play an important role in enhancing the trainability of constrained neural networks
+[57, 61, 62]. Therefore, it is natural to ask: What are the appropriate weights to use for training physics-informed
+DeepONets? How to design effective algorithms for accelerating training and ensuring accuracy and robustness in
+the predicted outputs? We believe that addressing these questions will not only enhances the performance of physicsinformed DeepONets, but pave a new way for modeling and simulating complex, non-linear and multi-scale physical
+systems across diverse applications in science and engineering.
+
+Author Contributions
+SW and PP conceptualized the research and designed the numerical studies. SW and HW implemented the methods
+and conducted the numerical experiments. PP provided funding and supervised all aspects of this work. All authors
+contributed in writing the manuscript.
+16
+
+A PREPRINT - M ARCH 23, 2021
+
+Acknowledgements
+This work received support from DOE grant DE-SC0019116, AFOSR grant FA9550-20-1-0060, and DOE-ARPA grant
+DE-AR0001201.
+
+References
+[1] Richard Courant and David Hilbert. Methods of Mathematical Physics: Partial Differential Equations. John
+Wiley & Sons, 2008.
+[2] Thomas JR Hughes. The finite element method: linear static and dynamic finite element analysis. Courier
+Corporation, 2012.
+[3] David J Lucia, Philip S Beran, and Walter A Silva. Reduced-order modeling: new approaches for computational
+physics. Progress in aerospace sciences, 40(1-2):51–117, 2004.
+[4] J Nathan Kutz, Steven L Brunton, Bingni W Brunton, and Joshua L Proctor. Dynamic mode decomposition:
+data-driven modeling of complex systems. SIAM, 2016.
+[5] Peter Benner, Mario Ohlberger, Anthony Patera, Gianluigi Rozza, and Karsten Urban. Model reduction of
+parametrized systems. Springer, 2017.
+[6] Wilhelmus HA Schilders, Henk A Van der Vorst, and Joost Rommes. Model order reduction: theory, research
+aspects and applications, volume 13. Springer, 2008.
+[7] Alfio Quarteroni, Gianluigi Rozza, et al. Reduced order methods for modeling and computational reduction,
+volume 9. Springer, 2014.
+[8] Igor Mezić. Spectral properties of dynamical systems, model reduction and decompositions. Nonlinear Dynamics,
+41(1):309–325, 2005.
+[9] Benjamin Peherstorfer and Karen Willcox. Data-driven operator inference for nonintrusive projection-based
+model reduction. Computer Methods in Applied Mechanics and Engineering, 306:196–215, 2016.
+[10] Andrew J Majda and Di Qi. Strategies for reduced-order models for predicting the statistical responses and
+uncertainty quantification in complex turbulent dynamical systems. SIAM Review, 60(3):491–549, 2018.
+[11] Toni Lassila, Andrea Manzoni, Alfio Quarteroni, and Gianluigi Rozza. Model order reduction in fluid dynamics:
+challenges and perspectives. Reduced Order Methods for modeling and computational reduction, pages 235–273,
+2014.
+[12] Dimitris C Psichogios and Lyle H Ungar. A hybrid neural network-first principles approach to process modeling.
+AIChE Journal, 38(10):1499–1511, 1992.
+[13] Isaac E Lagaris, Aristidis Likas, and Dimitrios I Fotiadis. Artificial neural networks for solving ordinary and
+partial differential equations. IEEE transactions on neural networks, 9(5):987–1000, 1998.
+[14] Maziar Raissi, Paris Perdikaris, and George E Karniadakis. Physics-informed neural networks: A deep learning
+framework for solving forward and inverse problems involving nonlinear partial differential equations. Journal of
+Computational Physics, 378:686–707, 2019.
+[15] Luning Sun, Han Gao, Shaowu Pan, and Jian-Xun Wang. Surrogate modeling for fluid flows based on physicsconstrained deep learning without simulation data. Computer Methods in Applied Mechanics and Engineering,
+361:112732, 2020.
+[16] Yinhao Zhu, Nicholas Zabaras, Phaedon-Stelios Koutsourelakis, and Paris Perdikaris. Physics-constrained deep
+learning for high-dimensional surrogate modeling and uncertainty quantification without labeled data. Journal of
+Computational Physics, 394:56–81, 2019.
+[17] Sharmila Karumuri, Rohit Tripathy, Ilias Bilionis, and Jitesh Panchal. Simulator-free solution of high-dimensional
+stochastic elliptic partial differential equations using deep neural networks. Journal of Computational Physics,
+404:109120, 2020.
+[18] Justin Sirignano and Konstantinos Spiliopoulos. DGM: A deep learning algorithm for solving partial differential
+equations. Journal of computational physics, 375:1339–1364, 2018.
+[19] Maziar Raissi, Alireza Yazdani, and George Em Karniadakis. Hidden fluid mechanics: Learning velocity and
+pressure fields from flow visualizations. Science, 367(6481):1026–1030, 2020.
+17
+
+A PREPRINT - M ARCH 23, 2021
+
+[20] AM Tartakovsky, C Ortiz Marrero, Paris Perdikaris, GD Tartakovsky, and D Barajas-Solano. Physics-informed
+deep neural networks for learning parameters and constitutive relationships in subsurface flow problems. Water
+Resources Research, 56(5):e2019WR026731, 2020.
+[21] Oliver Hennigh, Susheela Narasimhan, Mohammad Amin Nabian, Akshay Subramaniam, Kaustubh Tangsali, Max
+Rietmann, Jose del Aguila Ferrandis, Wonmin Byeon, Zhiwei Fang, and Sanjay Choudhry. Nvidia simnetˆ{TM}:
+an ai-accelerated multi-physics simulation framework. arXiv preprint arXiv:2012.07938, 2020.
+[22] Georgios Kissas, Yibo Yang, Eileen Hwuang, Walter R Witschey, John A Detre, and Paris Perdikaris. Machine
+learning in cardiovascular flows modeling: Predicting arterial blood pressure from non-invasive 4D flow MRI data
+using physics-informed neural networks. Computer Methods in Applied Mechanics and Engineering, 358:112623,
+2020.
+[23] Francisco Sahli Costabal, Yibo Yang, Paris Perdikaris, Daniel E Hurtado, and Ellen Kuhl. Physics-informed
+neural networks for cardiac activation mapping. Frontiers in Physics, 8:42, 2020.
+[24] Lu Lu, Ming Dao, Punit Kumar, Upadrasta Ramamurty, George Em Karniadakis, and Subra Suresh. Extraction
+of mechanical properties of materials through deep learning from instrumented indentation. Proceedings of the
+National Academy of Sciences, 117(13):7052–7062, 2020.
+[25] Yuyao Chen, Lu Lu, George Em Karniadakis, and Luca Dal Negro. Physics-informed neural networks for inverse
+problems in nano-optics and metamaterials. Optics express, 28(8):11618–11633, 2020.
+[26] Somdatta Goswami, Cosmin Anitescu, Souvik Chakraborty, and Timon Rabczuk. Transfer learning enhanced
+physics informed neural network for phase-field modeling of fracture. Theoretical and Applied Fracture Mechanics,
+106:102447, 2020.
+[27] Dennis Elbrächter, Philipp Grohs, Arnulf Jentzen, and Christoph Schwab. Dnn expression rate analysis of
+high-dimensional pdes: Application to option pricing. arXiv preprint arXiv:1809.07669, 2018.
+[28] Jiequn Han, Arnulf Jentzen, and E Weinan. Solving high-dimensional partial differential equations using deep
+learning. Proceedings of the National Academy of Sciences, 115(34):8505–8510, 2018.
+[29] Tomaso Poggio, Hrushikesh Mhaskar, Lorenzo Rosasco, Brando Miranda, and Qianli Liao. Why and when can
+deep-but not shallow-networks avoid the curse of dimensionality: a review. International Journal of Automation
+and Computing, 14(5):503–519, 2017.
+[30] Zongyi Li, Nikola Kovachki, Kamyar Azizzadenesheli, Burigede Liu, Kaushik Bhattacharya, Andrew Stuart, and
+Anima Anandkumar. Neural operator: Graph kernel network for partial differential equations. arXiv preprint
+arXiv:2003.03485, 2020.
+[31] Zongyi Li, Nikola Kovachki, Kamyar Azizzadenesheli, Burigede Liu, Kaushik Bhattacharya, Andrew Stuart, and
+Anima Anandkumar. Multipole graph neural operator for parametric partial differential equations. arXiv preprint
+arXiv:2006.09535, 2020.
+[32] Zongyi Li, Nikola Kovachki, Kamyar Azizzadenesheli, Burigede Liu, Kaushik Bhattacharya, Andrew Stuart,
+and Anima Anandkumar. Fourier neural operator for parametric partial differential equations. arXiv preprint
+arXiv:2010.08895, 2020.
+[33] Lu Lu, Pengzhan Jin, and George Em Karniadakis. DeepONet: Learning nonlinear operators for identifying
+differential equations based on the universal approximation theorem of operators. arXiv preprint arXiv:1910.03193,
+2019.
+[34] Tianping Chen and Hong Chen. Universal approximation to nonlinear operators by neural networks with
+arbitrary activation functions and its application to dynamical systems. IEEE Transactions on Neural Networks,
+6(4):911–917, 1995.
+[35] Andrew D Back and Tianping Chen. Universal approximation of multiple nonlinear operators by neural networks.
+Neural Computation, 14(11):2561–2566, 2002.
+[36] Hachem Kadri, Emmanuel Duflos, Philippe Preux, Stéphane Canu, Alain Rakotomamonjy, and Julien Audiffren.
+Operator-valued kernels for learning from functional response data. Journal of Machine Learning Research,
+17(20):1–54, 2016.
+[37] Michael Griebel and Christian Rieger. Reproducing kernel hilbert spaces for parametric partial differential
+equations. SIAM/ASA Journal on Uncertainty Quantification, 5(1):111–137, 2017.
+[38] Houman Owhadi. Do ideas have shape? plato’s theory of forms as the continuous limit of artificial neural networks.
+arXiv preprint arXiv:2008.03920, 2020.
+[39] Nicholas H Nelsen and Andrew M Stuart. The random feature model for input-output maps between banach
+spaces. arXiv preprint arXiv:2005.10224, 2020.
+18
+
+A PREPRINT - M ARCH 23, 2021
+
+[40] Samuel Lanthaler, Siddhartha Mishra, and George Em Karniadakis. Error estimates for deeponets: A deep learning
+framework in infinite dimensions. arXiv preprint arXiv:2102.09618, 2021.
+[41] Shengze Cai, Zhicheng Wang, Lu Lu, Tamer A Zaki, and George Em Karniadakis. Deepm&mnet: Inferring
+the electroconvection multiphysics fields based on operator approximation by neural networks. arXiv preprint
+arXiv:2009.12935, 2020.
+[42] Chensen Lin, Zhen Li, Lu Lu, Shengze Cai, Martin Maxey, and George Em Karniadakis. Operator learning for
+predicting multiscale bubble growth dynamics. arXiv preprint arXiv:2012.12816, 2020.
+[43] Burigede Liu, Nikola Kovachki, Zongyi Li, Kamyar Azizzadenesheli, Anima Anandkumar, Andrew Stuart, and
+Kaushik Bhattacharya. A learning-based multiscale method and its application to inelastic impact problems. arXiv
+preprint arXiv:2102.07256, 2021.
+[44] Yuehaw Khoo, Jianfeng Lu, and Lexing Ying. Solving parametric pde problems with artificial neural networks.
+arXiv preprint arXiv:1707.03351, 2017.
+[45] Nicholas Geneva and Nicholas Zabaras. Modeling the dynamics of pde systems with physics-constrained deep
+auto-regressive networks. Journal of Computational Physics, 403:109056, 2020.
+[46] Yuyan Chen, Bin Dong, and Jinchao Xu. Meta-mgnet: Meta multigrid networks for solving parameterized partial
+differential equations. arXiv preprint arXiv:2010.14088, 2020.
+[47] Dmitrii Kochkov, Jamie A Smith, Ayya Alieva, Qing Wang, Michael P Brenner, and Stephan Hoyer. Machine
+learning accelerated computational fluid dynamics. arXiv preprint arXiv:2102.01010, 2021.
+[48] Andreas Griewank et al. On automatic differentiation. Mathematical Programming: recent developments and
+applications, 6(6):83–107, 1989.
+[49] Atılım Günes Baydin, Barak A Pearlmutter, Alexey Andreyevich Radul, and Jeffrey Mark Siskind. Automatic
+differentiation in machine learning: a survey. The Journal of Machine Learning Research, 18(1):5595–5637,
+2017.
+[50] CE. Rasmussen and CKI. Williams. Gaussian Processes for Machine Learning. Adaptive Computation and
+Machine Learning. MIT Press, Cambridge, MA, USA, January 2006.
+[51] Arieh Iserles. A first course in the numerical analysis of differential equations. Number 44. Cambridge university
+press, 2009.
+[52] Diederik P Kingma and Jimmy Ba. Adam: A method for stochastic optimization. arXiv preprint arXiv:1412.6980,
+2014.
+[53] Xavier Glorot and Yoshua Bengio. Understanding the difficulty of training deep feedforward neural networks.
+In Proceedings of the thirteenth international conference on artificial intelligence and statistics, pages 249–256,
+2010.
+[54] Matthew Tancik, Pratul P Srinivasan, Ben Mildenhall, Sara Fridovich-Keil, Nithin Raghavan, Utkarsh Singhal,
+Ravi Ramamoorthi, Jonathan T Barron, and Ren Ng. Fourier features let networks learn high frequency functions
+in low dimensional domains. arXiv preprint arXiv:2006.10739, 2020.
+[55] Tobin A Driscoll, Nicholas Hale, and Lloyd N Trefethen. Chebfun guide, 2014.
+[56] Steven M Cox and Paul C Matthews. Exponential time differencing for stiff systems. Journal of Computational
+Physics, 176(2):430–455, 2002.
+[57] Sifan Wang, Yujun Teng, and Paris Perdikaris. Understanding and mitigating gradient pathologies in physicsinformed neural networks. arXiv preprint arXiv:2001.04536, 2020.
+[58] Jeong Joon Park, Peter Florence, Julian Straub, Richard Newcombe, and Steven Lovegrove. Deepsdf: Learning
+continuous signed distance functions for shape representation. In Proceedings of the IEEE/CVF Conference on
+Computer Vision and Pattern Recognition, pages 165–174, 2019.
+[59] Michael S Selig. Uiuc airfoil data site. 1996.
+[60] Sifan Wang, Hanwen Wang, and Paris Perdikaris. On the eigenvector bias of fourier feature networks: From
+regression to solving multi-scale pdes with physics-informed neural networks. arXiv preprint arXiv:2012.10047,
+2020.
+[61] Sifan Wang, Xinling Yu, and Paris Perdikaris. When and why PINNs fail to train: A neural tangent kernel
+perspective. arXiv preprint arXiv:2007.14527, 2020.
+[62] Levi McClenny and Ulisses Braga-Neto. Self-adaptive physics-informed neural networks using a soft attention
+mechanism. arXiv preprint arXiv:2009.04544, 2020.
+19
+
+A PREPRINT - M ARCH 23, 2021
+
+[63] Chelsea Finn, Pieter Abbeel, and Sergey Levine. Model-agnostic meta-learning for fast adaptation of deep
+networks. In International Conference on Machine Learning, pages 1126–1135. PMLR, 2017.
+
+20
+
+A PREPRINT - M ARCH 23, 2021
+
+A
+
+Nomenclature
+
+Table 4 summarizes the main symbols and notation used in this work.
+Notation
+
+Description
+
+u(·)
+
+an input function
+
+s(·)
+
+a solution to a parametric PDE
+
+G
+
+an operator
+
+Gθ
+
+an unstacked DeepONet representation of the operator G
+
+θ
+
+all trainable parameters of a DeepONet
+
+{xi }m
+i=1
+
+m sensor points where input functions u(x) are evaluated
+
+[u(x1 ), u(x2 ), . . . , u(xm )]
+
+an input of the branch net, representing the input function u
+
+y
+
+an input of the trunk net, a point in the domain of G(u)
+
+N
+
+number of input samples in the training data-set
+
+M
+
+number of locations for evaluating the input functions u
+
+P
+
+number of locations for evaluating the output functions G(u)
+
+Q
+
+number of collocation points for evaluating the PDE residual
+
+GRF
+
+a Gaussian random field
+
+SDF
+
+a signed distance function
+
+l
+
+length scale of a Gaussian random field
+
+Loperator (θ)
+
+a loss function to fit available observations
+
+Lphysics (θ)
+a loss function to fit the underlying physical laws
+Table 4: Nomenclature: Summary of the main symbols and notation used in this work.
+
+21
+
+A PREPRINT - M ARCH 23, 2021
+
+B
+
+Hyper-parameter settings
+
+In all examples considered in this work, the branch net and the trunk net are equipped with hyperbolic tangent activation
+functions (Tanh), except for the Eikonal benchmark (airfoils), where ELU activations were employed. Physics-informed
+DeepONet models are trained via mini-batch gradient descent with a batch-size of 10,000 using the Adam optimizer
+[52] with default settings and exponential learning rate decay with a decay-rate of 0.9 every 1,000 iterations. In this
+work, we tuned these hyper-parameters manually, without attempting to find the absolute best hyper-parameter setting.
+This process can be automated in the future leveraging effective techniques for meta-learning and hyper-parameter
+optimization [63].
+Case
+
+Input function space
+
+# Sensors m
+
+#u Train
+
+P
+
+Q
+
+# u Test
+
+Iterations
+
+Anti-derivative operator
+
+l = 0.2
+
+100
+
+10,000
+
+1
+
+100
+
+1,000
+
+1D ODE (regular input)
+
+l = 0.2
+
+100
+
+10,000
+
+1
+
+100
+
+1,000
+
+4 × 104
+
+1D ODE (irregular input)
+
+l = 0.01
+
+200
+
+10,000
+
+1
+
+200
+
+1,000
+
+Diffusion-reaction
+
+l = 0.2
+
+100
+
+10,000
+
+100
+
+100
+
+1,000
+
+Burgers
+
+−
+
+100
+
+1,000
+
+100
+
+2,500
+
+1,000
+
+100
+
+1,000
+
+100
+
+1,000
+
+1,000
+
+−
+
+Eikonal (circles)
+
+4 × 104
+3 × 105
+
+1.2 × 105
+2 × 105
+8 × 104
+
+−
+250
+1,000
+250 1,000
+500
+1.2 × 105
+Eikonal (airfoils)
+Table 5: Default hyper-parameter settings for each benchmark employed in this work (unless otherwise stated).
+
+Case
+
+Trunk depth
+
+Trunk width
+
+Branch depth
+
+Branch width
+
+Anti-derivative operator
+
+50
+
+5
+
+50
+
+5
+
+1D ODE (regular input)
+
+50
+
+5
+
+50
+
+5
+
+1D ODE (irregular input)
+
+200
+
+5
+
+200
+
+5
+
+Diffusion-reaction
+
+50
+
+5
+
+50
+
+5
+
+Burger
+
+100
+
+7
+
+100
+
+7
+
+Eikonal (circles)
+
+50
+
+6
+
+50
+
+6
+
+Eikonal (airfoils)
+100
+7
+100
+7
+Table 6: Physics-informed DeepONet architectures for each benchmark employed in this work (unless otherwise stated).
+
+Case
+
+Trunk depth
+
+Trunk width
+
+Branch depth
+
+Branch width
+
+Antiderivative operator
+
+100
+
+3
+
+100
+
+3
+
+1D ODE (regular input)
+
+50
+
+5
+
+50
+
+5
+
+1D ODE (irregular input)
+
+50
+
+5
+
+50
+
+5
+
+Diffusion-reaction
+50
+5
+50
+5
+Table 7: Conventional DeepONet [33] architectures for each corresponding benchmark (unless otherwise stated).
+
+22
+
+A PREPRINT - M ARCH 23, 2021
+
+C
+
+Computational cost
+
+Training: Table C summarizes the computational cost (hours) of training DeepONet and physics-informed DeepONet
+models with different network architectures. The size of different models as well as network architectures are listed
+table 7 and 6, respectively. All networks are trained using a single V100 card. It can be observed that training a
+physics-informed DeepONet model is generally slower than training a conventional DeepONet. This is expected
+as physics-informed DeepONets require to compute the PDE residual via automatic differentiation, yielding a lager
+computational graph, and, therefore, a higher computational cost.
+Case
+Anti-derivative operator
+1D ODE (regular input)
+1D ODE (irregular input)
+Diffusion-reaction
+Burgers
+Eikonal (circle)
+
+Model (Architecture)
+
+Training time (hours)
+
+DeepONet
+
+0.03
+
+Physics-informed DeepONet
+
+0.15
+
+DeepONet
+
+0.03
+
+Physics-informed DeepONet
+
+0.15
+
+Physics-informed DeepONet (MLP)
+
+1.61
+
+Physics-informed DeepONet (FF)
+
+1.37
+
+DeepONet
+
+1.13
+
+Physics-informed DeepONet
+
+2.27
+
+Physics-informed DeepONet (MLP)
+
+7.61
+
+Physics-informed DeepONet (Modified MLP)
+
+9.25
+
+Physics-informed DeepONet
+
+0.76
+
+Eikonal (airfoil)
+Physics-informed DeepONet
+0.38
+Table 8: Computational cost (hours) for training DeepONet and physics-informed DeepONet models across the different
+becnhmarks and architectures employed in this work. Reported timings are obtained on a single NVIDIA V100 GPU.
+Inference: A trained physics-informed DeepONet model can rapidly predict the entire spatio-temporal solution of the
+Burgers equation in ∼10ms. Inference with DeepONets is trivially parallelizable, allowing for the solution of O(103 )
+PDEs in a fraction of a second, yielding up to three orders of magnitude in speed up compared to a traditional spectral
+solver [55] (see Figure 14).
+MLP
+Modified MLP
+Numerical solver
+
+Time (sec)
+
+102
+101
+100
+10−1
+10−2
+100
+
+101
+
+102
+
+103
+
+# PDEs solved
+
+Figure 14: Solving a parametric Burgers’ equation: Computational cost (sec) for performing inference with a trained
+physics-informed DeepONet model (conventional or modified MLP architecture), as well as corresponding timing for
+solving a PDE with a conventional spectral solver [55]. Strikingly, a trained physics informed DeepOnet model can
+predict the solution of O(103 ) time-dependent PDEs in a fraction of a second – up to three orders of magnitude faster
+compared to a conventional PDE solver. Reported timings are obtained on a single NVIDIA V100 GPU.
+
+23
+
+A PREPRINT - M ARCH 23, 2021
+
+D
+
+Anti-derivative
+ReLU
+Tanh
+
+Loperator
+Lphysics
+
+10−1
+
+10−3
+
+Loss
+
+Loss
+
+10−1
+
+10−5
+
+10−3
+10−5
+
+0
+
+2
+
+4
+×104
+
+Iteration
+
+0
+
+2
+
+Iteration
+
+(a)
+
+4
+×104
+
+(b)
+
+Figure 15: Learning an anti-derivative operator: (a) Training loss convergence of a conventional DeepONet model
+equipped with different activation functions for 40,000 iterations of gradient descent using the Adam optimizer. (b)
+Training loss convergence of a physics-informed DeepONet equipped with Tanh activations for 40,000 iterations of
+gradient descent using the Adam optimizer.
+
+100
+
+Loperator
+Lphysics
+
+Loss
+
+10−2
+10−4
+10−6
+0
+
+2
+
+Iteration
+
+4
+×104
+
+Figure 16: Solving a 1D parametric ODE: Training loss convergence of a physics-informed DeepONet for 40,000
+iterations of gradient descent using the Adam optimizer without any paired input-output data, except the initial condition.
+
+24
+
+0.0
+−0.1
+
+0
+
+×10−3
+
+0.0
+
+0.5
+
+u(x)
+
+Point-wise error
+
+s(x)
+
+0.1
+
+Point-wise error
+
+A PREPRINT - M ARCH 23, 2021
+
+−0.5
+
+0.0
+−0.5
+
+−1.0
+
+1
+
+0
+
+1
+
+x
+
+0
+
+1
+
+×10−2
+
+0
+−1
+
+1
+
+x
+
+0
+
+1
+
+x
+
+x
+
+(a)
+
+−1.0
+
+0
+
+1
+0
+
+1
+
+0
+
+−1
+−2
+
+1
+
+x
+
+Point-wise error
+
+−0.5
+
+0
+
+u(x)
+
+Point-wise error
+
+s(x)
+
+0.0
+
+×10−3
+
+0
+
+×10−2
+2
+0
+−2
+
+1
+
+x
+
+0
+
+1
+
+x
+
+x
+
+0.2
+0.0
+0
+
+1
+
+Point-wise error
+
+s(x)
+
+0.4
+
+1
+
+2
+
+u(x)
+
+Point-wise error
+
+(b)
+×10−3
+
+0
+
+0
+0
+
+1
+
+x
+
+0
+
+1
+
+x
+
+×10−2
+1
+0
+−1
+0
+
+1
+
+x
+
+x
+
+(c)
+
+Figure 17: Solving a 1D parametric ODE: Predicted solutions s(x) and corresponding ODE residuals u(x) for a trained
+physics-informed DeepONet, across three different examples in the test data-set.
+
+Loperator
+Lphysics
+
+102
+
+10−2
+
+10−1
+
+Loperator
+Lphysics
+
+Loss
+
+Loss
+
+100
+
+10−4
+
+10−4
+10−7
+
+0
+
+1
+
+2
+
+Iteration
+
+3
+×105
+
+(a)
+
+0
+
+1
+
+2
+
+Iteration
+
+3
+×105
+
+(b)
+
+Figure 18: Solving a 1D parametric ODE with irregular input functions: (a)(b) Training loss convergence of a physicsinformed DeepONets using a conventional fully-connected neural network, and a Fourier feature network, respectively,
+for 300,000 iterations of gradient descent using the Adam optimizer.
+
+25
+
+A PREPRINT - M ARCH 23, 2021
+
+0.2
+
+2
+
+0
+−2
+
+0.0
+0.0
+
+0.5
+
+1.0
+
+u(x)
+
+0.1
+
+0.2
+
+s(x)
+
+u(x)
+
+s(x)
+
+2
+
+0.1
+0.0
+
+0.0
+
+x
+
+0.5
+
+0.0
+
+1.0
+
+0.5
+
+1.0
+
+(a)
+
+Predicted
+
+0.05
+
+2
+
+u(x)
+
+0.1
+
+s(x)
+
+u(x)
+
+s(x)
+
+2
+
+0
+
+1.0
+
+0.0
+
+x
+
+0.5
+
+0.0
+
+1.0
+
+0.5
+
+−2
+
+1.0
+
+0.0
+
+0.5
+
+x
+
+x
+Exact
+
+0
+
+0.0
+
+0.00
+0.5
+
+1.0
+
+(b)
+
+0.15
+
+0.0
+
+0.5
+
+x
+Exact
+
+Predicted
+
+0.10
+
+0.0
+
+x
+
+x
+Exact
+
+0
+
+Exact
+
+Predicted
+
+1.0
+
+x
+
+(c)
+
+Predicted
+
+(d)
+
+Figure 19: Solving a 1D parametric ODE with irregular input functions: Predicted solutions s(x) and corresponding
+ODE residuals u(x) for a trained physics-informed DeepONet with a conventional fully-connected architecture, across
+four different examples in the test data-set.
+
+0.2
+
+2
+
+0
+−2
+
+0.0
+0.0
+
+0.5
+
+1.0
+
+u(x)
+
+0.2
+
+s(x)
+
+0.1
+
+u(x)
+
+s(x)
+
+2
+
+0.1
+0.0
+
+0.0
+
+x
+
+0.5
+
+0.0
+
+1.0
+
+0.5
+
+0.0
+
+(b)
+
+0.15
+
+2
+
+0
+
+0.05
+
+u(x)
+
+u(x)
+
+s(x)
+
+2
+
+0.05
+
+1.0
+
+Predicted
+
+0.10
+
+0.10
+
+0.5
+
+x
+Exact
+
+Predicted
+
+(a)
+
+s(x)
+
+1.0
+
+x
+
+x
+Exact
+
+0
+
+0
+
+0.00
+
+0.00
+0.0
+
+0.5
+
+1.0
+
+0.0
+
+x
+
+0.5
+
+1.0
+
+x
+Exact
+
+0.0
+
+0.5
+
+1.0
+
+−2
+
+0.0
+
+0.5
+
+x
+
+Predicted
+
+Exact
+
+(c)
+
+1.0
+
+x
+Predicted
+
+(d)
+
+Figure 20: Solving a 1D parametric ODE with irregular input functions: Predicted solutions s(x) and corresponding
+ODE residuals u(x) for a trained physics-informed DeepONet with a with Fourier feature architecture, across four
+different examples in the test data-set.
+
+26
+
+A PREPRINT - M ARCH 23, 2021
+
+2.0
+1
+
+−0.2
+0.0
+
+0.5
+
+0
+−1
+
+1.0
+
+u(x)
+
+0.0
+
+1.0
+
+s(x)
+
+u(x)
+
+s(x)
+
+0.2
+
+0.5
+
+0.5
+
+x
+
+0.0
+
+1.0
+
+0.5
+
+1.0
+Exact
+
+Predicted
+
+(b)
+1.0
+
+0.0
+0.0
+
+0.5
+
+1.0
+
+0.0
+
+0.0
+−0.5
+
+0.0
+
+x
+
+0.5
+
+1.0
+
+x
+Exact
+
+u(x)
+
+0
+−1
+
+0.5
+
+0.1
+
+1
+
+s(x)
+
+u(x)
+
+0.5
+
+1.0
+
+Predicted
+
+2
+
+1.0
+
+0.5
+
+x
+
+(a)
+
+s(x)
+
+0.0
+
+x
+
+x
+Exact
+
+1.0
+0.5
+
+0.0
+0.0
+
+1.5
+
+0.0
+
+0.5
+
+1.0
+
+0.0
+
+0.5
+
+x
+
+Predicted
+
+Exact
+
+(c)
+
+1.0
+
+x
+Predicted
+
+(d)
+
+Figure 21: Solving a 1D parametric ODE with irregular input functions: Predicted solutions s(x) and corresponding
+ODE residuals u(x) for a trained physics-informed DeepONet with a with Fourier feature architecture, across four
+different out-of-distribution examples sampled from a GRF with a length scale l = 0.2 (recall that the training data for
+this case is generated using l = 0.01).
+
+27
+
+A PREPRINT - M ARCH 23, 2021
+
+E
+
+Diffusion-reaction system
+100
+
+Tanh
+ReLU
+
+10−3
+
+Loss
+
+Loss
+
+10−1
+
+Loperator
+Lphysics
+
+10−2
+
+10−4
+
+10−5
+0.0
+
+0.5
+
+Iteration
+
+1.0
+
+×105
+
+(a)
+
+0.0
+
+0.5
+
+Iteration
+
+1.0
+
+×105
+
+(b)
+
+Figure 22: Solving a parametric diffusion-reaction system: (a) Training loss convergence of a DeepONet equipped
+with different activations for 120,000 iterations of gradient descent using the Adam optimizer (with paired input-output
+training data). (b) Training loss convergence of a physics-informed DeepONet equipped with Tanh activations for
+120,000 iterations of gradient descent using the Adam optimizer (without paired input-output training data).
+
+28
+
+A PREPRINT - M ARCH 23, 2021
+
+Figure 23: Solving a parametric diffusion-reaction system: Predicted solution of a trained physics-informed DeepONet
+for three different examples in the test data-set.
+
+29
+
+A PREPRINT - M ARCH 23, 2021
+
+F
+
+Effect of the batch-size
+
+Rel. L2 error
+
+10−2
+
+6 × 10−3
+4 × 10−3
+103
+
+104
+
+Batch size
+Figure 24: Solving a parametric diffusion-reaction system: Relative L2 prediction error of physics-informed DeepONets
+trained using a different batch-size, averaged over 1,000 examples in the test data-set.
+
+Batch size = 256
+
+100
+
+Loperator
+Lphysics
+
+Loperator
+Lphysics
+
+Loss
+
+10−2
+
+Loss
+
+10−2
+
+Batch size = 1024
+
+100
+
+10−4
+10−6
+
+10−4
+
+0.0
+
+0.5
+
+1.0
+
+Iteration
+
+10−6
+×105
+
+×105
+
+Loperator
+Lphysics
+
+Loss
+
+10−2
+
+Loss
+
+1.0
+
+Batch size = 8192
+
+100
+
+Loperator
+Lphysics
+
+10−2
+
+0.5
+
+Iteration
+
+Batch size = 4096
+
+100
+
+0.0
+
+10−4
+10−6
+
+10−4
+
+0.0
+
+0.5
+
+Iteration
+
+1.0
+
+10−6
+×105
+
+0.0
+
+0.5
+
+Iteration
+
+1.0
+
+×105
+
+Figure 25: Solving a parametric diffusion-reaction system: Training loss convergence of physics-informed DeepONets
+trained using a different batch-size.
+
+30
+
+A PREPRINT - M ARCH 23, 2021
+
+G
+
+Burgers’ equation
+
+G.1
+
+Modified full-connected neural network
+
+The forward pass of the proposed modified MLP architecture is given by [57]
+U = φ(XW 1 + b1 ), V = φ(XW 2 + b2 )
+H
+
+(1)
+
+= φ(XW
+
+z,1
+
++b
+
+z,1
+
+)
+
+(G.2)
+
+Z (k) = φ(H (k) W z,k + bz,k ), k = 1, . . . , L
+H
+
+(k+1)
+
+= (1 − Z
+
+fθ (x) = H
+
+(L+1)
+
+(k)
+
+)
+
+U +Z
+
+(G.1)
+
+(k)
+
+V, k = 1, . . . , L
+
+W + b,
+
+(G.3)
+(G.4)
+(G.5)
+
+where X denotes the network inputs, and denotes element-wise multiplication. The parameters of this model are
+essentially the same as in a standard fully-connected architecture, with the addition of the weights and biases used by
+the two transformer networks, i.e.,
+θ = {W 1 , b1 , W 2 , b2 , (W z,l , bz,l )L
+l=1 , W, b}
+
+(G.6)
+
+Figure 26: Solving a Burgers’ equation: Predicted solution of a trained physics-informed DeepONet with a modified
+MLP architecture for three different examples in the test data-set.
+
+31
+
+A PREPRINT - M ARCH 23, 2021
+
+H
+
+Eikonal equations
+Loperator
+Lphysics
+
+10−1
+
+10−3
+
+10
+
+Loperator
+Lphysics
+
+100
+
+Loss
+
+Loss
+
+10−1
+
+10−2
+10−3
+
+−5
+
+10−4
+0.0
+
+2.5
+
+5.0
+
+Iteration
+
+7.5
+×104
+
+(a)
+
+0.0
+
+0.5
+
+Iteration
+
+1.0
+
+×105
+
+(b)
+
+Figure 27: Solving a parametric Eikonal equation: (a) Training loss convergence of a physics-informed DeepONet
+equipped with Tanh activations, for 80,000 iterations of gradient descent using the Adam optimizer. (b) Training loss
+convergence of a physics-informed DeepONet equipped with ELU activations, for 120,000 iterations of gradient descent
+using the Adam optimizer.
+
+32
+
+A PREPRINT - M ARCH 23, 2021
+
+Figure 28: Solving a parametric Eikonal equation (circles): Predicted signed distance functions by a trained physicsinformed DeepONet for three different examples in the test data-set.
+
+33
+
+

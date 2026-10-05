@@ -1,0 +1,1557 @@
+Operator learning for predicting multiscale bubble growth dynamics
+Chensen Lin,1 Zhen Li,2 Lu Lu,3 Shengze Cai,1 Martin Maxey,1 and
+George Em Karniadakis1, a)
+1)
+
+Division of Applied Mathematics, Brown University, Providence, RI 02912,
+
+arXiv:2012.12816v1 [physics.comp-ph] 23 Dec 2020
+
+USA
+2)
+
+Department of Mechanical Engineering, Clemson University, Clemson, SC 29634,
+
+USA
+3)
+
+Department of Mathematics, Massachusetts Institute of Technology, Cambridge,
+
+MA 02139, USA
+(Dated: 24 December 2020)
+
+1
+
+Simulating and predicting multiscale problems that couple multiple physics and
+dynamics across many orders of spatiotemporal scales is a great challenge that has
+not been investigated systematically by deep neural networks (DNNs). Herein, we
+develop a framework based on operator regression, the so-called deep operator network
+(DeepONet), with the long term objective to simplify multiscale modeling by avoiding
+the fragile and time-consuming “hand-shaking” interface algorithms for stitching
+together heterogeneous descriptions of multiscale phenomena. To this end, as a
+first step, we investigate if a DeepONet can learn the dynamics of different scale
+regimes, one at the deterministic macroscale and the other at the stochastic microscale
+regime with inherent thermal fluctuations. Specifically, we test the effectiveness
+and accuracy of DeepONet in predicting multirate bubble growth dynamics, which
+is described by a Rayleigh-Plesset (R-P) equation at the macroscale and modeled
+as a stochastic nucleation and cavitation process at the microscale by dissipative
+particle dynamics (DPD). First, we generate data using the R-P equation for multirate
+bubble growth dynamics caused by randomly time-varying liquid pressures drawn from
+Gaussian random fields (GRF). Our results show that properly trained DeepONets
+can accurately predict the macroscale bubble growth dynamics and can outperform
+long short-term memory (LSTM) networks. We also demonstrate that DeepONet
+can extrapolate accurately outside the input distribution using only very few new
+measurements. Subsequently, we train the DeepONet with DPD data corresponding
+to stochastic bubble growth dynamics. Although the DPD data is noisy and we only
+collect sparse data points on the trajectories, the trained DeepONet model is able to
+predict accurately the mean bubble dynamics for time-varying GRF pressures. Taken
+together, our findings demonstrate that DeepONets can be employed to unify the
+macroscale and microscale models of the multirate bubble growth problem, hence
+providing new insight into the role of operator regression via DNNs in tackling realistic
+multiscale problems and in simplifying modeling with heterogeneous descriptions.
+
+a)
+
+Corresponding author. E-mail: george karniadakis@brown.edu
+
+2
+
+I.
+
+INTRODUCTION
+
+Machine learning methods that learn effective physical models from available observational
+data have attracted increasing attention in recent years1–3 and have demonstrated success
+in diverse application areas4–7 . In particular, the use of deep neural networks (DNNs) as a
+surrogate model of complex dynamic systems is a promising approach for exploring hidden
+physics from observed data4,5 . Many different DNN architectures have been developed for
+targeting different types of scientific problems8,9 . Examples include convolutional neural
+networks (CNN) for turbulence modeling10 , recurrent neural networks (RNN) for predictive
+flow control11 , and generative adversarial networks (GAN) for super-resolution of fluid flows12 .
+In general, different physical quantities involved in the same dynamic process are correlated
+either explicitly or implicitly. Using the observational data of one physical quantity to
+predict other unobserved quantities requires a model to correctly correlate different physical
+quantities, which can be achieved by training a DNN with a lot of observational data13 .
+There are two possible scenarios when we develop a DNN model for a physical problem.
+First, if we have sufficient physical knowledge on the dynamic process and know its governing
+equations, i.e., in the form of partial differential equations (PDEs), it becomes possible to
+encode the PDEs into the DNN, which leads to the physics-informed neural network (PINN)
+model5 . Second, if we lack physical knowledge of a given physical problem and do not know
+the form of its governing equations, we need to learn the governing equations or operators
+from available observed data. This motivated Lu et al.3 to develop a deep operator network
+(DeepONet) to learn implicitly PDEs from data as well as many other explicit and implicit
+diverse operators.
+Both PINN and DeepONet models have been successfully applied to mostly single scale
+problems, including high-speed flows14 , hidden fluid mechanics4 , and diffusion-reaction
+processes3 . However, it is still challenging to apply DNNs to truly multiscale problems
+described by different mathematical formulations. The form of governing equations for
+various scales could be significantly different even for the same physical problem, which
+makes the integration and coupling of heterogeneous physical models in multiscale problems
+very difficult. Because the physical models constructed by DeepONet do not have an explicit
+form of governing equations, we can possibly develop a unified multiscale framework based
+on DeepONet to significantly simplify the multiscale modeling procedure. In the present
+3
+
+work, we will investigate this possibility by considering multiscale bubble growth dynamics,
+described by the Rayleigh-Plesset (R-P) equation at the continuum scale and modelled as a
+stochastic nucleation and cavitation process at the microscale.
+Bubbles are present in a wide range of applications, from advanced materials15 to biology
+and medicine16 , as either laser-generated or acoustically-driven bubbles17 . The heat transfer
+and fluid flow processes associated with liquid-vapor phase change phenomena are among the
+most complex transport conditions that are encountered in engineering applications. The
+complexities typically arise from the interplay of multiple length and time scales involved in
+the process, non-equilibrium effects, and other effects associated with dynamic interfaces.
+Nucleation of one phase into another occurs at the atomic scales whereas growth of the nuclei
+and their interaction with the system occurs at much longer length and time scales18 . For
+example, boiling is a complex nonequilibrium multiscale process, where the physics is linked
+from nano to meso to macro scales. For each of these processes, the physics from different
+scales have to be seamlessly connected. However, different models are valid or are practical
+only within some space and time range, and bridging the gap between models of different
+scales has been a challenge for decades.
+A simple and fundamental problem to understand bubble dynamics is that of the growth
+of a single bubble as the pressure changes in an otherwise quiescent fluid. This problem
+has a long history, beginning with the important contributions of Rayleigh19 . In general,
+contemporary interest in the problem is motivated largely by the sound produced by bubbles
+that undergo a time-dependent change of volume, particularly in the context of cavitation
+bubbles that are produced in hydromachinery or in the propulsion systems of submarines
+and other underwater vehicles or for biomedical applications. The objective for single-bubble
+dynamics is usually to predict the bubble radius as a function of time in a preset ambient
+pressure field. Once we know the bubble radius as a function of time, we can determine the
+velocity and pressure fields throughout the liquid, and evaluate the sound produced.
+In the macroscale regime, the R-P ordinary differential equation (ODE) is a valid model for
+the governing dynamics of a spherical bubble in an incompressible fluid. It is derived from the
+Navier–Stokes (N-S) equation based on the assumptions of a continuum hypothesis and of a
+single spherically symmetric bubble in an infinite domain of liquid at rest far from the bubble
+and with uniform temperature far from the bubble. In the microscale and nanoscale regimes,
+we can use molecular dynamics (MD) models to investigate the single bubble nucleation
+4
+
+problem20 . For longer term development, dissipative particle dynamics (DPD) is a more
+efficient coarse-grained MD method that has been used to model complex fluid systems such
+as red blood cells21 , polymers22 , droplet23,24 , suspension25 , etc. The equations of DPD are
+stochastic differential equations with conservative, dissipative and random forces. A few
+studies have reported using DPD to simulate bubble dynamics26,27 . An effective model28
+is a hybrid model of DPD and its extension to multi-body dissipative particle dynamics
+(MDPD), where the traditional DPD particles are used for gas phase and MDPD particles
+for liquid phase. The model is validated by comparing it to the R-P equation for the larger
+size bubbles and with MD for the smaller size bubbles.
+In this paper, our goal is to test the effectiveness of DeepONet as the surrogate model for
+both the macroscale and microscale physics. The paper is organized as follows. In Section
+2, we describe details of the DeepONet model. In Section 3, we introduce the macroscopic
+model (R-P model) for bubble dynamics and evaluate the performance of DeepONet at
+the continuum scale. In Section 4, we introduce the microscopic model (DPD model) and
+evaluate the performance of DeepONet at the stochastic microscale. Finally, we conclude the
+paper in Section 5.
+
+II.
+
+LEARNING OPERATORS VIA DEEPONET
+Our work is inspired by the work of Lu et al.3 , who proposed a deep operator network
+
+(DeepONet) to approximate nonlinear continuous operators. The DeepONet architecture
+is based on rigorous mathematical theory, namely the universal operator approximation
+theorem29 , which has been extended to DNNs.
+The architecture of the DeepONet consists of a DNN for encoding the discrete input
+function space (branch net) and another DNN for encoding the coordinates of the output
+functions (trunk net). In the bubble dynamics application, the input function is the ambient
+liquid pressure change deviating from the initial equilibrium state, ∆P , while the output
+function is the bubble radius, R(t). There are different ways to represent a function but
+here the input to the branch is represented by discrete function values at a sufficient but
+finite number of locations, which we call “sensors”. The architecture we used in this study is
+shown in Fig. 1. The trunk network takes time t as the input and outputs [a1 , a2 , ..., ap ]T .
+The branch network takes [∆p(t1 ), ∆p(t2 ), ..., ∆p(tm )]T as the input and outputs a vector
+5
+
+Δp(t1)
+Δp(t2)
+
+...
+
+b1
+
+Branch net
+
+Δp(tm)
+
+b2
+
+...
+bp
+
+×
+
+a1
+
+Trunk net
+
+a2
+
+..
+
+ap
+
+FIG. 1: Schematic of the DeepONet architecture. The branch network takes the liquid
+pressure change at different times (from t1 to tm ) as input and outputs [b1 , b2 , ..., bp ]T . The
+trunk network takes time t as input and outputs [a1 , a2 , ..., ap ]T . Then, the two vectors are
+P
+merged together to give the prediction of bubble radius R(t) = G(∆P )(t) = pk=1 (bk ak ).
+Both the branch and trunk are feedforward neural networks (FNNs).
+
+[b1 , b2 , ..., bp ]T . This architecture corresponds to the unstacked DeepONet3 . Then, the two
+vectors are merged together to predict the bubble radius: R(t) = G(∆p)(t) = Σpk=1 bk ak .
+
+The loss function we employ is the mean squared error (MSE) between the true
+value of R(t) from the R-P equation and the network prediction derived from the input ([∆p(t1 ), ∆p(t2 ), ..., ∆p(tm )], t). DeepONet is a high-level network architecture without
+restricting the architectures of its inner trunk and branch networks. Here, we choose
+feedforward neural network (FNN) as the architectures of the two sub-networks, which are
+implemented in the Python library DeepXDE30 .
+
+For each input function ∆P , DeepONet requires evaluations at the same set of discrete
+times. However, DeepONet does not have any constraint on the number or location for the
+evaluation of output function R(t). DeepONet provides a continuous estimate of the bubble
+radius, R at any arbitrary time. In this study, for the efficient training of the networks, we
+choose a fixed number of evaluations for each R(t) but at randomly selected times within
+the whole interval; see Fig. 2.
+6
+
+Δp(t)
+(Input)
+
+R(t)
+(Output)
+
+t1
+
+t2
+
+t3
+
+tm
+
+G
+
+t1
+t2
+
+t3
+
+tm
+
+FIG. 2: Illustration of the training data for two different trajectories in time. For each input
+function ∆p(t), DeepONet requires the evaluations at the same discrete time. However,
+DeepONet does not have any constraints on the number or location for the evaluation of the
+output function R(t). Hence, the data points for the output function can be very sparse and
+randomly spaced.
+III.
+
+MACROSCALE (CONTINUUM) REGIME
+
+A.
+
+Rayleigh–Plesset model
+The R-P equation31–33 is the classical continuum-level model that describes the change in
+
+radius R(t) of a single gas-vapor bubble in an infinite body of liquid as the far-field pressure
+P∞ (t) varies with time t. This ODE for the dynamics of a spherical bubble is based on a
+number of assumptions. Although it is limited to the case where a continuum model is valid,
+it is a simple yet powerful tool to reveal the effects of the surroundings on bubble response
+and it is the starting point for our investigation of operator learning as applied to bubble
+dynamics.
+The underlying assumptions of the R-P model are that the liquid is at rest far from the
+bubble and that the liquid phase is incompressible, with constant density ρL and kinematic
+viscosity νL . It is also assumed that the contents of the bubble have negligible inertia, are
+homogeneous and that the temperature, TB (t), and pressure, PB (t), within the bubble are
+uniform. The configuration is illustrated in Fig. 3. As the bubble expands it generates a
+radial potential flow corresponding to a point source at the bubble center. The pressure in
+the liquid can be determined from the Navier-Stokes equations together with the balance of
+7
+
+Liquid
+
+Far From Bubble
+P∞(t), T∞
+
+R(t)
+Gas / Vapor
+PB(t), TB(t)
+
+Bubble Surface
+
+FIG. 3: Schematic of a spherical bubble in an infinite liquid.
+the liquid pressure at the bubble surface with the bubble pressure PB and the surface tension
+between the phases, given by the coefficient of surface tension γ. As the liquid responds to
+the expanding bubble, the liquid pressure balances the effects of liquid inertia and damping
+of the motion by viscosity. The R-P equation can be written as
+d2 R 3
+PB (t) − P∞ (t)
+=R 2 +
+ρL
+dt
+2
+
+
+
+dR
+dt
+
+2
++
+
+2γ
+4νL dR
++
+.
+R dt
+ρL R
+
+(1)
+
+The general R-P model assumes that the bubble contains a mixture of an ideal gas and
+liquid vapor. The pressure inside the bubble is then the sum of the partial pressures. The
+vapor pressure PV is determined by the temperature within the bubble TB while the pressure
+of the gas PG is given by a polytropic gas law,
+
+PB (t) = PV (TB ) + PG0
+
+TB
+T∞
+
+
+
+R0
+R
+
+3k
+.
+
+(2)
+
+The coefficient k = 1 corresponds to isothermal conditions, or k = 1.4 for a simple adiabatic
+gas. Since the microcopic simulations to be described later are based on a thermostat to
+maintain a constant temperature, we will neglect the effects of any temperature difference
+between the bubble and the liquid, setting TB = T∞ , and assume isothermal conditions.
+With these assumptions the R-P equation becomes,
+PV (T∞ ) − P∞ (t) PG0
++
+ρL
+ρL
+
+
+
+R0
+R
+
+3
+
+d2 R 3
+=R 2 +
+dt
+2
+
+
+
+dR
+dt
+
+2
++
+
+4νL dR
+2γ
+.
++
+R dt
+ρL R
+
+(3)
+
+The initial conditions imposed here are that the initial microbubble radius is R0 at t = 0
+and that the bubble is in static equilibrium, with the gas pressure PG = PG0 and the fluid at
+8
+
+a pressure P∞ (0) so that
+2γ
+.
+(4)
+R0
+Consistent with initial equilibrium, dR/dt|t=0 = 0. Under these conditions the vapor pressure
+PG0 = P∞ (0) − PV (T∞ ) +
+
+simply gives a constant offset in the liquid pressure at infinity. So as to reduce the number
+of parameters under consideration, the results here are based on P∞ (0) = PV (T∞ ) as might
+occur close to the onset of cavitation. We are not trying to model any specific physical set of
+conditions but for convenience then the initial gas pressure is given in terms of the surface
+tension, PG0 = 2γ/R0 .
+(a)
+
+(b)
+
+FIG. 4: Typical solution of the R-P equation as a bubble responds to a rapid negative
+change in pressure. (a) Ambient liquid pressure change; (b) Bubble radius (blue) and radius
+velocity (pink).
+A typical solution for Eq. (3) under these conditions is shown in Fig. 4 with a sharp
+change in the pressure P∞ (t), which drops sharply below P∞ (0) to a new constant value. The
+pressure drop induces a series of damped oscillations as the bubble first expands rapidly and
+then gradually adjusts to a new equilibrium size. In the absence of dissipation by viscosity,
+these oscillations would continue indefinitely without attenuation. For small variations in the
+liquid pressure P∞ (t) = P∞ (0) + ∆p(t), the response is R(t) = R0 + r(t) and the linearized
+form of Eq. (3) is,
+∆p(t)
+d2 r 4νL dr
+1
+−
+= R0 2 +
++
+ρL
+dt
+R0 dt ρL R0
+
+
+
+γ
+3PG0 − 2
+R0
+
+
+r.
+
+(5)
+
+Under the present conditions, the last coefficient is equal to 2PG0 or equivalently 4γ/R0 . The
+corresponding natural frequency ω0 for undamped oscillations is given by
+ω02 = 2
+9
+
+PG0
+.
+ρL R02
+
+(6)
+
+This shows the natural time scale of the bubble response to changing pressure and an
+indication of how often the bubble radius normally should be observed. It is also clear that
+this time scale is dependent on R0 .
+For the training and test data to use with DeepONet, we consider a bubble that is
+subject to a sharp low-pressure at time t = 0 and then experiences a random liquid pressure
+fluctuation thereafter. The liquid pressure change comprises of two parts: the random
+fluctuation generated by Gaussian random fields (GRFs), and the ramp function, given in
+terms of a power law, for the initial drop in pressure P∞ (t). We define the liquid pressure
+change, ∆P (t), as:
+
+g(t) ∼ GP(µ, σklT (t1 , t2 )),
+ 
+10
+
+ t
+0 ≤ t < qT,
+qT
+s(t) =
+
+1
+qT ≤ t ≤ T,
+
+(7)
+
+∆P (t) = g(t)s(t).
+The Gaussian covariance kernel klT (t1 , t2 ) = exp(−kt1 − t2 k2 /2l2 T 2 ) has a correlation timescale based on the time-scale parameter lT > 0. T is the time interval, and the dimensionless
+parameter l determines the smoothness of the sampled function. We choose l = 0.2 unless
+otherwise stated. The value of q indicates the duration of the initial pressure drop, and
+we choose q = 0.1 unless otherwise stated. The mean value of the pressure change is
+µ = −1500Pa and the standard deviation is σ = 400Pa.
+The setup of the problem is summarized in Table I. The parameters are representative
+of water as the liquid phase and the surface tension is set for a water-air interface at room
+temperature.
+TABLE I: Values of parameters in Eq. 3.
+Parameter
+
+Physical meaning
+
+Value
+
+ρL
+
+liquid density
+
+1 × 103 kgm−3
+
+νL
+
+viscosity
+
+1 × 10−6 m2 s−1
+
+γ
+
+surface tension
+
+7.2 × 10−2 Nm−1
+
+T
+
+time interval
+
+5 × 10−4 s
+
+R(t0 )
+
+initial radius
+
+1 × 10−5 m
+
+dR(t0 )/dt initial radius velocity
+
+10
+
+0 m/s
+
+Fig. 5 demonstrates some representative data for the liquid pressure change, ∆P (t), and
+corresponding bubble radius, R(t). The general features of these solutions are characteristic
+of the response of a bubble as it passes through any low-pressure region.
+
+(a)
+
+(b)
+
+FIG. 5: (a) Sample trajectories of liquid pressure change with time (∆P (t)); (b)
+Corresponding bubble radius (R(t)) from training dataset. The corresponding data for
+∆P (t) and R(t) are presented with the same color.
+
+11
+
+B.
+
+Convergence tests
+Here, we investigate how the network size and training dataset affect the convergence of
+
+DeepONet. We apply the Adam optimizer with a small learning rate 5 × 10−4 to train the
+DeepONet for 2 × 105 iterations. The rectified linear unit (ReLU) is used for the activation
+function. By varying the network width, we observe that there is an optimal width to achieve
+the smallest error (depth 2), see Fig. 7(a). We note that increasing the width from 1 to
+500 could decrease the error, but the error would increase instead when the width further
+increases. We also note that increasing the depth from 1 hidden layer to 10 hidden layers
+could decrease the training error (width 100), but the test loss reaches the minimum when
+the depth is about 6. To examine the effect of the training dataset size, we choose networks
+of width 200 and depth 3 to eliminate the network size effect, and the test errors using
+different dataset size are shown in Fig. 6(c). As DeepONet has no constraint on the number
+of data points per trajectory, we can get the same number of data points either from more
+trajectories with sparser points per trajectory or fewer trajectories with denser points per
+trajectory. Fig. 6(c) shows the influence of the number of trajectories and the size of the
+dataset. It is reasonable that including more training data points leads to smaller error, and
+we can also see that when the number of data points is fixed, the number of trajectories is
+usually more important than the density of data points on each trajectory.
+Fig. 7 shows some representative results of the best model. The width and depth of the
+(a)
+
+(c)
+
+(b)
+
+FIG. 6: Mean square error (MSE) convergence. (a) Training and testing errors versus
+network width (both branch and trunk net) (depth 2); (b) Training and testing errors versus
+network depth (both branch and trunk net) (width 100); (c) Testing errors versus size of
+training data (width 200, depth 3 for both branch and trunk net).
+12
+
+network is 200 and 3, respectively, and the number of data points is 1 ×105 (5000 trajectories).
+The loss histories of the training and testing are presented in Fig. 7(a); the losses converge to
+rather small values. Upon training, the DeepONet can predict the bubble radius at any time
+when the input functions are given. The comparison of prediction values against the ground
+truth is shown in Fig. 7(b), in which the diagonal line indicates a perfect prediction. The
+points are colored based on the neighbor density because the points near the diagonal line
+are highly overlapped. Some R(t) trajectories predicted by DeepONet are shown in Fig. 7(c)
+along with the ground truth. DeepONet can predict them very accurately, capturing all
+the oscillations, decay, and smooth change afterward. We also use the trained DeepONet
+to predict an out-of-distribution pressure input signal (not from GRF), which is the typical
+
+(a)
+
+(b)
+
+(c)
+
+(d)
+
+FIG. 7: Performance of DeepONet for bubble growth prediction. (a) Loss histories of the
+training and testing; (b) Parity plot of DeepONet prediction and ground truth from test
+dataset; (c) Sample predicted R(t) trajectories and ground truth from test dataset (from
+GRF); (d) Prediction for a pressure field not from GRF, which is a typical solution of R-P
+equation discussed in Sec.III. The inset plot is the ambient pressure change.
+13
+
+solution of R-P equation discussed in Sec. III, see the results in Fig. 7(d) (the inset subplot
+is the pressure field).
+
+C.
+
+Comparison of DeepONet and LSTM
+Considering the nature of the present problem where we aim to forecast time series, it is
+
+reasonable to question if any recurrent neural network (RNN) could also be a suitable tool
+for forecasting besides DeepONet. RNNs were initially used for language processing models,
+due to their ability to memorize long-term dependencies. However, when time lags increase,
+gradients of RNNs may vanish through unfolding RNNs into deep FNNs. Due to the gradient
+vanishing problem, LSTM34 was proposed with forget units, which were designed to give the
+memory cells the ability to choose when to forget certain information, thus determine the
+optimal time lags. The LSTM cell contains mainly four parts: input gate, input modulation
+gate, forget gate and output gate. The input gate takes a new input point from outside and
+processes newly coming data; the input modulation gate takes input from the output of the
+LSTM cell in the last iteration; the forget gate decides when to forget the output results
+and thus selects the optimal time lag for the input sequence; and the output gate takes all
+results calculated and generates output for the LSTM cell. LSTM has been utilized for traffic
+flow prediction35 , vessel dynamics prediction36 , human trajectory prediction37 , stock price
+prediction38 , etc.
+The data used to train and test LSTM are the same as those used for DeepONet. With
+ample training data and tuned hyper-parameters, we find that both DeepONet and LSTM
+can handle this problem well. DeepONet has a great advantage due to its flexibility in
+handling arbitrary training data points. We develop six benchmark cases and plot the
+results in Fig. 8. The inset subplots are the input functions. For a fair comparison, the
+input functions are the same for LSTM and DeepONet. To train the model, 5000 pairs of
+liquid pressure and bubble radius trajectories are provided while the availability of data
+points on the radius trajectories is limited. In Fig. 8(a)(d), only 20 data points are known
+per trajectory, (b)(e) 80 data points, and (c)(f) 200 data points. Because LSTM requires
+that the locations of all data points be aligned, even though LSTM learned well on these
+given locations, it does not have any knowledge on locations which are not on a predefined
+grid, see Fig. 8(a)(b). The problem can be alleviated when the data points are sufficiently
+14
+
+Sparser training data
+
+Denser training data
+
+20 points / trajectory
+
+80 points / trajectory
+
+200 points / trajectory
+
+LSTM
+
+(a)
+
+(b)
+
+(c)
+
+(d)
+
+(e)
+
+(f)
+
+DeepONet
+
+FIG. 8: Comparative performance of LSTM and DeepONet on testing data. (a-c)
+Predictions of LSTM; (d-f) Predictions of DeepONet. The number of training data points
+on each trajectory are (a)(d) 20, (b)(e) 80, (c)(f) 200. The inset subplots show the liquid
+pressure trajectory. 5000 training trajectories are provided for all the cases. DeepONet show
+great advantage when training data are very sparse.
+
+dense (Fig. 8(c)). On the other hand, as stated in Sec. II, DeepONet does not enforce any
+constraint on the number or locations for the evaluation of the output function. That means
+the 20/80/200 training data points can be not only arbitrary but also at different locations
+for each trajectory. This improvement enables DeepONet to predict accurately based on
+any arbitrary locations, no matter how sparse the training data are, see Fig. 8(d)(e). From
+Fig. 8(d), we note the predicted trajectory does not deviate from the ground truth. Moreover,
+from our experience, once the training data is ample, DeepONet can predict smooth and
+accurate results even if only a single data point is collected per trajectory. In general, we
+have no prior knowledge about the right time interval at which to perform measurements
+or we may have difficulty in acquiring very dense data, and hence DeepONet shows a clear
+advantage both for its accuracy and versatility.
+15
+
+D.
+
+Predictions for random initial bubble size
+In this section, we extend the model to different initial bubble sizes. The initial condition
+
+can be embedded in DeepONet in many ways, so here we choose to input R(t0 ) in the trunk
+net along with time t. In the current example, the training dataset contains 30,000 pairs of
+trajectories. Different from previous cases, the bubble radius trajectories are solved with
+random initial size ranging from 1 × 10−5 m to 2 × 10−5 m. Some examples of the input and
+output functions are presented in Fig. 9. As shown, the initial bubble size has a strong effect
+not only on the initial value of the solution but also on the oscillation frequency and the
+decay rate.
+
+(a)
+
+(b)
+
+FIG. 9: (a) Sample trajectories of liquid pressure change with time (∆P (t)); (b)
+Corresponding bubble radius (R(t)) with different initial size from the training dataset. The
+corresponding ∆P (t) and R(t) are presented with the same color. The initial bubble size has
+an effect on the oscillation frequency.
+
+Upon training, DeepONet’s predictions agree with the ground truth very well. Fig. 10(a)
+shows the comparison; each point’s horizontal coordinate is a bubble radius value predicted
+by DeepONet at random times while the vertical coordinate is the corresponding ground
+truth. The color indicates the density of overlapping points. We see that most points lie
+on or near the diagonal line, which indicates an almost perfect prediction. Fig. 10(b) shows
+some samples of bubble radius evolution predicted by DeepONet and solved with the R-P
+equation from the test dataset. We note that the different oscillation magnitude, oscillation
+frequency, and decay are accurately predicted by DeepONet.
+16
+
+(a)
+
+(b)
+
+FIG. 10: Comparison of DeepONet prediction and ground truth with random initial bubble
+size. (a) Parity plot of DeepONet prediction and ground truth from the test dataset; (b)
+Sample trajectories of prediction and ground truth from test dataset.
+E.
+
+Extrapolation: Predicting inputs outside the function space of the training
+
+data
+The DeepONet predictions shown previously are results for pressure field in the input
+training range, i.e., the testing was performed with independent data but with pressure
+field generated with l = 0.2 (Eq. (7)), the same correlation length as in the training data
+(interpolation). In this section, we would like to obtain predictions with the trained DeepONet
+for pressure fields that do not belong to the input function space, i.e., perform an extrapolation.
+In particular, we want to use the trained DeepONet to predict the bubble radius based on
+pressure fields generated with unseen correlation length l, ranging from 0.07 to 0.9. The other
+parameters used are as follows: q in Eq. (7) equals 0.5, the network size is (50, 50, 50, 50)
+for both trunk and branch net, and the training dataset contains 3000 pairs of trajectories.
+These settings remain the same through this section.
+In Fig. 11(a), we show the test error when we extrapolate to unseen pressure field with
+l ranging from 0.07 to 0.9. The error rises moderately when l increases but may go up
+quite sharply when l decreases. In Fig. 11(b), we use as training data a combination
+of three different sets corresponding to values of l (0.1, 0.15 and 0.2). Even though the
+training time and all other parameters are the same, the test errors of extrapolation are
+reduced substantially. The light blue area in the plot indicates the interpolation range;
+the test errors for l = 0.125 and l = 0.175 are smaller than that for l = 0.1. Then, we
+design the representation of the input space more carefully, moving the window towards the
+17
+
+(a)
+
+(b)
+Training data
+
+Training data
+
+(d)
+
+(c)
+Training data
+
+Training data
+
+FIG. 11: Extrapolation test error versus different choices of training datasets. (a) Training
+data: l = 0.2; (b) Training data: l = 0.1, 0.15, 0.2; (c) Training data: l = 0.07, 0.1, 0.15;
+(d) Training data: l = 0.07, 0.15, 0.9. The size of the training data remains the same in all
+cases. We note that by carefully designing the input space, the extrapolation performance
+can be significantly improved.
+
+smaller values of l, where we observed the highest error. In Fig. 11(c), the training data
+is a combination of l = 0.07, 0.1, and 0.15. We observe that the errors with small l are
+significantly reduced while for the extrapolation with large l the errors increase. Overall,
+the errors in the entire range are more balanced. Fig. 11(d) shows an extra case when the
+training data is a combination of l = 0.07, 0.15, and 0.9. We observe that the test errors are
+reduced more uniformly because the input space is better presented, which indicates that a
+better representation of the input space will lead to a higher accuracy for extrapolation.
+Next, we will demonstrate how extrapolation can be improved when only a few data
+are available for the output variable. In this example, the DeepONet is trained with liquid
+pressure produced with l = 0.1, 0.15, and 0.2, as shown in Fig. 11(b), and is applied to
+18
+
+(a)
+
+without new data
+
+3 new data
+
+(b)
+
+L2 error = 15.3%
+
+(d)
+
+without new data
+
+(c)
+
+6 new data
+
+L2 error = 9.7%
+
+(e)
+
+(f)
+
+3 new data
+
+L2 error = 19.5%
+
+L2 error = 6.2%
+
+6 new data
+
+L2 error = 14.3%
+
+L2 error = 11.1%
+
+FIG. 12: Extrapolations of R(t) for l = 0.07 by adding a few new data (Training data:
+l = 0.1, 0.15, 0.2). (a-c) Example 1; (d-f) Example 2. For both examples, we show
+predictions without new data (a)(d), with 3 new data (b)(e), and with 6 new data (c)(f).
+The inset figures show the corresponding liquid pressure. The new data points are selected
+at the the pressure local extrema since the input function is known a priori. We fine-tune
+the network on these sparse new data points (black cross) with a reduced learning rate and
+epochs. Only the last layer of the trunk net is free to change by the new data. The L2 error
+drops noticeably with just a few data for the extrapolation.
+
+extrapolate for l = 0.07. We use the relative L2 -norm error to evaluate the performance,
+namely
+qP
+T
+
+P
+T 2
+t=0 (Rt − Rt )
+
+ = qP
+
+.
+
+(8)
+
+T
+T
+T 2
+t=0 (Rt − R )
+
+where RP and RT are the predicted and true bubble radii, respectively. Fig. 12(a)(c) show
+two examples of using the pre-trained DeepONet for making predictions on new scenarios
+(i.e., unseen data), where we can see that the L2 errors are relatively high. In order to
+improve the performance of DeepONet for extrapolation, we assume that a few measurements
+of the unseen profile are available. Moreover, since the input function is known a priori,
+when doing extrapolation the locations of these additional data points can be selected based
+on the local extremum of the pressure profile. Then, we fine-tune the pre-trained networks
+19
+
+based on only the new measurements by using the Adam optimizer with a reduced learning
+rate (2 × 10−5 ) for 100 epochs. We note that only the last layer of the trunk net is tunable
+during the fine-tuning process. The results are shown in Fig. 12(b)(c)(e)(f), from which we
+can see that the predictions after fine-tuning are in good agreement with the ground truth.
+In the first case, the L2 relative error drops from 15.3% to 9.7% (3 new data), or 6.2% (6 new
+data), in the second case, the L2 error drops from 19.5% to 14.3% (3 new data), or 11.1% (6
+new data). Overall, by performing transfer learning with sparse data points, we obtain much
+better solutions compared to just the original pretrained networks. In addition, we note that
+the transfer learning process is very fast, i.e., it takes only a few seconds either on a single
+CPU or GPU.
+
+IV.
+
+MICROSCALE (STOCHASTIC) REGIME
+
+The R-P equation is based on the continuum assumption, which is not valid in the
+microscopic regime. Usually, particle-based simulation methods are good alternatives at the
+microscale. In this section, the DPD method is employed to simulate the dynamics of bubble
+size evolution at the microscale level and to generate data for training DeepONet. As with
+MD systems, a DPD model consists of many interacting particles governed by Newton’s
+equation of motion39 ,
+mi
+
+X
+
+d2 ri
+dvi
+D
+R
+=
+m
+=
+F
+=
+FC
+i
+i
+ij + Fij + Fij ,
+2
+dt
+dt
+j6=i
+
+(9)
+
+where mi is the mass of a particle i, ri and vi are position and velocity vectors of the particle
+i, and Fi is the total force acting on the particle i due to the presence of neighboring particles.
+The summation for computing Fi is carried out over all neighboring particles within a cutoff
+range. Beyond the cutoff, all pairwise interactions are considered negligible. The pairwise
+D
+R
+force is comprised of a conservative force FC
+ij , a dissipative force Fij and a random force Fij ,
+
+which, respectively, are of the form:
+
+FC
+ij = aij ωC (rij )eij ,
+FD
+ij = −γij ωD (rij )(vij eij )eij ,
+FR
+ij · dt = σij ωR (rij )dW̃ij eij ,
+20
+
+(10)
+
+where rij = |rij | = |ri − rj | is the distance between particles i and j, eij = rij /rij is the unit
+vector, and vij = vi − vj is the velocity difference; dW̃ij is an independent increment of the
+Wiener process40 . The coefficients aij , γij and σij determine the strength of the three forces,
+respectively. To satisfy the fluctuation-dissipation theorem (FDT)40 and to maintain the
+DPD system at a constant temperature39 , the dissipative force and the random force are
+constrained by σij2 = 2γij kB T and ωD (rij ) = ωR2 (rij ). Common choices for weight functions
+are ωC (rij ) = 1 − rij /rc , ωD (rij ) = ωR2 (rij ) = (1 − rij /rc )1/2 with rc being the cutoff radius.
+With the purely repulsive conservative forces, DPD is most suitable for simulating a gas,
+which fills the space spontaneously. To simulate the liquid phase, we use MDPD, which is an
+extension of DPD by modifying the conservative force to include both a repulsive force and
+an attractive force41,42 ,
+FC
+ij = Aij wc (rij ) + Bij (ρi + ρj )wd (rij ).
+
+(11)
+
+Because a DPD model with a single interaction range cannot maintain a stable interface43 ,
+the repulsive contribution in Eq. (11) is set to act within a shorter range rd < rc than the
+soft pair attractive potential. The many-body repulsion is chosen in the form of a self-energy
+per particle, which is quadratic in the local density, Bij (ρi + ρj )wd (rij ), where B > 0. The
+density of each particle is defined as
+
+ρ̄i =
+
+X
+
+wρ (rij ),
+
+(12)
+
+
+2
+r
+1−
+,
+rd
+
+(13)
+
+j6=i
+
+and its weight function wρ is defined as
+15
+wρ =
+2πrd3
+where wρ vanishes for r > rd .
+Fig. 13 illustrates the DPD-MDPD coupled simulation system. To reduce the computational cost, a thin box with periodic boundaries in the x and z directions is used. The yellow
+particles represent the gas phase, with the interaction force modeled by a DPD potential;
+the blue particles represent the liquid phase, with the interaction force modeled by a MDPD
+potential. The interaction force between gas and liquid particles is described by a DPD
+potential, which can prevent the gas particles dissolving into the liquid phase. The top and
+bottom solid walls are constructed by pre-equilibrium frozen particles. The number density
+21
+
+FIG. 13: Illustration of the microscale simulation. The gas particles (yellow) are aggregated
+in the center surrounded by the liquid particles (blue). The boundary condition in the x and
+z directions are periodic. The bottom wall is stationary while the top wall has one degree of
+freedom in the y direction to adjust the system pressure. A time-varying external force
+(green arrows) is applied on the top wall to change the system pressure. A Voronoi method
+is used to compute the volume of each phase.
+of wall particles is the same as the density of the liquid. The no-slip boundary method44 for
+arbitrary-shape geometries is applied. To change the system pressure, the top wall is set to
+have one degree of freedom moving just in the y direction. Before the simulation starts, a
+uniform static external pressure is exerted on the top wall to reach an initial equilibrium state.
+Then, the value of the external pressure evolves following a preset function. We continuously
+record the volume of the gas phase and use it to compute the effective bubble radius. Because
+the particles of a DPD system are randomly distributed in space, it is difficult to accurately
+compute the volume of the gas bubble. In the present work, we adopt a three-dimensional
+Voronoi tessellation45 to estimate the instantaneous volume occupied by gas particles. In
+the Voronoi scheme, each particle in the system occupies a cell around it, which contains all
+the space closer to that particle. In our case, the Voronoi cells take the form of irregular
+polyhedra, see the inset of Fig. 13. Let Ω be the volume of a gas or liquid phase, we compute
+22
+
+the instantaneous volume-averaged virial stress based on the virial theorem46 ,
+#
+"
+Np
+X
+1
+1X
+−mvαi vβi −
+(rαi Fβi + rαj Fβj ) ,
+Sαβ =
+Ω i∈Ω
+2 j=1
+
+(14)
+
+where α and β take values of x, y, z to generate the components of the stress. The first
+term represents a kinetic energy contribution for a particle i. The second term is a pairwise
+energy contribution due to interactions between particles i and j, where j loops over the
+Np neighbors of particle i; ri and rj are the positions of the two particles in the pairwise
+interaction, and Fi and Fj are the forces on the two particles resulting from the pairwise
+interaction. We take the mean of diagonals of the negative stress tensor as the pressure:
+1
+Pphase = − (Sxx + Syy + Szz ).
+3
+
+(15)
+
+Separate simulations are conducted to measure the properties of the gas and liquid phases. The
+simulation setup and the measured properties of fluids are summarised in Table II. By mapping
+the dimensionless properties (density, surface tension and viscosity) to properties of water at
+20 °C, the scaling relationship can be determined47 : length reference [l] = 4.12 × 10−8 m, time
+reference [t] = 1.79 × 10−9 s, and mass reference [m] = 8.82 × 10−21 kg. With this scaling
+relationship, the dimensionless properties in the DPD simulation can be transformed to
+physical values. For example, the bubble radius is 5.77 × 10−7 m, and the simulation time
+span is approximately 3.58 × 10−6 s. The preset pressure on the top wall is generated using
+GRF (Eq. (7), µ = 37.55, σ = 2.17) with an exponential function mask ensuring smooth
+transition from the initial equilibrium state. Examples of pressure trajectories are presented
+in Fig. 14.
+We run 400 independent DPD simulations to generate the training data for DeepONet.
+Each simulation can generate one pair of input and output functions. Fig. 15 shows two
+representative simulations. In Fig. 15(a), we plot both the preset pressure on the top wall
+and the measured liquid pressure. The measured liquid pressure exhibits noticeable noise
+compared to smooth input pressure signal. Fig. 15(b) shows the measured bubble radius;
+the corresponding ∆P (t) and R(t) are presented with the same color.
+The setup of the DeepONet is summarized in Table III. Here, 50 evenly spaced sensors
+are employed for the input function and 25 random spaced points for the output function.
+Both branch and trunk nets have two hidden layers and 200 neurons per layer.
+23
+
+Pressure (DPD units)
+
+42
+40
+38
+36
+34
+0
+
+250
+
+500
+
+750 1000 1250
+Time (DPD units)
+
+1500
+
+1750
+
+2000
+
+FIG. 14: Samples of preset time-varying pressure on the top wall in training data. All
+trajectories start from an equilibrium pressure, then enter a stochastic time-varying
+low-pressure region. The dotted line indicates the initial equilibrium pressure.
+
+(a)
+
+(b)
+
+FIG. 15: (a) Pressure on wall and pressure in liquid; (b) Corresponding bubble radius. The
+liquid pressure and bubble radius are both computed from DPD simulations and they
+exhibit considerable noise.
+
+24
+
+TABLE II: Simulation setup and fluid properties (DPD units).
+Property
+
+Value
+X = 60 (periodic)
+
+Box
+
+Y = 66 (shrink-wrapped)
+Z = 4 (periodic)
+
+Temperature
+
+kb T = 1.0
+
+Cutoff
+
+rc = 1.0
+
+Time
+
+T = 2000
+
+Time step
+
+t = 0.01
+
+Pressure
+
+see Eq. (7), µ = 37.55, σ = 2.17
+
+System
+
+MDPD parameter A = −40, B = −25, γ = 4.5, rd = 0.75
+Number density
+
+nl = 7.93
+
+Particle mass
+
+ml = 1.0
+
+Liquid density
+
+ρl = 7.93
+
+Liquid
+
+Dynamic viscosity µl = 8.36
+
+Gas
+
+Speed of sound
+
+c = 18.52
+
+DPD parameter
+
+a = 5, γ = 4.5
+
+Number density
+
+ng = 8.25
+
+Particle mass
+
+mg = 0.2
+
+Gas density
+
+ρg = 1.65
+
+Dynamic viscosity µg = 1.41
+DPD parameter
+
+a = 20, γ = 4.5
+
+Pressure in liquid pl = 43.08
+Interface Pressure in gas
+
+pg = 44.96
+
+Bubble radius
+
+R = 14.05
+
+Surface tension
+
+γ = 26.42
+
+TABLE III: Hyper-parameters for DeepONet.
+# Pressure (Train+Test)
+
+# Pressure sensor
+
+# Radius sensor
+
+# Train data
+
+# Test data
+
+400+100
+
+50
+
+25
+
+10000
+
+2500
+
+Type of DeepONet
+
+Branch depth
+
+Branch width
+
+Trunk depth
+
+Trunk width
+
+Unstacked
+
+2
+
+200
+
+2
+
+200
+
+Pressure generator
+
+Optimizer
+
+Learning rate
+
+Activation
+
+# Epoch
+
+Gaussian random
+
+Adam
+
+0.0005
+
+ReLU
+
+10000
+
+25
+
+Fig. 16(a) shows the loss histories for training and testing. Fig. 16(b) is the parity plot
+of values predicted by DeepONet and DPD simulation results. We see that almost all
+data points fall near the diagonal line, which indicates almost perfect accuracy. The small
+discrepancy is mainly because the raw trajectory is noisy but the predicted trajectory is
+quite smooth, see Fig. 17.
+
+(a)
+
+(b)
+
+FIG. 16: (a) Loss histories of the training and testing; (b) Parity plot of DeepONet
+prediction and DPD simulation results; the data points fall on the diagonal dashed line
+indicating very good prediction.
+
+Fig. 17 shows two representative cases of the DeepONet prediction. Even though the
+DPD results exhibit high frequency fluctuations and we only collect sparse data points on
+the noisy trajectory, DeepONet yields an accurate smooth trajectory, which captures the
+mean trajectory of the data quite well.
+The results shown above indicate that once trained, DeepONet can be used to infer
+the microscale bubble growth from a complex particle simulation system, which cannot be
+easily described by simple control functions. Conventional numerical simulation methods, in
+which pair-list updates and inter-particle force calculation are required, are usually very time
+consuming. For each DPD simulation, it takes 3 hours on a 16-core workstation, while it
+takes only a fraction of a second for DeepONet to evaluate R(t), so the speed-up factor in
+this case exceeds 200,000.
+26
+
+(a)
+
+Liquid pressure (Input)
+
+Bubble radius (Output)
+
+(b)
+
+FIG. 17: Two representative DeepONet predictions (a and b). The plots in the left column
+correspond to the preset pressure; the plots in the right column show a comparison of the
+bubble radius produced by DPD simulations and predicted by DeepONet. DeepONet’s
+prediction is close to the mean of the fluctuating trajectory.
+
+V.
+
+SUMMARY
+In this paper, we first introduce the macroscopic model (R-P) and microscopic model
+
+(DPD) for the problem of growth of a single bubble due to time-varying changes in the
+ambient liquid pressure. We then demonstrate the effectiveness of DeepONet for both models.
+We use Gaussian random fields to generate the various pressure fields, which are the input
+signals to the dynamical system. We investigate the influence of the network depth, width,
+and data size, and by comparing to LSTM we demonstrated a unique advantage of DeepONet,
+i.e., the flexibility in data density and location, which will be very useful when we have no
+prior knowledge of how much data density is sufficient or when we have restrictions on data
+acquisition. Moreover, we test the case when the input is not within the input space, i.e., the
+27
+
+correlation length of the pressure field is out of the training range. In this case, we cannot
+obtain very accurate predictions, however, we resolve this issue by transfer learning and
+fine-tuning the trunk net of the pre-trained DeepONet with just a few new data points. In
+the microscale regime, the data generated by DPD model contain high frequency fluctuations.
+We show that without any extra data processing, DeepONet can learn the mean component
+of these noisy raw data, and the computational time could be reduced from 48 (3 hours
+× 16 cores) CPU hours to a fraction of second for a speed-up over 200,000. Learning the
+stochastic fluctuations accurately requires a more careful design and training of DeepONet
+and we leave this for future work
+More broadly, the results in this paper show that DeepONet can be used both in the
+macroscopic and microscopic regimes of the bubble growth dynamics, which creates a good
+foundation for a unified neural network model that could predict the results from macroscale
+to microscale seamlessly. This topic is currently under investigation and we will report such
+results in future work.
+
+ACKNOWLEDGEMENTS
+The authors acknowledge support from DOE/PhILMs DE-SC0019453.
+
+DATA AVAILABILITY
+The data that support the findings of this study are available from the corresponding
+author upon reasonable request.
+
+REFERENCES
+1
+
+S. H. Rudy, S. L. Brunton, J. L. Proctor, and J. N. Kutz, “Data-driven discovery of partial
+differential equations,” Science Advances 3, e1602614 (2017).
+
+2
+
+K. Champion, B. Lusch, J. N. Kutz, and S. L. Brunton, “Data-driven discovery of
+coordinates and governing equations,” Proceedings of the National Academy of Sciences
+
+116, 22445–22451 (2019).
+28
+
+3
+
+L. Lu, P. Jin, and G. E. Karniadakis, “DeepONet: Learning nonlinear operators for
+identifying differential equations based on the universal approximation theorem of operators,”
+arXiv preprint arXiv:1910.03193 (2019).
+
+4
+
+M. Raissi, A. Yazdani, and G. E. Karniadakis, “Hidden fluid mechanics: Learning velocity
+and pressure fields from flow visualizations,” Science 367, 1026–1030 (2020).
+
+5
+
+M. Raissi, P. Perdikaris, and G. E. Karniadakis, “Physics-informed neural networks: A
+deep learning framework for solving forward and inverse problems involving nonlinear
+partial differential equations,” Journal of Computational Physics 378, 686–707 (2019).
+
+6
+
+P. Jin, Z. Zhang, A. Zhu, Y. Tang, and G. E. Karniadakis, “Sympnets: Intrinsic structurepreserving symplectic networks for identifying hamiltonian systems,” Neural Networks 132,
+
+166–179 (2020).
+7
+
+Y. Chen, L. Lu, G. E. Karniadakis, and L. Dal Negro, “Physics-informed neural networks
+for inverse problems in nano-optics and metamaterials,” Optics Express 28, 11618–11633
+
+(2020).
+8
+
+G. Carleo, I. Cirac, K. Cranmer, L. Daudet, M. Schuld, N. Tishby, L. Vogt-Maranto, and
+L. Zdeborová, “Machine learning and the physical sciences,” Reviews of Modern Physics
+91, 045002 (2019).
+
+9
+
+R. M. Cichy and D. Kaiser, “Deep neural networks as scientific models,” Trends in Cognitive
+Sciences 23, 305–317 (2019).
+
+10
+
+C. J. Lapeyre, A. Misdariis, N. Cazard, D. Veynante, and T. Poinsot, “Training convolutional neural networks to estimate turbulent sub-grid scale reaction rates,” Combustion
+and Flame 203, 255–264 (2019).
+
+11
+
+K. Bieker, S. Peitz, S. L. Brunton, J. N. Kutz, and M. Dellnitz, “Deep model predictive
+flow control with limited sensor data and online learning,” Theoretical and Computational
+Fluid Dynamics , 1–15 (2020).
+
+12
+
+Y. Xie, E. Franz, M. Chu, and N. Thuerey, “tempoGAN: A temporally coherent, volumetric
+gan for super-resolution fluid flow,” ACM Transactions on Graphics (TOG) 37, 1–15 (2018).
+
+13
+
+G. C. Peng, M. Alber, A. B. Tepole, W. R. Cannon, S. De, S. Dura-Bernal, K. Garikipati,
+G. E. Karniadakis, W. W. Lytton, P. Perdikaris, et al., “Multiscale modeling meets machine
+learning: What can we learn?” Archives of Computational Methods in Engineering , 1–21
+
+(2020).
+
+29
+
+14
+
+Z. Mao, A. D. Jagtap, and G. E. Karniadakis, “Physics-informed neural networks for
+high-speed flows,” Computer Methods in Applied Mechanics and Engineering 360, 112789
+
+(2020).
+15
+
+C. Yu, P. Zhang, J. Wang, and L. Jiang, “Superwettability of gas bubbles and its application:
+from bioinspiration to advanced materials,” Advanced Materials 29, 1703053 (2017).
+
+16
+
+B. Dollet, P. Marmottant, and V. Garbin, “Bubble dynamics in soft and biological matter,”
+Annual Review of Fluid Mechanics 51, 331–355 (2019).
+
+17
+
+A. Jamburidze, M. De Corato, A. Huerre, A. Pommella, and V. Garbin, “High-frequency
+linear rheology of hydrogels probed by ultrasound-driven microbubble dynamics,” Soft
+Matter 13, 3946–3953 (2017).
+
+18
+
+B. R. Novak, Molecular simulation studies of heterogeneous bubble nucleation: effects of
+
+surface chemistry and topology (University of Notre Dame, 2007).
+19
+
+L. Rayleigh, “Viii. on the pressure developed in a liquid during the collapse of a spherical
+cavity,” The London, Edinburgh, and Dublin Philosophical Magazine and Journal of Science
+34, 94–98 (1917).
+
+20
+
+S. Maruyama, T. Kimura, and Y. Yamaguchi, “A molecular dynamics simulation of a
+bubble nucleation on solid surface,” in National Heat Transfer Symposium of Japan, Vol. 34
+
+(Citeseer, 1997) pp. 675–676.
+21
+
+X. Li, P. M. Vlahovska, and G. E. Karniadakis, “Continuum-and particle-based modeling
+of shapes and dynamics of red blood cells in health and disease,” Soft Matter 9, 28–37
+
+(2013).
+22
+
+Y. Wang, Z. Li, J. Ouyang, and G. E. Karniadakis, “Controlled release of entrapped
+nanoparticles from thermoresponsive hydrogels with tunable network characteristics,” Soft
+Matter 16, 4756–4766 (2020).
+
+23
+
+Z. Li, G. Hu, Z. Wang, Y. Ma, and Z. Zhou, “Three dimensional flow structures in a
+moving droplet on substrate: A dissipative particle dynamics study,” Physics of Fluids 25,
+072103 (2013).
+
+24
+
+K. Zhang, Z. Li, M. Maxey, S. Chen, and G. E. Karniadakis, “Self-cleaning of hydrophobic
+rough surfaces by coalescence-induced wetting transition,” Langmuir 35, 2431–2442 (2019).
+
+25
+
+C. Lin, L. Yang, F. Chen, S. Chen, and H. Yin, “A dissipative particle dynamics and
+discrete element method coupled model for particle interactions in sedimentation toward
+the fabrication of a functionally graded material,” Colloids and Surfaces A: Physicochemical
+30
+
+and Engineering Aspects 604, 125326 (2020).
+26
+
+C.-J. Wu, K.-C. Chu, Y.-J. Sheng, and H.-K. Tsao, “Sliding dynamic behavior of a
+nanobubble on a surface,” The Journal of Physical Chemistry C 121, 17932–17940 (2017).
+
+27
+
+T. Tran-Duc, N. Phan-Thien, and B. Cheong Khoo, “Rheology of bubble suspensions
+using dissipative particle dynamics. part i: A hard-core dpd particle model for gas bubbles,”
+Journal of Rheology 57, 1715–1737 (2013).
+
+28
+
+D. Pan, G. Zhao, Y. Lin, and X. Shao, “Mesoscopic modelling of microbubble in liquid
+with finite density ratio of gas to liquid,” EPL (Europhysics Letters) 122, 20003 (2018).
+
+29
+
+T. Chen and H. Chen, “Universal approximation to nonlinear operators by neural networks
+with arbitrary activation functions and its application to dynamical systems,” IEEE
+Transactions on Neural Networks 6, 911–917 (1995).
+
+30
+
+L. Lu, X. Meng, Z. Mao, and G. E. Karniadakis, “DeepXDE: A deep learning library for
+solving differential equations,” arXiv preprint arXiv:1907.04502 (2019).
+
+31
+
+M. S. Plesset and A. Prosperetti, “Bubble dynamics and cavitation,” Annual Review of
+Fluid Mechanics 9, 145–185 (1977).
+
+32
+
+C. E. Brennen, Cavitation and bubble dynamics (Cambridge University Press, 2013).
+
+33
+
+A. Prosperetti, “Vapor bubbles,” Annual Review of Fluid Mechanics 49 (2017).
+
+34
+
+S. Hochreiter and J. Schmidhuber, “Long short-term memory,” Neural Computation 9,
+
+1735–1780 (1997).
+35
+
+R. Fu, Z. Zhang, and L. Li, “Using LSTM and GRU neural network methods for traffic
+flow prediction,” in 2016 31st Youth Academic Annual Conference of Chinese Association
+
+of Automation (YAC) (IEEE, 2016) pp. 324–328.
+36
+
+J. del Águila Ferrandis, M. Triantafyllou, C. Chryssostomidis, and G. E. Karniadakis,
+
+“Learning functionals via LSTM neural networks for predicting vessel dynamics in extreme
+sea states.” arXiv preprint arXiv:1912.13382 (2019).
+37
+
+A. Alahi, K. Goel, V. Ramanathan, A. Robicquet, L. Feifei, and S. Savarese, “Social LSTM:
+Human trajectory prediction in crowded spaces,” in Proceedings of the IEEE conference on
+
+computer vision and pattern recognition (2016) pp. 961–971.
+38
+
+D. M. Nelson, A. C. Pereira, and R. A. de Oliveira, “Stock market’s price movement
+prediction with LSTM neural networks,” in 2017 International joint conference on neural
+
+networks (IJCNN) (IEEE, 2017) pp. 1419–1426.
+
+31
+
+39
+
+R. D. Groot and P. B. Warren, “Dissipative particle dynamics: Bridging the gap between
+atomistic and mesoscopic simulation,” The Journal of Chemical Physics 107, 4423–4435
+
+(1997).
+40
+
+P. Español and P. Warren, “Statistical mechanics of dissipative particle dynamics,” EPL
+
+(Europhysics Letters) 30, 191 (1995).
+41
+
+P. Warren, “Vapor-liquid coexistence in many-body dissipative particle dynamics,” Physical
+Review E 68, 066702 (2003).
+
+42
+
+M. Arienti, W. Pan, X. Li, and G. E. Karniadakis, “Many-body dissipative particle
+dynamics simulation of liquid/vapor and liquid/solid interactions,” The Journal of Chemical
+Physics 134, 204114 (2011).
+
+43
+
+I. Pagonabarraga and D. Frenkel, “Dissipative particle dynamics for interacting systems,”
+The Journal of Chemical Physics 115, 5015–5026 (2001).
+
+44
+
+Z. Li, X. Bian, Y. Tang, and G. E. Karniadakis, “A dissipative particle dynamics method
+for arbitrarily complex geometries,” Journal of Computational Physics 355, 534–547 (2018).
+
+45
+
+C. H. Rycroft, “VORO++: a three-dimensional voronoi cell library in C++.” Chaos 19,
+041111 (2009).
+
+46
+
+D. Tsai, “The virial theorem and stress calculation in molecular dynamics,” The Journal
+of Chemical Physics 70, 1375–1382 (1979).
+
+47
+
+C. Lin, S. Chen, L. Xiao, and Y. Liu, “Tuning drop motion by chemical chessboardpatterned surfaces: a many-body dissipative particle dynamics study,” Langmuir 34,
+2708–2715 (2018).
+
+32
+
+

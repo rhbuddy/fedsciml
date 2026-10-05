@@ -1,0 +1,1721 @@
+A physics-informed variational DeepONet for predicting the crack
+path in brittle materials
+Somdatta Goswamia , Minglang Yinb,c , Yue Yud , George Em Karniadakisa,c,∗
+a
+
+arXiv:2108.06905v2 [cs.LG] 13 Sep 2021
+
+b
+
+Division of Applied Mathematics, Brown University, Providence, RI
+Center for Biomedical Engineering, Brown University, Providence, RI
+c
+School of Engineering, Brown University, Providence, RI
+d
+Department of Mathematics, Lehigh University, Bethlehem, PA
+
+Abstract
+Failure trajectories, identifying the probable failure zones, and damage statistics are some
+of the key quantities of relevance in brittle fracture applications. High-fidelity numerical
+solvers that reliably estimate these relevant quantities exist but they are computationally
+demanding requiring a high resolution of the crack. Moreover, independent intensive simulations need to be carried out even for a small change in domain parameters and/or material
+properties. Therefore, fast and generalizable surrogate models are needed to alleviate the
+computational burden but the discontinuous nature of fracture mechanics presents a major
+challenge to developing such models. We propose a physics-informed variational formulation
+of DeepONet (V-DeepONet) for brittle fracture analysis. V-DeepONet is trained to map
+the initial configuration of the defect to the relevant fields of interests (e.g., damage and
+displacement fields). Once the network is trained, the entire global solution can be rapidly
+obtained for any initial crack configuration and loading steps on that domain. While the
+original DeepONet is solely data-driven, we take a different path to train the V-DeepONet
+by imposing the governing equations in variational form and we also use some labelled data.
+We demonstrate the effectiveness of V-DeepOnet through two benchmarks of brittle fracture,
+and we verify its accuracy using results from high-fidelity solvers. Encoding the physical laws
+and also some data to train the network renders the surrogate model capable of accurately
+performing both interpolation and extrapolation tasks, considering that fracture modeling
+is very sensitive to fluctuations. The proposed hybrid training of V-DeepONet is superior
+to state-of-the-art methods and can be applied to a wide array of dynamical systems with
+complex responses.
+Keywords: DeepONet, Variational energy, Physics-informed learning, Phase-field, Brittle
+fracture, Surrogate modeling
+
+∗
+
+Corresponding author.
+Email addresses: somdatta_goswami@brown.edu (Somdatta Goswami), minglang_yin@brown.edu
+(Minglang Yin), yuy214@lehigh.edu (Yue Yu), george_karniadakis@brown.edu (George Em
+Karniadakis)
+
+Preprint submitted to Elsevier
+
+September 14, 2021
+
+1. Introduction
+Damage evolution in realistic structures is a complex phenomenon. Accurately representing this behaviour relies on complex and computationally expensive high-fidelity models.
+Traditional approaches in computational science have undergone remarkable growth and
+progress but they still operate under stringent requirements. More often than not they require precise knowledge of an underlying model that describes conservation. Moreover, most
+existing numerical methods utilize spatial discretization and thus are prone to the curse of
+dimensionality. Newer alternatives such as phase-field [1–4] and peridynamics [5–10] models have been able to predict the outcome of carefully controlled experiments; however,
+the complexity of those models comes at a substantially higher computational cost. Furthermore, operational conditions and material properties in the field can have a significant
+deviation from those in a controlled laboratory environment, which impairs the reliability
+of the computed results. In order to assess the likelihood of occurrence of cracks and their
+possible effects for a range of possible parameters and operating conditions, a large number
+of high-fidelity simulations is required, which are typically computationally prohibitive.
+Surrogate models [11–19] have received a lot of attention because of their ability to quantitatively capture the fundamental attributes of high-fidelity models while significantly improving the computational efficiency. The main challenge associated with constructing a
+surrogate model for fracture analysis comes from the inherent discontinuous nature of the
+physical phenomena. Conventionally, surrogate models require smoothness in the system
+response, while models for fracture mechanics are very sensitive to fluctuations in model
+properties and hence exhibit irregular behaviour. This problem has prompted a burgeoning
+literature on reduced-order approaches [20–22], which use existing data sets to create fast
+emulators often at the expense of accuracy, stability, and generalization. The goal of the
+present work is to develop a flexible generalized prognosis framework for high-fidelity crack
+growth models. To this end, we will use deep neural networks (DNNs)to infer the generalized solution of the governing partial differential equations (PDEs) that describe the fracture
+mechanisms.
+Deep learning allows overparametrized neural networks with several processing layers to
+learn multiple levels of abstraction for representations of the raw input data. These networks
+are known to be particularly good at supervised learning tasks, which typically necessitate
+the availability of huge volumes of labelled data. However, data collecting is generally
+prohibitively expensive in many engineering applications, and the amount of available data
+is typically minimal. As a result, in this “sparse data” environment, it is critical to use
+domain knowledge to reduce the demand for labelled training data, or even to train deep
+learning models using only constraints rather than data. Physics-informed neural networks
+(PINNs) [23–26] use these constraints to encapsulate the output’s specific structure and
+qualities, which are known to hold due to domain knowledge, such as known physical laws
+like conservation of momentum, mass, and energy. This approach takes advantage of the
+expressivity of DNNs to approximate any continuous function. To efficiently approximate
+the solution of PDEs with discontinuity, variational energy-based PINN (VE-PINN) was
+proposed in [27, 28], where the network is trained by minimizing the variational energy
+of the system (defined using the weak formulation). VE-PINN opened a new paradigm
+for solving fracture problems with modern neural network architectures, which may be a
+2
+
+promising alternative to traditional numerical methods, such as finite-difference and finitevolume methods as it reduced the computational burden of dense discretization. Despite
+the promise and collection of impressive results for accurately estimating the crack path in
+brittle fracture problems using a sparse discretization, VE-PINN bears a formidable cost as
+independent simulations need to be performed for every different domain geometry, input
+parameters, or initial/boundary conditions (I/BCs). The bottleneck of VE-PINN is quite
+similar to traditional numerical methods, hence the use of VE-PINN as a surrogate model for
+approximating the crack path for different initial conditions or for comprehensive uncertainty
+quantification is practically not feasible.
+As the ML revolution continues to sweep the scientific world, a new wave of strategies
+for expediting the simulation of PDEs [29–38] is being offered. Discovering PDEs just from
+data without any prior information is difficult in a generic situation. In most practical
+circumstances, it is necessary to have a surrogate model of the PDE solution operator that
+can simulate PDE solutions repeatedly for varied I/BCs, rather than discovering the PDE
+in an explicit form, to handle this difficulty. DeepONet proposed in [39] is one of the
+possible ways to learn the PDE solution operators from the labelled input-output datasets.
+The idea of DeepONet is motivated by the universal approximation theorem for operators.
+This defines a new and relatively under-explored realm for DNN-based approaches that map
+infinite-dimensional functional spaces rather than finite-dimensional vector spaces (functional
+regression). The computational model consists of two DNNs, one encodes the input function
+at fixed sensor points (branch net), while another for the location of the output function
+(trunk net). In this work, we propose a variational energy-based framework of DeepONet
+to parametrize and learn the solution operator that maps multiple initial conditions of the
+crack in the domain as input function to the branch net to their associated solutions at the
+locations embedded in the trunk net, thus overcoming the fundamental challenge of VEPINN. The proposed deep learning model is trained by minimizing a hybrid loss function
+constructed using the PDEs defining the variational formulation of phase field approach, its
+associated I/BCs and relatively small input-output datasets generated using the in-house
+high-fidelity solvers. Once the model has been trained on a set of specific conditions (initial
+configurations, loadings steps, etc. ), it can be used to build the global PDE solution to
+predict quantities of interest using a simple iterative approach in which the previous timestep’s prediction is utilized as an initial condition for the current time step. We demonstrate
+that this approach can effectively enable the integration of evolution equations subject to
+a range of multiple initial conditions with good generalization accuracy, all at a fraction
+of the computational cost needed by classical numerical solvers. The main advantage of
+our approach is that we make no assumptions on the regularity of the full model and as
+we demonstrate herein the ability to generalize and predict outcomes for inputs outside the
+distribution (extrapolation),
+We demonstrate the performance of the surrogate model on two benchmark problems of
+fracture: crack growth under tensile loading (Mode-I) and shear loading (Mode-II). In this
+work, we have used the phase field approach to model fracture within the framework of isogeometric analysis (IGA) developed in [40] to generate data. However, the method presented
+here is not restricted to any specific fracture model or mode of failure or data generated
+using specific high-fidelity solvers. Even though the surrogate model proposed in this work
+is applicable to various evolution equations, e.g., time dependent problems and fracture dy3
+
+namics, the integration of variational formulation makes its a perfect choice for PDEs with
+discontinuous nature which manifests in both spatial domain and system response for different material properties. The remainder of the paper is organized as follows. In Section 2,
+we discuss the problem statement for phase-field modeling of brittle fracture using the variational energy formulation. In Section 3, we provide an overview of the DeepONet framework
+put forth in [39]. Implementation of the variational formulation within DeepONet and the
+concept of hybrid loss function is discussed in Section 4. The details of the construction
+of the proposed surrogate model within V-DeepONet, its implementation and its numerous
+application are elaborated in Section 5, with data generation procedures described in Section 6. In Section 7 different aspects of the surrogate model illustrating its performance are
+tested through numerical problems. Each numerical example in the manuscript is accompanied with a detailed discussion about the neural network architecture we employed as well
+as details about its training process. Finally, Section 8 presents the concluding remarks and
+possibilities future work. In the Appendices we present more details and additional cases for
+the interested readers to be able to reproduce our results.
+2. Phase field modeling of fracture
+In recent times, phase field modeling approaches [41] have been extensively used in science
+and engineering to model a variety of phenomena. Modeling fracture, using the phase field
+approach, involves the integration of two fields, namely the vector-valued elastic field and
+the scalar-valued phase field. While crack nucleation may depend on stress, the propagation
+of cracks requires an increase in the fracture energy or the surface energy, Ψc of a solid [42].
+Hence, the energy criteria are used in the study of fracture using the phase field approach
+[43]. The physical domain, Ω ⊂ Rd , is defined with the external boundary, ∂Ω ⊂ Rd−1 ,
+where d denotes the number of spatial dimensions, d ∈ {1, 2, 3}. In a quasi-static loading
+regime, the total energy functional, E, can be written as [44]:
+E = Ψe + Ψc − Pext ,
+Z
+where Ψe =
+ψe ( (w) , φ (x)) dΩ,
+Ω
+Z
+Z
+Ψc =
+Gc Θ (φ(x), l0 )dΩ ≈
+Gc dΓ,
+Ω
+Γd
+Z
+Z
+and Pext =
+f · w dΩ +
+tN · w dΓ.
+Ω
+
+(1)
+
+∂ΩN
+
+In Eq. (1), Ψe is the stored elastic strain energy, dΓ denotes the integral on the codimensional one space (curves for d = 2 an surfaces for d = 3), Γd is the evolving internal
+discontinuity boundary and ψe is the strain energy density functional expressed in terms of
+the linearized strain tensor, (w), where w denotes the displacement field and a continuous
+scalar parameter φ(x) denoting the phase field used to track the fracture pattern. The
+cracked region is represented by φ = 1 while the undamaged portion is given by φ = 0. The
+fracture energy, Ψc , is defined in terms of the critical energy release rate, Gc , integrated over
+the fracture surface. The phase-field approximation introduces an n-th order crack density
+functional, Θ, that is dependent only on a length scale parameter, l0 , the phase- field, φ, and
+derivatives of φ up to order n such that the approximation stated in Eq. (1) for the fracture
+4
+
+energy holds true. A main feature of phase-field modeling is the assumption that the process
+zone has a finite width, which is controlled by l0 . A sharp crack topology is recovered in the
+limit as l0 → 0 [45]. The external potential energy, Pext , is computed using the prescribed
+boundary force. tN is the traction load applied over the Neumann boundary, ∂ΩN , and the
+distributed body force, f , is applied over the whole domain. In this approach, the effects
+associated with crack formation such as stress release are incorporated into the constitutive
+model.
+In the phase field approach, the crack path is resolved by minimizing the energy functional,
+E, defined in Eq. (1). Ψe describes a smooth transition from the intact bulk material to the
+fully cracked state, characterized by ψe () and a monotonically decreasing stress-degradation
+function, g(φ), which reduces the stiffness of the bulk material. Taking into account that the
+compressive strain energy does not participate in the propagation of the crack, a tensioncompression split of Ψe () is considered as:
+−
+Ψe () = g (φ) Ψ+
+e () + Ψe () ,
+where g(φ) = (1 − φ)2 .
+
+(2)
+
+−
+Ψ+
+e and Ψe are the tensile and the compressive components of the strain energies obtained
+by the spectral decomposition of the strain tensor.
+Since the crack is modeled as a damage region, an exponentially decaying function is
+introduced to approximate the non-smooth crack topology. In one-dimension, to denote a
+crack located at x = a, a particular form of the second-order phase field model is given by
+[46]:
+
+
+−|x − a|
+.
+(3)
+φ(x) = exp
+l0
+
+Note that Eq. (3) is the solution of the homogeneous ordinary differential equation [46]:
+1
+φ00 (x) − 2 φ(x) = 0 in Ω,
+(4)
+l0
+subjected to the Dirichlet-type boundary conditions:
+φ (0) = 1 , φ0 (0) = 0 ,
+lim φ (x) = lim φ (x) = 0,
+
+x→∞
+
+x→−∞
+
+0
+
+(5)
+
+0
+
+and lim φ (x) = lim φ (x) = 0.
+x→∞
+
+x→−∞
+
+Eq. (4) is the strong form associated with the variational problem:
+φ∗ = argmin I(φ),
+
+(6)
+
+φ∈S
+
+where
+1
+I(φ) =
+2
+
+Z
+
+
+φ2 + l02 |∇φ|2 dΩ,
+(7)
+
+Ω
+
+S :={φ(x)|φ (0) = 1 and lim φ (x) = lim φ (x) = 0.}
+x→∞
+
+5
+
+x→−∞
+
+As a consequence, Θ2 (φ, l0 ) for the second-order phase field model is defined as:
+
+1
+φ2 + l02 |∇φ|2 .
+Θ2 (φ, l0 ) =
+2l0
+For the second-order phase field model, Ψc is approximated as
+Z
+Z
+
+Gc
+Ψc = Gc dΓ ≈
+φ2 + l02 |∇φ|2 dΩ.
+2l0
+Γ
+
+(8)
+
+(9)
+
+Ω
+
+If the phase field is computed in case of loading, Eq. (9) is reformulated as:
+Z
+
+Gc
+Ψc ≈
+φ2 + l02 |∇φ|2 − g(φ)Ψ+
+0 dΩ,
+2l0
+
+(10)
+
+Ω
+
+along with proper irreversibility conditions applied on φ to guarantee that all cracks must
+always extend over time. Similar formulations can also be employed in 2D and 3D problems.
+To enforce irreversibility, a strain history functional, H(x, t) was introduced in [47] and is
+defined as:
+H(x, t) = max Ψ+
+(11)
+0 ((x, s)),
+s∈[0,t]
+
+where x is the integration point. The strain history functional replaces Ψ+
+0 in Eq. (10).
+One advantage of using the history function is that it could be used to model pre-existing
+cracks in the domain. The initial strain history function, H(x, 0) could be defined in terms
+of d(x, l), which is the closest distance from any point, x on the domain to the line, l which
+represents the discrete crack. In particular, we set
+ BG
+c
+(1 − 2d(x,l)
+) d(x, l) ⩽ l20
+2l0
+l0
+,
+(12)
+H(x, 0) =
+0
+d(x, l) > l20
+where B is a scalar parameter that controls the magnitude of the scalar history field and is
+calculated as:
+1
+B=
+for φ < 1.
+(13)
+1−φ
+The phase-field is assumed to satisfy homogeneous Neumann-type boundary conditions on
+the entire boundary:
+∇φ · n = 0 on ∂Ω,
+(14)
+where n is the unit outward normal vector. In the energy method, the solution is obtained
+by minimization of the total variational energy of the system, E. The problem statement
+can be written as:
+Minimize:
+
+E = Ψe + Ψc ,
+
+(15)
+
+subject to proper boundary conditions. In Eq. (15), Ψe is the stored elastic strain energy and
+Ψc is the fracture energy. In this work, without loss of generality, we consider the Dirichlet
+condition on displacement, while the approach can also be extended to other types of conditions. Using the variational approach, the traction-free Neumann boundary conditions are
+
+6
+
+automatically satisfied. In Eq. (15), Ψe and Ψc are defined as:
+Z
+fe (x)dΩ,
+Ψe =
+Ω
+Z
+Ψc = fc (x)dΩ,
+
+(16)
+
+Ω
+
+where
+−
+fe (x) = g(φ)Ψ+
+0 () + Ψ0 () ,
+
+(17)
+Gc 2
+fc (x) =
+φ + l02 |∇φ|2 − g(φ)H(x, t).
+2l0
+We have used the monolithic solution scheme to solve the coupled fields, where Ψe and Ψc
+are simultaneously minimized (by directly minimizing E) to obtain the displacement field
+and the phase-field. In all the brittle fracture problems, the crack is initialized using H(x, 0)
+defined in Eq. (12). In the next section, we will provide an overview of the conventional
+DeepONet framework put forth in [39] before we discuss how the variational formulation is
+integrated in the DeepONet to develop a surrogate model for fracture analysis.
+
+3. DeepONet
+The idea of DeepONet is motivated by the universal approximation theorem for operators
+[48], which states that a neural network with a single hidden layer can approximate accurately any linear/non-linear continuous function or operator. Before we focus on learning
+the solution operators of the parametric PDEs, it is important to understand the difference
+between a function regression and an operator regression. In the function regression approach, the solution operator is parameterized as a neural network between finite Euclidean
+spaces: F : Rd1 → Rd1 , where d1 is the number of discretization points. However, in operator
+regression, a function is mapped to another function through an operator. In other words,
+it is the mapping of infinite-dimensional space to another infinite dimensional space. Using
+operator regression, the operators would be trained to approximate the solution of the input
+functions by learning the non-linear operator from the data.
+The DeepONet architecture consists of two neural networks: one encodes the input function, u at fixed sensor points (branch net), while another represents the output for the
+location, y of evaluation of the output function (trunk net). The success of deep learning
+has been largely attributed to the depth of the networks, i.e., the number of successive affine
+transformations followed by non-linearity, which is shown to be extracting hierarchical features from the data. Hence, in this work, we have used two deep, fully connected feed-forward
+neural networks (branch net and trunk net) to approximate the solution operator. The goal
+of the DeepONet algorithm is to learn the operator, G, which takes as an input the function
+u in the branch net, and then G(u) is the corresponding output function. The output of
+the branch net is evaluated at y continuous coordinates (input to the trunk net). Although
+the architecture proposed here can be applied to more general problems, in the following we
+illustrate the formulation on a 2D problem for simplicity. The output of the DeepONet is
+a scalar and is expressed as Gθ (u)(y), where θ = (W, β) includes the trainable parameters
+(weights, W, and biases, β) of the DeepONet. The input functions to the branch net may
+7
+
+include, the shape of the physical domain, the initial or boundary conditions, constant or
+variable coefficients, source terms, etc. Even though the branch net takes a function as
+input, we have to represent the input functions discretely, so that network approximations
+can be applied. To that end, all the input functions, u, are evaluated at finite locations,
+X = {x1 , x2 , . . . , xm }, referred to as sensors. The location of the m sensors must be the
+same for all the functions, u. We do not enforce any constraints on the output locations,
+y. A schematic representation of DeepONet is shown in Fig. 1(a), where the branch net
+takes as input n functions represented as u(1) , u(2) , u(3) , . . . , u(n) , and the solution operator
+is evaluated at y = {y1 , y2 , · · · , yp } = {(x̂1 , ŷ1 ), (x̂2 , ŷ2 ), . . . , (x̂p , ŷp )}, which are the inputs
+to the trunk net. Here x̂i ŷi denote the x and y coordinates of point yi , respectively.
+Let us consider that the branch neural network consists of lbr hidden layers, where the
+lbr -th layer is the output layer consisting of q neurons. Considering an input function, u(i)
+in the branch net, the network returns a feature embedding [b1 , b2 , . . . , bq ]T as output. The
+lbr
+of the feed-forward branch neural network is expressed as:
+output, Zbr
+lbr
+= [b1 , b2 , . . . , bq ]T ,
+Zbr
+
+
+= σbr Wlbr z lbr −1 + β lbr ,
+
+(18)
+
+where σbr (·) denotes the non-linear activation function for the branch net and z lbr −1 =
+f (u(i) (x1 ), u(i) (x2 ), . . . , u(i) (xm )), where f (·) denotes a function. Similarly, consider a trunk
+network with ltr hidden layers, where the ltr -th layer is the output layer consisting of q
+neurons. The trunk net takes the continuous coordinates in y as inputs, and outputs a
+features embedding [t1 , t2 , . . . , tq ]T . The output of the trunk net can be represented as:
+ltr
+Ztr
+= [t1 , t2 , . . . , tq ]T ,
+
+
+= σtr Wltr z ltr −1 + β ltr ,
+
+(19)
+
+where σtr (·) denotes the non-linear activation function for the trunk net and z ltr −1 =
+f (y1 , y2 , . . . , yp ), where yj = {(x̂j , ŷj )}pj=1 . For a single input function, u(i) , the DeepONet
+prediction, Gθ (u), evaluated at any coordinate, y can be expressed as:
+q 
+
+X
+Gθ (u(i) )(y) =
+σbr (Wklbr zklbr −1 + βklbr ) · σtr (Wkltr zkltr −1 + βkltr ) ,
+k=1
+
+=
+
+q
+X
+
+(20)
+bk (u(i) (x1 ), u(i) (x2 ), . . . , u(i) (xm )) · tk (y).
+
+k=1
+
+
+
+In general, a DeepONet training dataset is a triplet of the form, {u(i) }ni=1 , {yj }pj=1 , G(u)(y) :
+
+ (1)  
+
+(1)
+ (1)
+
+(1)
+(1)
+(1)
+y
+G(u
+)(y
+)
+u (x ), u (x2 ), . . . , u (xm )
+1
+1
+ (1) 1
+
+ 
+
+ u (x1 ), u(1) (x2 ), . . . , u(1) (xm )   y2(1)   G(u(1) )(y2(1) ) 
+
+
+
+
+
+
+..
+..
+
+  ...  
+
+.
+.
+
+ 
+ 
+
+ (1)
+ 
+ 
+
+(21)
+ u (x1 ), u(1) (x2 ), . . . , u(1) (xm )  ,  yp(1)  ,  G(u(1) )(yp(1) )  .
+ (i)
+
+
+
+
+
+(i)
+(i)
+(i)
+(i)
+(i)
+ u (x1 ), u (x2 ), . . . , u (xm )   y1   G(u )(y1 ) 
+
+ 
+ 
+
+..
+..
+
+
+  ..  
+.
+.
+
+ .  
+
+(n)
+(n)
+(n)
+(n)
+(n)
+u (x1 ), u (x2 ), . . . , u (xm )
+(n)
+yp
+G(u )(yp )
+8
+
+In the triplet shown in Eq. (21), each input function, u(i) is repeated p times, where p is the
+number of points at which the solution operator, Gθ (u(i) ), is evaluated to construct the loss
+function. The training dataset of a DeepONet consists of three parts; input to the branch net,
+u, input to the trunk net, y, and the target values of the solution, G(u)(y). Taking a twodimensional problem with scalar-valued input u(x) and output G(u)(y) for illustration, the
+tensor dimensions for each of the components of the training set are: dim(u) := (n × p, m),
+dim(y) := (n × p, 2), and dim(G(u)(y)) := (n × p, 1). DeepONet requires large annotated
+data-sets consisting of paired input-output observations, while they provide a simple and
+intuitive model architecture that is fast to train, allowing for a continuous representation of
+the target output functions that is independent of resolution. In Eq. (21), G(u)(y) represents
+the ground truth, which could be obtained either from experimental data or from high-fidelity
+simulations. Conventionally, the trainable parameters of the DeepONet represented by θ in
+Eq. (20) is obtained by minimizing a loss function. Common loss functions used in literature
+includes the l2 -loss function and the l1 -loss function [49].
+l1 =
+l2 =
+
+p
+n X
+X
+
+(i)
+
+(i)
+
+G(u(i) )(yj ) − Gθ (u(i) )(yj ) ,
+
+i=1 j=1
+p 
+n X
+X
+
+(22)
+(i)
+
+(i)
+
+G(u(i) )(yj ) − Gθ (u(i) )(yj )
+
+2
+
+,
+
+i=1 j=1
+(i)
+(i)
+where Gθ (u(i) )(yj ) is the predicted value obtained from the DeepOnet, while G(u(i) )(yj )
+
+is the target value.
+DeepONet has shown remarkable success in diverse fields of applications like electroconvection multiphysics, bubble dynamics, inelastic impact problems, etc., where the network
+is trained using large datasets. However, in fracture mechanics, collecting a large amount of
+data from experiments is improbable as performing experiments for various different crack
+lengths, locations, and material parameters would render the process very expensive. Moreover, it is infeasible to perform a rigorous and computationally intensive crack-growth simulation within the possible short time span following a discrete-source damage event. Hence,
+in a small data regime, we will encode the physical laws that govern the growth of fracture
+to train the DeepONet for predicting damage paths. Since the growth of fracture is energydriven, we encode the variational form of the governing PDE into the DeepONet, terming
+it the variational energy-based DeepONet (V-DeepONet). Along with the physics of the
+problem, we use relatively small input-output datasets to improve the prediction accuracy
+of the network, thereby proposing a hybrid loss function. In the next section, we present the
+V-DeepONet algorithm to compute the optimized parameters, θ ∗ , associated with the two
+deep neural network architecture.
+4. Variational energy based DeepONet
+In this section, we develop the V-DeepONet, which is inspired by the variational form of
+the governing PDE. Without the loss of generality, we consider the physics of a problem,
+defined by a generic time-independent differential equation of the form:
+K (w, ∇w, . . . , ∇α w, x, f (x)) = 0, x ∈ Ω,
+9
+
+(23a)
+
+(a)
+
+(b)
+Figure 1: (a) Schematic representation of DeepONet. The branch net takes the function {u(i) }ni=1 as
+input evaluated at m fixed sensor points, denoted by {x1 , x2 , . . . , xm } and returns features embedding
+[b1 , b2 , . . . , bq ]T ∈ Rq as output. The trunk net takes the continuous coordinates and parameters, yi =
+{x̂i , yˆi }pi=1 ∈ Y as inputs, and outputs a features embedding [t1 , t2 , . . . , tq ]T ∈ Rq . The features embedding
+of the branch and trunk networks are merged via a dot product to output the solution operator, Gθ (u)(y).
+The parameter θ denotes the collection of all trainable weights and bias in the branch and the trunk network.
+The optimized parameters, θ ∗ , are obtained by minimizing the hybrid loss function defined as the weighted
+sum of variational energy, Lvar , and the data-driven loss, Ldata , where the weights are denoted by λ1 and
+λ2 . (b) The computational framework of the proposed surrogate model is shown schematically. The input
+to the branch net is the tensile strain energy of previous two displacement steps (Hr−1 , Hr−2 ), while the
+input to the trunk net is the evaluation coordinates, y, the initial configuration described using Eq. (12),
+and the applied displacement. For predicting the crack located in the first displacement step, the input to
+the branch net is the initial strain energy, H0 , padded with zeros at all sensor locations to indicate no prior
+history.
+
+10
+
+w (xD ) = wD , xD ∈ ∂Ω,
+
+(23b)
+
+defined over the physical domain, Ω with boundaries, ∂Ω. ∇w denotes the first order
+derivatives of wPwith respect to x, and ∇α w represents all derivatives of w with the form
+d
+∂ α wi
+with
+α
+α
+i=1 αi = α, where wi is the i-th component of w and similarly for xi .
+∂x1 1 ···xd d
+α denotes the highest order of derivative required to describe the underlying PDE. The
+forcing function, f (x) is a known source term and the operator, K is usually a differential or
+integro-differential operator. Eq. (23b) represents the Dirichlet boundary condition, where
+xD represents a Dirichlet boundary point. Since the method is based on the energy principle,
+the homogeneous Neumann boundary conditions are automatically satisfied. Assuming that
+f (x) is known, we aim to learn the solution operator such that:
+Gθ : f (x) → w(x).
+
+(24)
+
+Based on the formulation of DeepONet defined in Section 3, the input function of the branch
+net is the source term, f (x), which is evaluated at {xi }m
+i=1 sensor points, where xi ∈ X .
+The DeepONet is approximating the solution operator, Gθ (f (x)), which is evaluated at a
+p
+set of points, yj=1
+, that are randomly sampled in the domain of Gθ (f (x)), and are used to
+approximately enforce a set of given physical constraints, typically described by the PDE in
+Eq. (23a). Let the variational energy formulation of Eq. (23a) be expressed as:
+Z
+Ve =
+F (w, ∇w, . . . , ∇α w, x, f (x)) dΩ,
+(25)
+Ω
+
+where F is a differentiable functional. With this, the solution to Eq. (23a) can be obtained
+by solving the following optimization problem:
+w∗ = argmin Ve (G(f (x)))
+w
+
+(26)
+
+subject to: Gθ (f (x)) (y = xD ) = wD .
+In V-DeepONet, we utilise the same approach as discussed in Eq. (20) to obtain the solution
+operator, Gθ (f (x)), with parameters, θ = [W, β]. Next, the DeepONet outputs are modified in such a way so that the solution operator when evaluated at the Dirichlet boundary
+points, the boundary conditions are exactly satisfied. Therefore, the modified output of the
+DeepONet is defined as:
+Gθ (f (x)) (y) = w̃D + B(y) · Ĝθ (f (x)) (y) ,
+
+(27)
+
+where Ĝθ is the solution obtained from the DeepONet, w̃D is a function chosen such that
+w̃D = wD and B(y) = 0 on the Dirichlet boundary [32]. Hence, the boundary conditions
+are satisfied and we have no boundary-loss term in the loss function. In the next step, we
+compute the derivatives of the solution operator, Gθ (f (x)) (y), with respect to the spatial
+co-ordinates, (x̂, ŷ), defined over the domain using the automatic differentiation technique.
+These derivatives are components of the variational energy formulation stated in Eq. (25).
+The computed derivatives are substituted in Eq. (25) along with the solution operator approximating w(x) to obtain the total energy. The network parameters can be trained by
+
+11
+
+minimizing the hybrid loss function, L (θ), which is defined as:
+L (θ) = λ1 × Ldata (θ) + λ2 × Lvar (θ) ,
+n
+2
+P m
+P p
+P
+Gθ (f (i) (xj ))(yk ) − G(f (i) (xj ))(yk )
+i=1 j=1 k=1
+Ldata (θ) =
+,
+n×p×m
+p P
+n P
+m
+P
+F (w, ∇w, . . . , ∇α w, x, f (x))
+i=1 j=1 k=1
+,
+Lvar (θ) =
+n×p×m
+
+(28)
+
+where w (x) ≈ Gθ (f (i) (xj )) and λ1 and λ2 are the weights pertaining to each of the component of the loss function. The developed approach seamlessly integrates the data measurements and variational form of the PDE by penalizing the total energy in the hybrid loss
+function of the V-DeepONet.
+In this work, we aim to train the V-DeepONet such that it could be used as a surrogate
+model to predict the damage path for any given initial defect and for any applied displacement
+(considering displacement-controlled fracture). To design a surrogate model in the framework
+of V-DeepONet, we need to choose the input functions, sensor points, parametrized variables
+judiciously and strike a balance between efficiency and accuracy of the network.
+5. Surrogate modeling for fracture analysis
+In this section, we provide a detailed description of the proposed surrogate model to infer
+the probable failure paths. The solution of the coupled problem consists of a d-dimensional
+vector-valued displacement field and a scalar-valued phase field output. In all the examples presented in this paper, we have considered two-dimensional problems, hence d = 2.
+Therefore, for each material point y, the output of the V-DeepONet has three components.
+Noticing that the output in the vanilla DeepONet Eq. (21) is a scalar, the neural network
+output architecture needs to be modified. To resolve this issue, we modify the forward pass
+in Eq. (20) such that the output of the V-DeepONet can be a vector. The tensor dimensions of
+h G(u)(y) iin Eq. (21) will be (n × p, 3). The employed V-DeepONet is defined as
+Gθ = Gθu , Gθv , Gθφ to represent the solution map from initial conditions to the associated
+solutions, where Gθu , Gθv are the solution for the displacement components along x-direction
+and y-direction, respectively and Gθφ is the solution for the phase field, φ.
+The goal of the V-DeepONet based surrogate model is to find the possible pathways of
+failure based on the initial crack configuration. Failure of brittle materials typically starts
+with the development of a region of high stress around the crack tip, and our method will be
+employed based on the locations of the regions of high-stress. In this method, we assume the
+presence of initial defects when the system is not loaded (initial stage). The initial history
+function defined in Eq. (12) provides a simple, mesh independent mechanism for adding
+initial defects to a model. Using this approach, the initial crack is identified by a region
+of very high strain energy, whereas the strain energy is close to zero in other parts of the
+domain. The proposed method focuses on displacement-controlled failure. As the system is
+loaded (prescribed displacement is increased incrementally), pre-existing cracks grow leading
+to the formation of new edges and finally leading to the failure of the system.
+12
+
+To understand how the surrogate model works, we divide the aim of the surrogate model
+into two sub-parts in order:
+• To predict the crack location and the deformed configuration of the domain for any
+applied displacement, given a fixed initial condition.
+• To predict the final crack path for any location of the initial defect, given a fixed
+applied displacement.
+In this section, we will develop independent surrogate models to meet each of the two goals
+mentioned above. The final surrogate model will then be engineered as an integration of the
+above two surrogate models. In Subsection 5.1, we focus on constructing a surrogate model
+to predict the crack location for any applied displacement, when the domain geometry and
+the initial condition are fixed. Then in Subsection 5.2, we will discuss the surrogate model
+for predicting the crack path for any pre-crack location, with a fixed displacement loading
+applied on the boundary.
+5.1. Surrogate 1: To predict the crack location for any applied displacement
+In this section, we present our first contribution for solving displacement-controlled quasistatic fracture problem. At each step, we update the displacement boundary condition with
+an increment as wD → wD + ∆w, then solve the nonlinear optimization problem defined in
+Eq. (26) with this new boundary condition applied. In conventional numerical solvers, small
+displacement increments ∆w are essential to capture the brutal nature of crack growth.
+V-PINNs, which were proposed in [27], successfully implemented the crack growth problem
+using larger displacement increments and enabled a significant reduction in the computational cost. However, there is a major bottleneck of V-PINNs: the fracture problem is
+sequentially solved as a short loading-step problem with independent neural network training for each loading step. Even though the concept of transfer learning was implemented in
+the framework of V-PINNs, the method still remained computationally expensive.
+In this work, we train a single V-DeepONet to learn the solution operator of the same
+PDE for small displacement steps subject to same initial condition. The steps involved in
+the proposed approach are as follows:
+• First, we decide the location of the m sensor points to distinguish two input functions
+(defined in terms of tensile strain energy) of the branch net.
+• Next, for training the V-DeepONet, we consider n steps with corresponding displacement increments, denoted by ∆w1 , ∆w2 , . . . , ∆wn . Therefore, the input to the branch
+net will be n tensile strain energy evaluated at m sensor locations. The input function
+corresponding to the displacement step ∆wi will be the tensile strain energy due to
+an applied displacement ∆wi−1 , where i ∈ {2, · · · , n}. Here, the tensile strain energy
+is obtained from the results of high-fidelity IGA simulations. To predict the solution
+fields for an applied displacement of ∆w1 , the tensile strain energy computed using
+Eq. (12) at the sensor locations is applied as the input to the branch net. The solution
+operators are defined such that:
+h
+i
+Gθu , Gθu , Gθφ : H(y) → [u(y), v(y), φ(y)] ,
+(29)
+13
+
+where H(y) is the tensile strain energy, and u, v denote the x− and y−component of
+the displacement field, respectively.
+• In the third step, we prepare the inputs to the trunk net for extracting latent repre(i)
+sentations of the input coordinates. For each displacement step ∆ui , {yj }pj=1 are a
+(i)
+set of points sampled in the domain, Ω. The output function is evaluated at yj for
+an applied displacement, ∆ui , where i ∈ {1, · · · , n} .
+• Next, we modify the elastic field outputs of the V-DeepONet, Gθu and Gθv as discussed
+in Eq. (27) so that the Dirichlet boundary conditions are satisfied.
+• Finally, we construct the hybrid loss function as defined in Eq. (28) and minimize the
+loss to obtain the optimized parameters, θ ∗ .
+Once the V-DeepONet is trained, it can be used to predict the displacement field and the
+phase field for any applied displacement on a fixed initial condition. In order to predict the
+solution of the V-DeepONet at the k-th displacement step, the branch net takes as input
+the tensile energy at the sensor points obtained from the (k − 1)-th displacement step. To
+obtain the tensile energy, we compute the displacement gradients, and the eigenvalues of the
+E
+strain, λE
+1 and λ2 using the outputs of the V-DeepONet obtained for the k − 1-th step at
+the sensor locations. The computed eigenvalues are then used to obtain Ψ+ and Ψ− .
+d
+2
+µX E
+ν
+2
+λi + λE
+,
+Ψ = (λs + |λs |) +
+i
+8
+4 i=1
+
+(30a)
+
+d
+2
+µX E
+ν
+2
+λi − λE
+,
+Ψ = (λs − |λs |) +
+i
+8
+4 i=1
+
+(30b)
+
++
+
+−
+
+P
++
+values at m sensor
+where λs = di=1 λE
+i , and ν and µ are the Lamé constants. The Ψ
+locations is the input to the branch net for the k-th displacement step. To provide an
+implementation guidance for interested readers, in the following we provide tensor dimensions
+of the training set, in this surrogate, for each of the components in the triplet discussed
+in Eq. (21). In the triplet, dim(u) := (n × p, m) corresponding to n displacement steps, p
+sampled points for the evaluation of the output function and m fixed sensor points, dim(y) :=
+(n × p, 3), where the first two columns correspond to the spatial location of the evaluation
+points and the third column corresponds to the applied displacement. In particular, the
+displacement increment in the principle direction is employed in as the third column of y,
+as will be explained further in Section 7. Lastly, dim(G(u)(y)) := (n × p, 3), where the three
+columns are designated for the solution of u, v, and φ, respectively.
+Having built the surrogate model for predicting the crack location for any applied displacement on a fixed initial condition, we now extend the context to training the surrogate
+model adequately over a wide range of potential crack starting locations.
+5.2. Surrogate 2: To predict the final crack path for any initial crack location
+In this section, we train the V-DeepONet adequately over multiple initial conditions (initial
+location of the defects), to obtain the final crack path at fixed applied displacement, ∆w.
+14
+
+This surrogate model defines a mapping between the initial configuration defined using H0 (y)
+to the solution fields for a fixed applied displacement, ∆w. The steps involved in the proposed
+approach are as follows:
+• First, we identify m sensor locations that could be used for adequate and distinct
+identification of different initial configuration. As mentioned previously, the location
+of the sensors must be the same for all input functions in the branch net.
+• Next, we consider n initial locations of the crack. For all the initial configurations, we
+(1)
+(2)
+(n)
+compute the initial strain energy, {H0 , H0 , . . . , H0 } at the fixed sensor locations
+(i)
+using Eq. (12). The computed H0 is the input function to the branch net. The tensor
+dimension of the input to the branch net will be (n × p, m). The solution operators
+are defined such that:
+i
+h
+(31)
+Gθu , Gθu , Gθφ : H0 (y) → [u(y), v(y), φ(y)] .
+• In the third step, we prepare the inputs to the trunk net for encoding the locations
+(i)
+of the output function. For each of the initial condition, {yj }pj=1 is a set of points
+sampled in the domain, Ω. The initial strain energy function is computed at the
+(i)
+sampled points and is represented by Hj . The tensor dimensions of the input to
+the trunk net will be (n × p, 3), where the first two columns correspond to the spatial
+location of yj , and the third column provides the strain energy, Hj , at the respective
+locations. The V-DeepONet is evaluated for n initial conditions at all the sampled
+points in the trunk net.
+• In the next step, the V-DeepONet outputs are modified to eliminate the boundary loss
+term from the loss function. Finally, the hybrid loss function is obtained and minimized
+to get the optimized parameters of the V-DeepONet.
+Once this surrogate model is trained, it can be used to predict the displacement field and
+the phase field for any initial crack location at a fixed applied displacement. While testing
+the surrogate model, the analytically obtained history field (using Eq. (12)) at fixed sensor
+locations is employed as inputs to the branch net, while the evaluation coordinates and the
+initial strain energy (corresponding to the evaluation points) provide inputs of the trunk net.
+Having discussed the surrogate models for crack locations at various displacement steps
+(with fixed initial condition) and final crack path for any initial crack location (with fixed
+applied displacement), we now shift the focus to develop a single surrogate model that can
+be trained to obtain the crack location at any applied displacement for any initial location
+of the crack.
+5.3. A unified model: To predict the crack location for any initial condition and any applied
+displacement
+Our final aim is to build a surrogate model such that the crack path can be traced from the
+initial configuration of the defect. This surrogate model would primarily be an integration
+of the previously discussed surrogate models. However, building such a surrogate model has
+two major challenges:
+
+15
+
+• In Subsection 5.1, to obtain the crack location at any given displacement step, we used
+the tensile strain energy only from the previous step. This approach is feasible only
+when a single initial crack configuration is considered. For multiple crack locations,
+there can be overlap of crack paths, and hence retaining the information of the initial
+crack location and/or multiple previous steps is essential.
+• To obtain the crack path for any initial location at any applied displacement, training
+the model using just the strain-energy of the previous displacement step (Surrogate 1)
+or the energy field in the vicinity of the original defect (Surrogate 2) is not sufficient, as
+the sequence or the original configuration might be lost, thereby leading to erroneous
+predictions.
+To resolve these challenges, we need to construct a V-DeepONet based surrogate model,
+which is capable of learning order dependencies in a sequence of prediction problems. Both
+these challenges will be addressed in the surrogate model, as will be discussed in this section.
+The following steps are considered for constructing the unified surrogate model:
+• Choice of the m sensor locations: The location of the sensors should be carefully
+chosen such that they are representative of various initial configurations as well as
+crack locations at various applied displacement steps. It is worth emphasising that the
+input function space should be large enough to cover as many potential states of the
+underlying PDE system as possible. Otherwise, the trained model may not generalize
+very well for out-of-distribution initial conditions, possibly leading to large errors or
+even erroneous predictions.
+• Next, we consider s initial locations of the crack. For each initial condition, we com(1)
+(2)
+(s)
+pute the initial strain energy, {H0 , H0 , . . . , H0 }, at the sensor locations using
+Eq. (12). Now, for each initial crack configuration, we consider r displacement steps,
+{∆w1 , ∆w2 , . . . , ∆wr }. Corresponding to every initial condition, we obtain the ten(j)
+sile strain energy, Hi , from the results of the IGA simulations, corresponding to an
+applied displacement ∆wi , where i ∈ {1, · · · , r − 1} and j ∈ {1, · · · , s}.
+• In the third step, we prepare the inputs for the branch net. To capture each sequential
+crack growth for r applied displacements, we create a window of two steps, such that:
+"
+# 
+"
+##
+"
+ " (1) #
+
+(1)
+(s)
+(1)
+(2)
+H1
+Hr−1
+Hr−1
+H0
+H0
+H=
+;
+;
+;... ;
+.
+(32)
+(1) ; . . . ,
+(1)
+(s)
+0
+0
+H0
+Hr−2
+Hr−2
+The solution operators are defined as:
+h
+i
+Gθu , Gθv , Gθφ : H(y) → [u(y), v(y), φ(y)] ,
+
+(33)
+
+where H(y) is defined in Eq. (32). The tensor dimensions of the input to the branch
+net will be (r × s × p, 2m), where the r × s = n, the total number of input functions.
+• In the next step, we prepare the input to the trunk net. To address the issue of retaining the original crack configuration for the associated branch net entries, the initial
+(i)
+strain energy is included in the trunk net. For each initial crack location {H0 }si=1 ,
+16
+
+(i)
+
+{yj }pj=1 is a set of points sampled in the domain, Ω. The initial history function
+(i)
+for s initial conditions is computed at the sampled points and denoted as Hj . The
+tensor dimensions of the input to the trunk net will be (n × p, 4), where the first two
+columns correspond to yj , the third column is allocated for the history value, Hj , and
+the fourth column is for the applied displacement. The V-DeepONet is evaluated at
+the locations and conditions defined in the trunk net.
+• In the final step, the V-DeepONet outputs are modified to match the Dirichlet boundary condition. Then, the hybrid loss function is constructed and minimized to obtain
+the optimized parameters of the networks.
+Once this model is trained, it can be used to make predictions for any initial configuration
+at various applied displacements sequentially. To predict crack paths using this model, we
+follow similar steps as discussed in Subsection 5.1, except that in this surrogate we provide
+the strain energy of the last two displacements steps at the sensor location as the input to the
+branch net. Fig. 1(b) provides a pictorial description of the framework and implementation
+details of the surrogate model to obtain the failure paths. For more clarity, an algorithm
+summarizing the overall framework is presented in Algorithm 1 of Appendix A.
+6. Data Generation
+In Section 5, we presented details about the proposed surrogate model developed within
+the framework of V-DeepONet. The model is trained using a hybrid loss function, which
+is the weighted sum of energy loss (using the variational form of the governing PDE) and
+data-driven loss. The labelled high-fidelity datasets for constructing the data-driven loss
+is simulated using phase field codes developed within the framework of isogeometric analysis (IGA). In this regard, we have used the codes developed in [40], which are available
+in https://github.com/somdattagoswami/IGAPack-PhaseField. However, we note that the
+proposed approach in this article can also be applied to more general training datasets. For
+instance, one may also consider a V-PINNs algorithm to generate high-fidelity datasets. In
+our work, we have not considered any experimental data. However, if available, the model
+can incorporate experimental data to improve the accuracy of the surrogate. To verify the
+performance of the V-DeepONet based surrogate model, we compare the predicted failure
+paths to those computed with the high-fidelity fracture mechanics model.
+7. Simulation Results
+In this section, we explore our method using two benchmark problems from fracture mechanics to demonstrate the effectiveness of the developed surrogate model. In the first problem, we have studied the growth of cracks in a plate under tensile loading (Mode-I failure),
+while the second one is the growth of cracks under shear loading (Mode-II failure). For both
+the problems we have shown the efficiency of the surrogate model to make out-of-distribution
+predictions. In all examples, the V-DeepONet is trained using the Adam optimizer [50]. The
+implementation has been carried out using the PyTorch framework [51]. Throughout all examples, we will employ the hyperbolic tangent activation function (tanh) and initialize the
+17
+
+(a) Tensile loading.
+
+(b) Shear loading.
+
+Figure 2: Geometrical setup and boundary conditions for the single-edge notched plate subjected to different
+loading conditions [40]. All the units are in mm. The crack length, lc and location shown in the setup diagram
+is representative of the presence of initial defects.
+
+V-DeepONet parameters using Xavier initialization. Details on the network architecture,
+such as number of layers, number of neurons in each layer are provided with each example.
+Even though the paper focuses on surrogate modeling for predicting brittle failure, we
+have included a pedagogical problem to show that the proposed V-DeepONet can be used
+to study general problems with discontinuity. To demonstrate this, we have studied the flow
+in heterogeneous porous media on a two-dimensional plate with geometric discontinuity.
+Interested readers may refer to Appendix B.
+7.1. Brittle fracture in a plate loaded in tension
+In the first example, we consider a unit square plate with a horizontal crack at the middle
+height from the left outer edge. The geometrical setup and the boundary conditions of
+the problem are shown in Fig. 2(a). The material properties considered are: ν = 121.15
+kN/mm2 , µ = 80.77 kN/mm2 and Gc = 2.7 × 10−3 kN/mm. For this problem, we have
+considered the length scale parameter, l0 = 0.0625 mm. The Dirichlet boundary conditions
+are:
+u(0, y) = v(x, 0) = 0, v(x, 1) = ∆v,
+(34)
+where u and v are the solutions of the elastic field in x and y-directions, respectively and ∆v
+is the applied tensile displacement. In this example, we will train the V-DeepONet model
+using s = 6 initial conditions (by changing the crack lengths, lc , in Fig. 2(a)) and consider
+r = 7 displacement steps for obtaining the crack path. The six initial configurations used
+for training the network are lc ∈ {0.25, 0.3, 0.35, 0.4, 0.45, 0.55} mm, while the considered
+displacement steps are ∆v ∈ {1.4, 2.2, 3.2, 4.4, 5, 5.6, 5.8} × 10−3 mm. To build the surrogate
+model, m = 212 sensors are chosen close to the cracked region, to distinctly represent each
+of the function in the input space of the branch net. We compute the initial strain energy,
+(i)
+H0 , i ∈ {1, · · · , s} using Eq. (12) at m sensor points. Now, from the high-fidelity data
+(i)
+obtained using IGA simulations, we obtain the tensile strain-energy, Hj for the applied
+displacements ∆wj , where j ∈ {1, · · · , r − 1}. The input data for the branch net, H(x) is
+18
+
+prepared in the same way as discussed in Eq. (32). In this example, we aim to learn the
+solution operators, Gθu , Gθv , Gθφ mapping H(y) to the solutions u(y), v(y), and φ(y). To this
+end, we represent the operator by a DeepONet, where both the branch net and the trunk net
+are 5-layer fully-connected neural networks with 50 neurons per hidden layer and equipped
+with tanh activations. For each input function in the branch net, samples are provided on
+p = 1372 points in the domain. Once the solution is evaluated at the sampled points, the
+V-DeepONet outputs for the elastic field are lifted to exactly match the Dirichlet boundary
+conditions, following:
+Gθu = [x(1 − x)]Ĝθu ,
+Gθu = [y(y − 1)]Ĝθv + y∆v,
+
+(35)
+
+where Ĝθu and Ĝθv are obtained from the neural network. The trainable parameters, θ of
+the V-DeepONet is obtained by minimizing the hybrid loss function in Eq. (28). Now, we
+test the model to predict the solutions for lc = 0.5 mm. To do this, we compute the initial
+history function, H0 , analytically using Eq. (12) at the sensor locations and also at the
+sampled points where the solution has to be evaluated. The input to the branch net of the
+trained model is [H0 , 0], while the input to the trunk net are the sampled points, the initial
+history field at the points sampled in the domain and ∆v1 . The surrogate model predicts
+the displacement field, u, v and the phase field, φ corresponding to ∆v1 . In addition, the
+network predicts the tensile strain energy for the applied displacement, which is denoted as
+H1 . To predict the solution for an applied displacement of ∆v2 , the input to the branch
+net is [H1 , H0 ], while the input to the trunk net remains the same except for the applied
+displacement, which is changed to ∆v2 . In a similar way the solution for any crack length at
+any displacement step can be obtained sequentially. Fig. 3 shows the predicted crack path
+and the displacement component in y-axis for some displacement steps, considering lc = 0.5
+mm. In Fig. 4(a), we have presented the predicted displacement component in y-axis against
+the ground truth at two locations along x-axis for three displacement steps. The averaged
+error of predicted φ is 0.63%.
+It is worth investigating that the trained V-DeepONet is capable of yielding accurate
+predictions for out-of-distribution test data. To illustrate this, we have tested the trained
+model for predicting the crack path and the displacement fields for lc = 0.65, which is beyond
+the crack distribution length range lc ∈ [0.25, 0.55] in our training dataset. In Fig. 4(b), we
+have presented a comparison of the predicted displacement in y-axis against the ground truth
+at x = 0.7208 mm and x = 0.9542 mm for 3 displacement steps. For the out-of-distribution
+prediction, an averaged error of 1.85% on φ is obtained. For interested readers, the predicted
+solutions obtained using the V-DeepONet based surrogate model, at certain displacement
+steps, is shown in Fig. 12 of Appendix C, where we have compared the predicted results with
+those simulated using the high fidelity model and the pointwise errors are also plotted.
+7.2. Brittle fracture in a plate loaded in shear
+In this example, we investigate the same square plate as stated in Subsection 7.1 for a pure
+shear loading mode. The geometrical setup and the boundary conditions of the problem are
+shown in Fig. 2(b). We consider the same material parameters as used in Subsection 7.1.
+
+19
+
+(a) ∆v1 = 1.4 × 10−3 mm.
+
+(b) ∆v5 = 5.0 × 10−3 mm.
+
+(c) ∆v6 = 5.6 × 10−3 mm.
+
+(d) ∆v7 = 5.8 × 10−3 mm.
+
+Figure 3: Tensile failure: The V-DeepONet is trained with 6 values of lc ∈ [0.3, 0.55] for 7 displacement
+steps. The plots for prediction fields with lc = 0.5 mm at certain displacement steps are presented. For each
+plot, the top row presents the predicted phase field and the displacement along y-axis, respectively. The
+middle row is depicting the ground truth obtained using IGA simulations, while the last row shows the error
+between the predicted value and the ground truth.
+
+20
+
+(a) lc = 0.5 mm.
+
+(b) lc = 0.65 mm
+Figure 4: Tensile failure: The V-DeepONet is trained with 6 values of lc ∈ [0.3, 0.55] for 7 displacement
+steps. The line plots depict the displacement component in y−direction (denoted as v(x, y)) at x1 = 0.7208
+mm and x2 = 0.9542 mm. Plots in (a) consider lc = 0.5 mm and (b) lc = 0.65 mm (out-of distribution). In
+each of the plots, v(xi , y) is plotted as a function of y, for i = 1, 2. Different colors of lines represent results
+from different displacement increment loadings.
+
+The Dirichlet boundary conditions are:
+u(x, 0) = v(x, 0) = 0,
+
+u(x, 1) = ∆u,
+
+(36)
+
+where u and v are the solutions of the elastic field in x and y-axis, respectively and ∆u
+is the applied shear displacement on the top edge of the plate. In this example, we have
+trained the V-DeepONet using n = 85 initial crack locations, with aiming to predict the
+final crack path for any initial crack location in the domain. The training sample consists of
+21
+
+(a)
+
+(b)
+
+Figure 5: Shear failure: The V-DeepONet is trained with 85 samples with crack tips located throughout
+the domain to predict the final damage path. The plots for two test cases are shown where the crack tips
+are located at: (a) (0.4, 0.3), (b) (0.6, 0.375). For each plot, the initial configuration is shown on the left.
+The top row presents the predicted phase field, displacement along x -axis, and displacement along y-axis,
+respectively. The middle row is depicting the ground truth obtained using the simulations in IGA, while the
+last row shows the error.
+
+crack lengths, lc ∈ [0.3, 0.65] and the height of the crack varied between [0.2, 0.675]. Fig. 5
+presents the predicted solution of the elastic field and the phase field for two samples. The
+predicted φ has a relative error of 0.67%.
+Now, we have carried out multiple comprehensive studies to depict the versatility of the
+proposed surrogate model. In the first experiment, we compare the accuracy and efficiency
+of V-DeepONet with solely data driven DeepONet[39]. To that end, we consider changing
+the crack length, lc , while fixing the height of the crack at the middle of the left outer edge,
+and predict the final damage path. To train the surrogate model we have used n = 11
+samples with initial crack lengths, lc ∈ [0.2, 0.7] in steps of 0.05. For this experiment, we
+have used the surrogate model as discussed in Subsection 5.2 and have considered m = 934
+sensors, closely placed around the region of high stresses. The initial strain energy, H(yj ),
+where j ∈ {1, · · · , m}, is computed using Eq. (12) for all the lc , which is used as input to the
+branch net. For the trunk net, p = 6024 points are sampled in the domain. The input to the
+trunk net is a tensor of dimension (n × p, 3), where the first two columns contain the spatial
+locations of the sampled points, while the third column corresponds to the initial strain
+energy computed at the sampled points for each of the n cases. In this experiment, we aim
+to learn the solution operators, Gθu , Gθu , Gθφ so as to map H(y) to their solutions u(y), v(y),
+and φ(y) for predicting the final damage path considering ∆u = 1.2 × 10−2 mm. To this end,
+we represent the operators by a V-DeepONet, where both the branch net and the trunk net
+are 4-layers fully-connected neural networks with [100, 50, 50, 50] neurons, respectively. Once
+the solution is evaluated at the sampled points, the outputs for the elastic field are modified
+22
+
+to exactly satisfy the Dirichlet boundary conditions, as:
+Gθu = [y(1 − y)]Ĝθu + y∆u,
+Gθu = [y(y − 1)] × [x(x − 1)]Ĝθv ,
+
+(37)
+
+where Ĝθu and Ĝθv are obtained from the DeepONet. The trainable parameters of the VDeepONet are obtained by minimizing the hybrid loss function in Eq. (28). The trained
+surrogate model is used to predict the final crack path and solutions of the elastic field for
+lc = 0.375 mm and lc = 0.685 mm. The predicted plots are shown in Fig. 6. The training
+trajectory of the V-DeepONet using 11 training samples is shown in Fig. 13 in Appendix
+C. In the plot, the training loss depicts the hybrid loss given by Eq. (28). The conventional
+DeepONet is trained with the same 11 samples, keeping the network architecture of the
+branch net and the trunk net exactly the same. A prediction error of 26.2% is reported
+when trained with 11 training samples. To improve the accuracy, the training samples are
+increased to 22, but the model is unable to capture the mode-II failure. Lastly, the number
+of training samples is increased to 43 and a relative mean error of 3.12% is reported for φ.
+Fig. 7 presents the plots of the predicted solutions for lc = 0.475 mm and lc = 0.585 mm
+when the conventional DeepONet is trained with 43 samples. The predicted results for the
+data driven DeepONet depict that it is unable to capture the crack diffusion phenomenon
+and also it cannot generalise complex fracture phenomenon with limited data-sets.
+In the next experiment, we change the location of the crack vertically and at the same
+time we change the length of the horizontal crack. The aim of this experiment is to find the
+final damage path for any given location of the crack in the domain and any crack length
+and also to test the capability of the model to make an out-of-distribution prediction. To
+start with, n = 20 initial configurations have been considered to train the V-DeepONet, with
+crack lengths varying between [0.3, 0.65], while the height of the crack is between [0.2, 0.35].
+The trained model is used to predict the crack path for an initial crack tip located beyond
+the training data range, at (0.425, 0.4). The predicted φ has an error 26.44%. To improve
+the generalization of the V-DeepONet, we add 20 more samples to the training set, hence
+n = 40. The length of crack varies over the same range as the previous case, however the
+height of crack varies between [0.2, 0.5]. The trained V-DeepONet is used to predict the
+final crack path for a crack tip located at (0.425, 0.525), which is again beyond the range of
+the training samples. The predicted φ is reported to have 13.49% error. To the 40 training
+samples, another 20 training samples are added, making n = 60. In this case the height of
+the crack varies in the range [0.2, 0.6]. The crack path is predicted for a crack tip located
+at (0.425, 0.625), which is again beyond the training range. The prediction accuracy of the
+model is improved, and an error of 7.49% is reported in this case. In the last case, 25
+training samples are added, hence n = 85. The crack height varies between [0.2, 0.675] and
+the crack length varies between [0.3, 0.65] in the 85 training samples. The V-DeepONet based
+surrogate model is used to predict the crack path for a crack tipped at (0.4, 0.7), an out-ofbound sample. The predicted φ has an error of 3.17%. The prediction plots of φ against
+the ground truth at a cross-section located at x = 0.6048 mm and also error plot over the
+whole domain is presented in Fig. 8. In this experiment, m = 1547 sensors are considered,
+which is pictorially shown in Fig. 9(a). To construct the hybrid loss function, p = 6024
+points are sampled in the domain. The solution is approximated with a V-DeepONet, where
+23
+
+(a)
+
+(b)
+Figure 6: Shear failure: The V-DeepONet is trained with 11 crack lengths to predict the final damage path
+for any crack length, when the height of the crack is fixed at the centre of the left edge. The plots are for (a)
+lc = 0.375 mm and (b) lc = 0.685 mm, where ∆u = 0.220 mm. For each plot, the predicted displacement
+in x-direction is plotted for two locations along the x-axis and is compared with ground truth to show the
+accuracy of the prediction.
+
+24
+
+(a)
+
+(b)
+Figure 7: Shear failure: the data-driven DeepONet (original) is trained with 43 crack lengths to predict
+the final damage path for any crack length, when the height of the crack is fixed at the centre of the left
+edge. The plots are for (a) lc = 0.475 mm and (b) lc = 0.585 mm, where ∆u = 0.220 mm. For each plot,
+the predicted displacement in x-direction is plotted for two locations along the x-axis and is compared with
+ground truth to show the accuracy of the prediction.
+
+25
+
+Figure 8: Shear failure: The V-DeepONet is trained with n = 20, 40, 60, 85 samples (from left to right).
+For each n, a corresponding out-of distribution prediction is made. It is observed that the V-DeepONet can
+generalize the solution with just 85 training samples. A cross-section taken at x = 0.6048 is taken to show
+the precdicted φ against the ground truth. The relative mean error is reported as 26.44%, 13.49%, 7.49%
+and 3.17% (from left to right).
+
+the branch and trunk networks are two separate 4-layer fully-connected neural networks
+with [100, 100, 50, 50] neurons, respectively. For plots presenting the prediction of the elastic
+field solutions, readers may refer to Fig. 14 in Appendix C. The out-of-distribution prediction
+accuracy increases with the number of samples since an over-parametrized neural network can
+generalize better. The accuracy of the model in making an out-of-bound prediction with just
+85 training samples, is attributed to the hybrid loss function which integrates physics with
+the data loss. In Fig. 5, we present the predicted final crack path and the solutions for the
+elastic field for two crack tips located at (0.4, 0.3) and (0.6, 0.375), considering ∆u = 0.0120
+mm, when the V-DeepONet model is trained with 85 samples.
+In the last experiment we train the V-DeepONet to obtain the crack location at various
+displacement steps for different initial conditions. For this experiment, we consider a s = 10
+initial conditions and r = 3 displacement steps, ∆u = {1.04, 1.08, 1.14} × 10−2 mm, where
+we have fixed the height of the crack at the center of the left edge and varied the initial
+26
+
+(a)
+
+(b)
+
+Figure 9: Shear failure: (a) The m = 1547 sensor points are shown using blue circles. The sensors are
+chosen to represent the input functions discretely, so that network approximations can be applied. In this
+example, the training samples are chosen such that the initial crack can be placed anywhere between [0, 1]
+in the y-axis. However, the initial crack lengths are restricted between [0.2, 0.65]. So, the sensor locations
+are between [0, 0.65] along the horizontal axis and between [0, 1] along the vertical axis. (b)The m = 854
+sensor points chosen to represent the input functions discretely as the crack grows.
+
+crack length in a range such that lc ∈ [0.4, 0.55]. The selection of appropriate m = 824
+sensors points is essential in this experiment. In Fig. 9(b), we show the location of sensor
+points chosen for this experiment. It is essential that the sensor points are well placed
+to accurately capture the strain energy for all the displacement steps for all the initial
+conditions, and must be distinguishable from one another. We compute the initial strain
+(i)
+energy, H0 , i ∈ {1, · · · , r} using Eq. (12) at m sensor points. From the high-fidelity data
+(i)
+simulated using IGA, we obtain the tensile strain-energy, Hj for the applied displacements
+∆uj , where j ∈ {1, · · · , s}. The input data for the branch net, H(y) is prepared in the
+same way as discussed in Eq. (32). In this example, we aim to learn the solution operators,
+Gθu , Gθv , Gθφ from H(y) to approximate the solution of u(y), v(y), and φ(y). To that end, we
+represent the operators by a V-DeepONet, where both the branch net and the trunk net are
+4-layer fully-connected neural networks with 100 neurons per hidden layer. For each input
+function in the branch net, p = 6024 points are sampled in the domain. The ground truth is
+obtained from the high fidelity solver. Once the solution is evaluated at the sampled points,
+the V-DeepONet outputs for the elastic field are modified to exactly satisfy the Dirichlet
+boundary conditions using Eq. (37). The hybrid loss function is then constructed as the sum
+of the data loss and the total energy. The trainable parameter of the V-DeepONet is then
+computed by minimizing the hybrid loss using the Adam optimizer [50].
+Now, we use the trained model to predict the solutions of phase field and the displacement
+fields at all the displacement steps for lc = 0.435 mm. For predicting the crack position at
+∆u = 0.0104 mm, the input to the branch net is the strain energy analytically obtained using
+Eq. (12) at 854 sensor locations padded with 854 zeros, indicating that there is no history
+behind. The solution for the field variables are obtained and then strain energy is computed
+at ∆u = 0.0104 mm. To predict the displacement field at ∆u = 0.0106 mm (different from
+the trained displacements), the input to the branch net is the current strain energy and the
+
+27
+
+(a)
+
+(b)
+
+(c)
+Figure 10: Shear failure: V-DeepONet is trained with 10 initial crack configuration for 3 displacement steps.
+The plots for a testing sample with initial crack length = 0.435 mm at 3 displacement steps are shown. (a)
+∆u = 0.0104 mm, (b) ∆u = 0.0106 mm, (c) ∆u = 0.0114 mm. For each plot, the initial configuration is
+shown on the left with the applied displacement at that step. The top row presents the predicted phase
+field and the displacement along x -axis. The middle row is depicting the ground truth obtained using the
+simulations in IGA, while the last row shows the error.
+
+28
+
+initial strain energy. The surrogate model predicts the displacement field, u, v and the phase
+field, φ corresponding to all the displacement steps sequentially. The predicted plots for
+lc = 0.435 mm are shown in Fig. 10.
+8. Summary and discussion
+We have proposed neural networks to address the limitations of numerical methods that
+can simulate a single set of I/BCs and domain geometry at a time. The model developed in
+the framework of V-DeepONet provides an efficient surrogate of high-fidelity simulations to
+estimate key quantities of interest for brittle fracture such as failure paths, failure zones, and
+damage along failure. Once the V-DeepONet is trained, the model can predict failure paths
+and the corresponding displacements for any location of the crack tip and at any applied
+displacement at a fraction of a second. The salient features of the proposed model are:
+1. The model considers a hybrid loss function for training, which is the weighted sum of
+physics driven loss and data loss. This makes it ideal for extrapolation tasks.
+2. The physics loss is derived from the variational form of the governing PDE, which
+makes it a very good choice for problems with discontinuous solutions.
+3. Scaling to larger and more complex problems is often computationally prohibitive with
+computational tools such as molecular dynamics. This approach is independent of the
+dimensionality.
+4. An extrapolation accuracy of 3.17% is reported for a Mode-II failure, which is often a
+challenging problem to solve even for classical numerical methods.
+The proposed methodology is ideal for usage in domains such as reliability analysis, uncertainty quantification and design optimization.
+Despite the excellent performance of the proposed surrogate model, it is important to note
+that this approach is handling fracture problems, which is very sensitive to minor fluctuations
+and hence, has certain limitations. First and foremost is the data-scaling issue. The input to
+the feed-forward network is energy, which is in the range [0, 104 ] for a single step. Scaling the
+input tensile energy is essential but it has to be scaled judiciously since the input functions
+at the sensor locators have to be unique and distinguishable. Secondly, the weights of the
+loss-terms λ1 and λ2 have to be modulated manually to strike a balance between the datadriven loss and the energy loss. Finally, the outputs of the V-DeepONet are the elastic
+field, which is of the order O(10−3 ), and the phase field, which is of the order O(1). Hence,
+a scaling of the individual outputs of the V-DeepONet is important before computing the
+energy and the data-driven loss. In future works, we will address some of these issues and
+adopt an adaptive approach to choose the weights.
+Acknowledgement
+This work was funded by the DOE PhILMs project (no. DE- SC0019453), OSD/AFOSR
+MURI grant FA9550-20-1-0358, and National Institutes of Health grant (U01 HL142518).
+Y. Yu was supported by the National Science Foundation under award DMS 1753031. The
+authors thank Dr. Xuhui Meng for helpful discussion and his Darcy’s problem simulation
+code. S. Goswami thanks Dr. Khemraj Shukla for his support on setting on high-performance
+computing environment.
+29
+
+Appendix A
+
+Algorithm for constructing the proposed unified surrogate model.
+
+Pre-requirement of data from the high-fidelity solver:
+1. Sample the domain for p points, {yi }pi=1 , where the V-DeepONet will be evaluated.
+2. For each of the n initial defect locations, obtain the responses, u(y), v(y), φ(y) for
+selected r displacement steps, {∆wi }ri=1 .
+(r−1)
+3. Compute the tensile strain energy, Hi for {∆wi }i=1 , corresponding to n cases.
+We put forth the algorithm for constructing the surrogate model to predict the crack path
+for brittle fracture in algorithm 1.
+Algorithm 1: V-DeepONet-based surrogate model for predicting brittle fracture.
+1 Inputs: The location of m sensors, Xs = {x1 , x2 . . . , xm }.
+i n
+2 Compute the initial history function, {H0 }i=1 at Xs using Eq. (12).
+j n,r−1
+3 Obtain tensile strain energy, {Hi }i,j=1 at Xs from the high-fidelity data.
+p
+j n
+4 Compute the initial history function, {H0 }j=1 at {yi }i=1 points.
+
+
+p
+j n
+r
+5 Prepare the data for trunk net: {yi }i=1 , {H0 }j=1 , {∆wk }k=1 as shown in Fig. 1(b).
+6 Construct the input data for branch net as defined in Eq. (32). For each case, the
+tensor dimensions of the window is (p, 2m).
+7 Initialize the V-DeepONet and the weights of the network using Xavier initialization
+technique.
+p
+8 Obtain the solution operators, Gθ and evaluate it at {yi }i=1 using Eq. (20).
+9 Construct the hybrid loss-function using Eq. (28).
+∗
+10 Minimize the hybrid loss and obtain the optimized parameters, θ .
+11 For prediction, choose an initial configuration and obtain H0 at Xs and H0 at q
+random points sampled in the domain, and t displacement steps.
+12 for i = 1, . . . , t do
+13
+if i == 1 then
+14
+Input to branch net = [H0 (Xs ) , 0].
+15
+Repeat this vector q times.
+16
+else
+17
+Input to branch net = [Hi , Hi−1 ].
+18
+Repeat this vector q times.
+19
+end
+
+
+20
+Input to the trunk net: {yj }qj=1 , H0 , ∆wi .
+21
+Predict the solutions, u∗ (yj ), v ∗ (yj ) and φ∗ (yj ).
+22
+Using the solutions compute the energy, Hi required as input to the next step.
+23 end
+
+30
+
+Appendix B
+
+Flow in heterogeneous porous media
+
+We consider a two-dimensional flow through heterogeneous porous media, which is governed by the following equation:
+−∇ · (K(x)∇h(x)) = 1, x = (x, y),
+subjected to h(x) = 0, ∀ x ∈ ∂Ω,
+
+(38)
+
+where K(x) is spatially varying hydraulic conductivity, and h(x) is the hydraulic head. In
+this example, we aim to learn the operator such that:
+Gθ : K(x) → h(x).
+
+(39)
+
+The setup is of a unit square plate with a discontinuity of 5 × 10−3 mm. For generating
+multiple permeability field for training the V-DeepONet, we describe the conductivity field,
+K(x), as a stochastic process. In particular, we take K(x) = exp(F (x)), with F (x) denoting
+a truncated Karhunen-Loève (KL) expansion for a certain Gaussian process, which is a finitedimensional random variable. In our samples, the leading 100 terms in the KL expansion
+were kept for the Gaussian process with zero mean and the following kernel [52]:
+
+
+−(x − x0 ) −(y − y 0 )2
+0
+0 0
++
+,
+K(x, x ) = K((x, y), (x , y )) = exp
+2l12
+2l22
+(40)
+0
+2
+x, x ∈ [0, 1] , l1 = l2 = 0.25.
+In this example, the V-DeepONet is trained using the variational formulation, without any
+labelled input-output datasets. The optimization problem can be defined as:
+Minimize:
+subject to:
+where
+
+1
+Ψh =
+2
+
+E = Ψh ,
+h(x) = 0 on ∂ΩD ,
+
+Z
+
+2
+
+(41)
+
+Z
+
+K(x)|∇h(x)| dΩ −
+
+h(x) dΩ.
+
+(42)
+
+Ω
+
+Ω
+
+We approximate the operator by a V-DeepONet architecture, where the branch and trunk
+networks are two separate 6-layer fully-connected neural networks with 32 neurons per hidden
+layer. In this example, n = 200 samples of permeability matrix is used to train. The solution
+operator is evaluated at p = 10000 randomly sampled points. The prediction of h(x) for two
+samples of K(x), using V-DeepONet is shown in Fig. 11. The accuracy of V-DeepONet is
+verified by comparing the prediction of the network against the solution of Eq. (38) obtained
+using the finite-element-based Partial Differential Equation Toolbox in Matlab using the
+same K(x). It is interesting to note that we have tried to solve the problem by minimizing
+the residual [53]. However, the residual based DeepONet is not able to approximate the
+solution of h(x) for a given K(x).
+
+31
+
+(a)
+
+(b)
+Figure 11: Flow in heterogeneous porous media: The predicted h(x) for a given permeability, K(x) (plotted
+on log scale) ares shown for two samples. True h(x) represents the ground truth and is the simulated solution
+using the PDE toolbox. The difference between the predicted h(x) and the ground truth is shown in the
+error plot.
+
+Appendix C
+
+Additional results
+
+32
+
+(a) ∆v1 = 1.4 × 10−3 mm.
+
+(b) ∆v4 = 5.0 × 10−3 mm.
+
+(c) ∆v5 = 5.6 × 10−3 mm.
+
+(d) ∆v6 = 5.8 × 10−3 mm.
+
+Figure 12: Tensile failure: V-DeepONet is trained with 6 lc ∈ [0.3, 0.55] for 7 displacement steps. In these
+plots, we present the predicted solution lc = 0.65 mm (out-of-distribution) at four displacement steps, ∆v,
+which are predicted sequentially. For each plot, the top row presents the predicted phase field and the
+displacement along y-axis, respectively. The middle row shows the the ground truth obtained using the IGA
+simulations, while the last row shows the error between the predicted value and the ground truth.
+
+33
+
+References
+[1] C. Kuhn, R. Müller, A continuum phase field model for fracture, Engineering Fracture
+Mechanics 77 (18) (2010) 3625–3634.
+[2] M. J. Borden, C. V. Verhoosel, M. A. Scott, T. J. Hughes, C. M. Landis, A phase-field
+description of dynamic brittle fracture, Computer Methods in Applied Mechanics and
+Engineering 217 (2012) 77–95.
+[3] T. T. Nguyen, J. Yvonnet, Q.-Z. Zhu, M. Bornert, C. Chateau, A phase field method
+to simulate crack nucleation and propagation in strongly heterogeneous materials from
+direct imaging of their microstructure, Engineering Fracture Mechanics 139 (2015) 18–
+39.
+[4] M. J. Borden, T. J. Hughes, C. M. Landis, C. V. Verhoosel, A higher-order phase-field
+model for brittle fracture: Formulation and analysis within the isogeometric analysis
+framework, Computer Methods in Applied Mechanics and Engineering 273 (2014) 100–
+118.
+[5] E. Emmrich, O. Weckner, On the well-posedness of the linear peridynamic model and
+its convergence towards the Navier equation of linear elasticity, Communications in
+Mathematical Sciences 5 (4) (2007) 851–864.
+[6] S. A. Silling, Reformulation of elasticity theory for discontinuities and long-range forces,
+Journal of the Mechanics and Physics of Solids 48 (1) (2000) 175–209.
+[7] Y. Yu, F. F. Bargos, H. You, M. L. Parks, M. L. Bittencourt, G. E. Karniadakis,
+A partitioned coupling framework for peridynamics and classical theory: analysis and
+simulations, Computer Methods in Applied Mechanics and Engineering 340 (2018) 905–
+931.
+[8] E. Haghighat, A. C. Bekar, E. Madenci, R. Juanes, A nonlocal physics-informed deep
+learning framework using the peridynamic differential operator, Computer Methods in
+Applied Mechanics and Engineering 385 (2021) 114012.
+[9] N. Trask, H. You, Y. Yu, M. L. Parks, An asymptotically compatible meshfree quadrature rule for nonlocal problems with applications to peridynamics, Computer Methods
+in Applied Mechanics and Engineering 343 (2019) 151–165.
+[10] Y. Yu, H. You, N. Trask, An asymptotically compatible treatment of traction loading
+in linearly elastic peridynamic fracture, Computer Methods in Applied Mechanics and
+Engineering 377 (2021) 113691.
+[11] D. C. Psichogios, L. H. Ungar, A hybrid neural network-first principles approach to
+process modeling, AIChE Journal 38 (10) (1992) 1499–1511.
+[12] E. Haghighat, M. Raissi, A. Moure, H. Gomez, R. Juanes, A physics-informed deep
+learning framework for inversion and surrogate modeling in solid mechanics, Computer
+Methods in Applied Mechanics and Engineering 379 (2021) 113741.
+34
+
+Figure 13: Shear failure: The training trajectory of V-DeepONet using 11 training samples. The hybrid loss
+function in Eq. (28) is minimized to obtain the optimized θ ∗ .
+
+[13] B. Peherstorfer, B. Kramer, K. Willcox, Combining multiple surrogate models to accelerate failure probability estimation with expensive high-fidelity models, Journal of
+Computational Physics 341 (2017) 61–75.
+[14] Y. Hou, T. Sapanathan, A. Dumon, P. Culière, M. Rachik, A novel development of bilevel reduced surrogate model to predict ductile fracture behaviors, Engineering Fracture
+Mechanics 188 (2018) 232–249.
+[15] B. P. van de Weg, L. Greve, M. Andres, T. Eller, B. Rosic, Neural network-based
+surrogate model for a bifurcating structural fracture response, Engineering Fracture
+Mechanics 241 (2021) 107424.
+[16] E. R. Martı́nez, S. Chakraborty, S. Tesfamariam, Machine learning assisted stochasticXFEM for stochastic crack propagation and reliability analysis, Theoretical and Applied
+Fracture Mechanics 112 (2021) 102882.
+[17] H. You, Y. Yu, N. Trask, M. Gulian, M. D’Elia, Data-driven learning of nonlocal physics
+from high-fidelity synthetic data, Computer Methods in Applied Mechanics and Engineering 374 (2021) 113553.
+[18] H. You, Y. Yu, S. Silling, M. D’Elia, Data-driven learning of nonlocal models: from
+high-fidelity simulations to constitutive laws, AAAI Spring Symposium: MLPS (2021).
+[19] S. S. Huaiqian You, Yue Yu, M. D’Elia, A data-driven peridynamic continuum model
+for upscaling molecular dynamics, arXiv preprint arXiv:2108.04883 (2021).
+[20] P. Beran, W. Silva, Reduced-order modeling-new approaches for computational physics,
+in: 39th Aerospace Sciences Meeting and Exhibit, 2001, p. 853.
+35
+
+(a) n = 20
+
+(b) n = 40
+
+(c) n = 60
+
+(d) n = 85
+
+Figure 14: Shear failure: V-DeepONet is trained with 20, 40, 60 and 85 samples with crack tips located
+through out the domain. For each of the sample sizes, different crack tips beyond the training range have been
+considered for prediction. Using the trained model, we predict the final damage path and the displacement
+in x-axis for an out-of-distribution model for each of the cases.
+
+36
+
+[21] D. Amsallem, C. Farhat, Interpolation method for adapting reduced-order models and
+application to aeroelasticity, AIAA journal 46 (7) (2008) 1803–1813.
+[22] D. Amsallem, J. Cortial, K. Carlberg, C. Farhat, A method for interpolating on manifolds structural dynamics reduced-order models, International journal for numerical
+methods in engineering 80 (9) (2009) 1241–1258.
+[23] M. Raissi, P. Perdikaris, G. E. Karniadakis, Physics-informed neural networks: A deep
+learning framework for solving forward and inverse problems involving nonlinear partial
+differential equations, Journal of Computational Physics 378 (2019) 686–707.
+[24] E. Samaniego, C. Anitescu, S. Goswami, V. M. Nguyen-Thanh, H. Guo, K. Hamdia,
+X. Zhuang, T. Rabczuk, An energy approach to the solution of partial differential
+equations in computational mechanics via machine learning: Concepts, implementation
+and applications, Computer Methods in Applied Mechanics and Engineering 362 (2020)
+112790.
+[25] G. E. Karniadakis, I. G. Kevrekidis, L. Lu, P. Perdikaris, S. Wang, L. Yang, Physicsinformed machine learning, Nature Reviews Physics 3 (6) (2021) 422–440.
+[26] S. Cai, Z. Mao, Z. Wang, M. Yin, G. E. Karniadakis, Physics-informed neural networks
+(PINNs) for fluid mechanics: A review, arXiv preprint arXiv:2105.09506 (2021).
+[27] S. Goswami, C. Anitescu, S. Chakraborty, T. Rabczuk, Transfer learning enhanced
+physics informed neural network for phase-field modeling of fracture, Theoretical and
+Applied Fracture Mechanics 106 (2020) 102447.
+[28] S. Goswami, C. Anitescu, T. Rabczuk, Adaptive fourth-order phase field analysis using deep energy minimization, Theoretical and Applied Fracture Mechanics 107 (2020)
+102527.
+[29] M. Yin, X. Zheng, J. D. Humphrey, G. E. Karniadakis, Non-invasive inference of thrombus material properties with physics-informed neural networks, Computer Methods in
+Applied Mechanics and Engineering 375 (2021) 113603.
+[30] A. D. Jagtap, G. E. Karniadakis, Extended physics-informed neural networks (XPINNs):
+A generalized space-time domain decomposition based deep learning framework for nonlinear partial differential equations, Communications in Computational Physics 28 (5)
+(2020) 2002–2041.
+[31] E. Zhang, M. Yin, G. E. Karniadakis, Physics-informed neural networks for nonhomogeneous material identification in elasticity imaging, arXiv preprint arXiv:2009.04525
+(2020).
+[32] W. E, B. Yu, The Deep Ritz method: a deep learning-based numerical algorithm for solving variational problems, Communications in Mathematics and Statistics 6 (1) (2018)
+1–12.
+
+37
+
+[33] L. Bar, N. Sochen, Unsupervised deep learning algorithm for PDE-based forward and
+inverse problems, arXiv preprint arXiv:1904.05417 (2019).
+[34] X. Guo, W. Li, F. Iorio, Convolutional neural networks for steady flow approximation,
+in: Proceedings of the 22nd ACM SIGKDD international conference on knowledge
+discovery and data mining, 2016, pp. 481–490.
+[35] Y. Zhu, N. Zabaras, Bayesian deep convolutional encoder–decoder networks for surrogate modeling and uncertainty quantification, Journal of Computational Physics 366
+(2018) 415–447.
+[36] J. Adler, O. Öktem, Solving ill-posed inverse problems using iterative deep neural networks, Inverse Problems 33 (12) (2017) 124007.
+[37] S. Bhatnagar, Y. Afshar, S. Pan, K. Duraisamy, S. Kaushik, Prediction of aerodynamic
+flow fields using convolutional neural networks, Computational Mechanics 64 (2) (2019)
+525–545.
+[38] Z. Li, N. Kovachki, K. Azizzadenesheli, B. Liu, K. Bhattacharya, A. Stuart, A. Anandkumar, Multipole graph neural operator for parametric partial differential equations,
+arXiv preprint arXiv:2006.09535 (2020).
+[39] L. Lu, P. Jin, G. Pang, Z. Zhang, G. E. Karniadakis, Learning nonlinear operators via
+Deeponet based on the universal approximation theorem of operators, Nature Machine
+Intelligence 3 (3) (2021) 218–229.
+[40] S. Goswami, C. Anitescu, T. Rabczuk, Adaptive fourth-order phase field analysis for
+brittle fracture, Computer Methods in Applied Mechanics and Engineering 361 (2020)
+112808.
+[41] D. Jacqmin, Calculation of two-phase Navier–stokes flows using phase-field modeling,
+Journal of computational physics 155 (1) (1999) 96–127.
+[42] A. Griffith, The Phenomena of Rupture and Flow in Solids, Philosophical Transactions
+of the Royal Society of London 221 (Series A) (1921) 163–198.
+[43] G. Francfort, J.-J. Marigo, Revisiting brittle fracture as an energy minimization problem, Journal of the Mechanics and Physics of Solids 46 (8) (1998) 1319–1342.
+[44] J.-Y. Wu, V. P. Nguyen, C. T. Nguyen, D. Sutula, S. Bordas, S. Sinaie, Phase field modeling of fracture, Advances in Applied Mechancis: Multi-scale Theory and Computation
+52 (2018).
+[45] B. Bourdin, G. Francfort, J.-J. Marigo, Numerical experiments in revisited brittle fracture, Journal of the Mechanics and Physics of Solids 48 (4) (2000) 797–826.
+[46] C. Miehe, F. Welschinger, M. Hofacker, Thermodynamically consistent phase-field models of fracture: Variational principles and multi-field FE implementations, International
+Journal for Numerical Methods in Engineering 83 (10) (2010) 1273–1311.
+38
+
+[47] C. Miehe, M. Hofacker, F. Welschinger, A phase field model for rate-independent crack
+propagation: Robust algorithmic implementation based on operator splits, Computer
+Methods in Applied Mechanics and Engineering 199 (45-48) (2010) 2765–2778.
+[48] T. Chen, H. Chen, Universal approximation to nonlinear operators by neural networks
+with arbitrary activation functions and its application to dynamical systems, IEEE
+Transactions on Neural Networks 6 (4) (1995) 911–917.
+[49] R. Rojas, Neural network: A systematic introduction, Springer, 1996.
+[50] D. P. Kingma, J. Ba, Adam: A method for stochastic optimization, arXiv preprint
+arXiv:1412.6980 (2014).
+[51] A. Paszke, S. Gross, F. Massa, A. Lerer, J. Bradbury, G. Chanan, T. Killeen, Z. Lin,
+N. Gimelshein, L. Antiga, et al., Pytorch: An imperative style, high-performance deep
+learning library, Advances in neural information processing systems 32 (2019) 8026–
+8037.
+[52] X. Meng, L. Yang, Z. Mao, J. d. A. Ferrandis, G. E. Karniadakis, Learning functional
+priors and posteriors from data and physics, arXiv preprint arXiv:2106.05863 (2021).
+[53] S. Wang, H. Wang, P. Perdikaris, Learning the solution operator of parametric partial
+differential equations with physics-informed Deeponets, arXiv preprint arXiv:2103.10974
+(2021).
+
+39
+
+

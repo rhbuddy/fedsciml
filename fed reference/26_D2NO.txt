@@ -1,0 +1,1073 @@
+D2NO: Efficient Handling of Heterogeneous Input Function
+Spaces with Distributed Deep Neural Operators
+
+arXiv:2310.18888v1 [math.NA] 29 Oct 2023
+
+Zecheng Zhang∗
+
+Christian Moya†
+
+Lu Lu‡
+
+Guang Lin†
+
+Hayden Schaeffer§
+
+Abstract
+Neural operators have been applied in various scientific fields, such as solving parametric
+partial differential equations, dynamical systems with control, and inverse problems. However, challenges arise when dealing with input functions that exhibit heterogeneous properties, requiring multiple sensors to handle functions with minimal regularity. To address
+this issue, discretization-invariant neural operators have been used, allowing the sampling of
+diverse input functions with different sensor locations. However, existing frameworks still require an equal number of sensors for all functions. In our study, we propose a novel distributed
+approach to further relax the discretization requirements and solve the heterogeneous dataset
+challenges. Our method involves partitioning the input function space and processing individual input functions using independent and separate neural networks. A centralized neural
+network is used to handle shared information across all output functions. This distributed
+methodology reduces the number of gradient descent back-propagation steps, improving efficiency while maintaining accuracy. We demonstrate that the corresponding neural network
+is a universal approximator of continuous nonlinear operators and present four numerical
+examples to validate its performance.
+
+1
+
+Introduction
+
+Operator Learning, introduced by [5], involves learning operators that map one function to
+another. It extends classical function learning, which focuses on the mapping between vector
+spaces, and functional learning [4], which deals with functions mapping to fields. Operator
+Learning has become a pivotal tool in scientific machine learning [14]. Recent works on this topic
+include various neural operators [26, 20, 37, 12, 43] and extensive studies on the approximation
+and convergence aspects of these neural operators [5, 16, 44, 7]. Additionally, applications
+of neural operators span various scientific and engineering domains. For example, researchers
+have developed algorithms that use neural operators to address parametric Partial Differential
+Equation (PDE) problems [26, 47, 40, 29, 30, 2], dynamical systems with control [24, 1, 5], power
+engineering applications [34, 39, 42], design optimization problems [28, 38], and challenges related
+to multifidelity and multiscale downscaling [10, 28, 45]. Notably, researchers have recently
+applied neural operators to climate predictions [35] and uncertainty quantification [23, 36, 41].
+One of the popular approaches in this direction is the Deep Operator Neural Network (DeepONet) [26, 28, 27, 47, 12, 9, 11]. DeepONet utilizes two subnetwork architectures consisting
+of a branch network and a trunk network to approximate operators by constructing a basis for
+the output function space. The trunk networks are responsible for learning the basis, while the
+∗
+
+Department of Mathematics, Florida State University, Tallahassee, FL 32304.
+Department of Mathematics, Purdue University, West Lafayette, IN 47907.
+‡
+Department of Statistics and Data Science, Yale University, New Haven, CT 06511.
+§
+Department of Mathematics, UCLA, Los Angeles, CA 90095.
+†
+
+1
+
+branch network acquires the basis coefficients. This results in an approximation achieved through
+a linear combination of the learned basis and coefficients. Another approach for neural operators
+is the Fourier neural operator (FNO) [20, 46, 35]. FNO applies the Fourier neural transformation to convolve the input function with a learned translation invariant kernel function. It then
+utilizes skip connections and other mechanisms to nonlinearly generalize the approximation. A
+comprehensive comparison of DeepONet and FNO can be found in [27]. Additionally, there are
+several other noteworthy neural operators documented, as cited here [43, 37, 44, 3, 25].
+A significant advantage of DeepONet [26, 5, 12] and related structures [43, 44] is the ability
+to discretize output functions freely [21, 27, 43]. The neural operator generates function values at specific domain points, which are determined by the trunk network input, resulting in
+enhanced adaptability. This flexibility allows the network to predict output function values at
+any domain point, accommodating different mesh definitions for output functions. However, a
+major challenge is achieving discretization invariance [27, 43]. Specifically, the neural operator
+must remain invariant to the different discretizations applied to input functions. Several algorithmic extensions to DeepONet have been proposed, allowing different input functions to be
+discretized differently [27, 22]. Additionally, the Basis Enhanced Learning (BelNet) extension
+of DeepONet, proposed by [43, 44], has mathematically demonstrated discretization invariance.
+It is worth noting that these extensions still require the number of sensors used to sample input
+function values to be consistent across distinct input functions. In this paper, we introduce a
+novel and efficient distributed network architecture and training approach for neural operators.
+This approach permits individualized discretization of input functions using dedicated sensor
+distribution strategies.
+Discretization invariance offers several advantages, particularly when working with datasets that
+have diverse properties [46]. For example, a dataset may consist of input functions with different
+levels of regularity. When using a uniform set of sensors to sample and discretize these input
+functions, it becomes necessary to accommodate the functions with the lowest regularity. This
+leads to a significant increase in the number of required sensors. However, it also results in
+higher costs for functions that are inherently smoother. To accommodate input functions with
+varying properties and regularity, we will draw inspiration from federated learning. Introduced
+in [31], federated learning is a machine learning framework that enables multiple clients to
+collaboratively train a consensus neural network model in a distributed manner, while keeping
+their training data local. This approach protects data privacy and reduces communication costs
+by coordinating local model updates with a central server, resulting in a significant reduction in
+data transfer volume.
+A standard formulation of federated learning is a distributed optimization framework that addresses communication costs, client robustness, and data heterogeneity across different clients
+[17]. Communication efficiency is central to this formulation and motivates the most wellknown efficient communication algorithm in federated learning: the federated averaging (FedAvg) algorithm [31]. FedAvg has been studied under realistic scenarios in [32, 6]. Furthermore,
+several works have provided convergence proofs of the algorithm within the field of optimization [18, 19, 15, 13, 8].
+Traditionally, neural operators have been trained using a centralized strategy that involves transferring the training data to a central location. However, this approach hinders our ability to
+leverage high-performance distributed/parallel computing platforms. To address these limitations, the authors in [33] proposed Fed-DeepONet. Fed-DeepONet enables distributed training
+of deep operator networks and has been empirically shown to achieve accuracy comparable to
+the centralized vanilla DeepONet while handling heterogeneous input functions. However, it
+should be noted that Fed-DeepONet requires the number of sensors for each local DeepONet to
+be the same, as it trains a consensus global DeepONet. In this paper, we provide a theoreti2
+
+cal demonstration of Fed-DeepONet’s ability to approximate nonlinear operators. Additionally,
+we design a dedicated distributed training strategy that does not require the same number of
+sensors, allowing the approach to handle heterogeneous input function spaces.
+We summarize the contributions of this paper as follows:
+1. We propose the distributed deep neural operator (D2NO) method that allows for sampling
+different input functions using distinct sets of sensors. This training method can reduce
+the total number of back-propagation steps and the number of trainable parameters by
+utilizing dedicated neural networks to handle the diverse input function spaces.
+2. D2NO is motivated by the mathematical theory that underlies the algorithm. Since all
+functions share the same output basis, we construct dedicated networks to handle the
+diverse input functions. We then proceed to demonstrate the universal approximation of
+the network and algorithms we propose.
+3. The proposed methodology can be implemented using different neural operators. In this
+study, we apply it to the novel Deep Operator Neural Network (DeepONet). By utilizing the Distributed-DeepONet (D-DeepONet), we tackle complex heterogeneous datasets
+that contain input functions with different regularities and geometries. Our approach
+consistently improves predictive accuracy while maintaining efficiency.
+The rest of the paper is organized as follows. In Section 2, we will review the DeepONet and
+the universal approximation theory. Next, we present the methodology in Section 3. Then, we
+prove the universal approximation theorem for Distributed-DeepONet in Section 4. Finally, we
+present several numerical experiments containing heterogeneous input function spaces in Section
+5.
+
+2
+
+Overview
+
+2.1
+
+Deep Operator Neural Network (DeepONet)
+
+We start by defining an operator G : V → U , where V and U are two function spaces. Next, we
+examine the Deep Operator Neural Network (DeepONet) [26, 27, 28, 12, 47]. The DeepONet
+structure contains a branch and trunk network. The branch net processes a discretized input
+function, while the trunk network processes an arbitrary location within a given output function
+space. The DeepONet structure avoids needing to discretize the output function. This allows
+more flexibility in both the training and prediction processes, distinguishing it from neural
+operators that rely on output function discretization on fixed grid mesh.
+
+3
+
+u = [u(y1 ), ..., u(yN )]⊺
+
+branch net 1
+
+b1
+
+branch net j
+
+bj
+
+branch net K
+
+bK
+N
+
+→ G(u)(x)
+
+t1
+Outputs
+x ∈ Rd
+
+tj
+
+trunk net
+
+tK
+Inputs
+
+Figure 1: Stacked version DeepONet.
+
+N
+
+denotes the inner product in RK .
+
+The DeepONet is theoretically based on the universal approximation theorem of nonlinear operators, which was established in [5, 4, 26], and extended in [26, 44]. The main results are stated
+below.
+Theorem 2.1 (Theorem 5, [5]). Suppose G : V → U is continuous. Specifically, let V be compact
+in the continuous function space C(K1 ), where K1 is compact in a Banach space. Additionally,
+suppose G(V ) ⊂ C(K2 ), where K2 ⊂ Rd is also compact. Then, for any ε, there exist sensors
+N
+{xi }N
+i=1 ⊂ K2 , networks pk : R → R, and bk : K2 → R such that,
+|G(u)(x) −
+
+K
+X
+
+pk (û)bk (x)| < ε,
+
+k=1
+
+for all x ∈ K2 and u ∈ V . Here û = [u(x1 ), ..., u(xN )]⊤ .
+
+2.2
+
+Discretization-Invariant Extension of DeepONet
+
+Theorem 2.1 presents an existence argument stating that the sensors are the same across all
+input functions. This implies that all distinct input functions must be discretized on the same
+mesh. However, this limitation hinders the use of DeepONet, especially in cases where the
+dataset exhibits heterogeneous properties (for a demonstration, refer to the numerical experiments section 5). A neural operator is considered discretization-invariant if it remains unaffected
+by variations in input function discretizations. In [43, 44], an extension of DeepONet was shown
+to be discretization-invariant, and specifically, the authors proved the following theorem:
+Theorem 2.2 (Discretization-Invariance [43, 44]). Suppose that a ∈ T W , Y is a Banach space,
+K1 ⊂ Y , and K2 ⊂ R are all compact. Let V ⊂ C(K1 ) be a compact set and G : V → C(K2 )
+be a continuous and nonlinear operator. For any ϵ > 0, there exist integers N, C, K, I, weights
+and biases Wxk ∈ Rd , bkx ∈ R, W k ∈ RI×C , bk ∈ RI , ck ∈ RI , subset of sensors Ky ⊂ K1N and a
+trainable network N : Ky → RC×N with Ky ⊂ K2 . Then the following inequality holds
+G (u) (x) −
+
+K
+X
+
+a(Wxk · x + bkx )(ck )⊤ a W k N (ŷ)u(ŷ) + bk
+
+
+
+< ϵ,
+
+k=1
+
+for all x ∈ K2 , ŷ = [y1 , y2 , ..., yN ]⊤ ∈ Ky , and u ∈ V .
+The basis enhanced learning (BelNet) extension partially relaxes the restriction on the input
+function discretization. However, the number of sensors (input function mesh size) should still
+4
+
+be the same for all input functions. Additionally, Ky ⊂ K which supports the discretizationinvariant property must be carefully crafted (please check Remarks 3 and 4 in [44]). This limits
+the sensor placement and input function discretizations.
+When dealing with datasets that have input functions with different properties, it is important
+to place sensors that can adapt to functions with the lowest regularity within the dataset. Figure
+5 illustrates various functions with different regularities. To effectively capture functions with
+features like black curves with sharp peaks, a large number of sensors must be used. Similarly,
+for the magenta curves with smooth oscillations, sensors need to be strategically placed across
+the entire domain. Using a uniform sensor configuration for all input functions would require a
+significant increase in the number of sensors. This would result in higher computational costs
+and additional expenses, especially for smoother functions. We propose the D2NO which can
+effectively address this problem.
+
+2.3
+
+Distributed/Federated Training of DeepONets
+
+In [33], the authors proposed Fed-DeepONet, a distributed/federated strategy that trains a
+consensus/universal DeepONet model for C clients and a centralized server. This federated
+training strategy involves looping over the following three steps:
+1. Broadcast to clients: The centralized server broadcasts the most up-to-date DeepONet
+consensus model to all clients.
+2. Client local updates: For any c ∈ {1, 2, . . . , C}, the c-th client receives the most up-to-date
+DeepONet consensus model and performs K ≥ 1 local stochastic gradient (or variants,
+e.g., Adam) DeepONet updates using the client’s dedicated dataset.
+3. Global synchronization: The centralized server aggregates the local DeepONet parameters
+into a unique consensus/universal DeepONet every K local updates.
+Since Fed-DeepONet learns a consensus model, each client must use the same number of sensors.
+In the next section, we will expand on the previously mentioned federated training strategy and
+develop a dedicated distributed training strategy for DeepONets with C clients. This strategy
+will efficiently handle heterogeneous input function spaces by allowing different numbers of
+sensors for each client c ∈ {1, 2, . . . , C}.
+
+3
+
+Methodology
+
+Consider the nonlinear operator G that maps an input function u ∈ V to an output function
+G(u)(x) evaluated at an
+PKarbitrary location x ∈ K2 . According to Theorem 2.1, we can approximate G(u)(x) as k=1 pk (u)bk (x), where bk (x) and pk (u) are learnable functions. In the
+DeepONet literature, pk (·) is commonly referred to as the branch net, while bk (·) is known
+as the trunk network. To simplify our notation, we will omit the parameters of the learnable
+functions whenever possible. It is important to note that bk (x) can be seen as the basis of the
+output function space, which is a shared element among all u and is independent of u ∈ V .
+On the other hand, pk (u) represents the coefficients in the linear combination, which depend
+on the specified input function u. Consequently, the approach taken is to develop a dedicated
+distributed approach that shares bk (x) across all samples to create a universal/consensus trunk
+network model. In this dedicated approach, individual clients independently manage their respective input function datasets using their branch nets (or projection in BelNet). They send
+5
+
+their individual basis bk (x) to a centralized server to learn a universal/consensus model applicable to all samples. Please refer to Figure 2 for an illustration and a comparison with classical
+training (Figure 3).
+1
+D1 = {[u1i (x11 ), ..., u1i (x1N1 )]⊺ }di=1
+
+Unshared networks for
+D1 : [p11 (·), ..., p1k (·), ...]⊺ for
+dataset 1 input functions
+
+Output:
+P 1
+k pk (u)bk (x),
+u ∈ D1
+
+Loss: L1 (α1 |β),
+optimize over α1
+
+l
+Dl = {[ui (xl1 ), ..., uli (xlNl )]⊺ }di=1
+
+Unshared networks for
+Dl : [pl1 (·), ..., plk (·), ...]⊺ for
+dataset l input functions
+
+Output:
+P l
+k pk (u)bk (x),
+u ∈ Dl
+
+Loss: Ll (αl |β),
+optimize over αl
+
+x ∈ Rd , output independent
+variable, shared by all
+
+Shared network bk (·)
+
+Output:
+P c c
+k pk (ui )bk (x)
+for all c and i
+
+Global loss:
+L(β|α), optimize
+over β
+
+Figure 2: D2NOprocess demonstration. We process the sub-dataset Dl by its dedicated branch
+nets (green box), together with the shared basis bk (pink box), we can construct the local loss
+Ll , and use the local loss to optimize the specialized branch net parameters. The global loss
+construction relies on the entire dataset as it is used to update the trunk net parameters (pink
+box) which are shared across different clients.
+Input functions
+of all
+S
+datasets Di
+i
+
+Branch net pk (u), dependent on
+the input functions
+
+P
+Network output:
+pk (u)bk (x).
+P kP
+∥ pk (u)bk (x) −
+Loss function:
+u,x
+
+x ∈ Rd
+
+Construction net bk (x), independent of the input functions
+
+k
+
+G(u)(x)∥22 , the summation is over
+ALL u and x
+
+Figure 3: Classical DeepONet training process demonstration.
+This means that each client independently manages input functions in its dataset through its
+unique branch (or projection) nets. Additionally, they transmit their local trunk networks to the
+central server responsible for acquiring and sending the universal/consensus basis bk (x) across
+all samples. Since each dataset is managed by its individual branch (or projection), it becomes
+possible to use designated sensors tailored to the input function within each dataset.
+Distributed Deep Neural Operator (D2NO). Let D denote the entire heterogeneous dataset, and
+D1 , ...., DC to be sub-datasets. Moreover, each Di exclusively comprises functions belonging
+to a single class, sharing similar regularity assumptions. Let us denote αc as the trainable
+parameters of c−th client’s dedicated neural network. Let β denote the trainable parameter of
+the shared network. Thus in this task, αc are the branch net parameters, and β are the trunk
+C
+S
+S
+net parameters. We then denote α =
+αc and θ = α β. The local loss function for c−th
+c=1
+
+client based on its corresponding dataset Dc will be:
+Lc (αc β) =
+
+Nc
+X
+
+∥G(uci ) − Gαc ,β (ûci )∥2 ,
+
+(1)
+
+i=1
+
+where Nc denotes the number of input functions in dataset Dc , uci and ûci are the functions and
+its discretization. Please note that we normalize the loss function with the number of samples
+during the implementation, and present the unnormalized version for a better illustration of the
+concept. We can then define the global loss function,
+L(β α) =
+
+C
+X
+
+Lc (αc |β),
+
+c=1
+
+where C denotes the total number of clients and datasets. We now summarize the pseudoalgorithm in Algorithm 1 with an illustration in Figure 2.
+6
+
+Algorithm 1: Distributed Deep Neural Network (D2NO) Algorithm
+1 Initialization: weights wc , all networks trainable parameters θ, learning rate ηc and η, the
+
+total number of iterations N ;
+2 for k = 1 to N do
+3
+Update the unshared parameters αkc for all clients, k denotes the k−th optimization
+step;
+4
+for c = 1 to C do
+5
+
+αkc = αkc − ηc ∇αc Lc (αc |β),
+6
+
+Update the shared construction net parameter β
+βk = βk − η∇β L(β|α),
+
+3.1
+
+Efficiency of Distributed Deep Neural Operator (D2NO)
+
+This section provides a brief analysis of the efficiency of the proposed D2NO in terms of data and
+computational cost. To train scientific machine learning models, a significant amount of data
+is needed, much of which could be privacy-sensitive. Surrogates trained using this data have
+the potential to greatly enhance scientific and engineering discovery and simulation. However,
+transferring this data to a centralized location is costly, and the quantity and security of the data
+may make training in such a location impractical using the traditional DeepONet approach. The
+proposed D2NO addresses this issue by allowing the training data to remain distributed locally.
+Instead of sharing large datasets, the client only shares Deep Neural Operator parameters (or
+a partial model, e.g., the trunk network), which are aggregated using locally computed updates
+and which reduce training costs.
+To compare the computational training costs of the traditional DeepONet and D2NO, we proceed
+as follows. First, consider a centralized model with a vector of trainable parameters θ ∈ Rp .
+Without loss of generality, let us assume we select one point x(i) in each output function’s
+domain, we then minimize the following loss function,
+L(θ) =
+
+N
+
+N
+
+i=1
+
+i=1
+
+2
+1 X (i)
+1 X
+L =
+Gθ (ûi )(x(i) ) − G(ui )(x(i) )
+N
+N
+
+(i)
+
+over the dataset of N triplets Dcent = {(um , x(i) ), G(u(i) )(x(i) )}N
+i=1 , a standard deep learning
+package can compute the gradient of the loss function L with respect to each trainable parameter
+in β. In this analysis, we will focus on the number of gradients computed for each data loss
+function L(i) , where i = 1, . . . , N , with respect to the trainable parameters. This results in a
+total of N · p · nepochs gradient computations over nepochs of training. This analysis does not take
+into account batching, but extending it to the stochastic setting is direct.
+For
+PC the D2NO case, we assume that the data is distributed among C clients, so that N =
+j=1 nj , where nj represents the number of data points available to the j-th client for training
+a local model with a vector of p′ ≤ p trainable parameters. Therefore, for the j-th client, the
+number of gradients computed for each data loss function over nepochs is nj · p′ · nepochs . As a
+
+7
+
+result, we can establish the following inequality:
+Cost of D2NO =
+
+C
+X
+
+nj · p′ · nepochs
+
+j=1
+
+= N · p′ · nepochs
+≤ N · p · nepochs
+= Cost of Traditional DeepONet.
+The inequality above indicates that D2NO has a training cost similar to that of the traditional
+DeepONet. Furthermore, this inequality is strict for certain examples presented later in this
+paper. For instance, when comparing the proposed D2NO (with two clients having a number
+of sensors m1 = 10 and m2 = 100) to the traditional DeepONet, which uses m = 100 sensors,
+they both perform an equal number of stochastic gradient updates and use the same amount of
+training data samples. However, our proposed framework is more efficient because over half of
+these stochastic gradient updates reduce the input function size by 10x, resulting in a decrease
+in the computational cost of training.
+We conclude this section with the following remark. Although Algorithm 1 uses multiple client
+networks, which increases the total number of trainable parameters, it is important to note that,
+as demonstrated in this section, the total number of gradient updates does not increase.
+
+4
+
+Theoretical Analysis
+
+In this section, we demonstrate that the proposed D2NO satisfies a universal approximation theorem. We begin by stating the following lemma [5], which establishes a universal approximation
+theorem for functions in a compact subspace with compact support.
+Lemma 4.1 ([5], Theorem 3). Suppose H is compact in Rd , U ⊂ C(H) is also compact. Let
+f ∈ U and for any ϵ > 0, there exists an integer K > 0 independent of f , continuous linear
+functionals ck on U , networks bk : Rd → R such that
+f (y) −
+
+K
+X
+
+ck (f )bk < ϵ,
+
+k=1
+
+for all y ∈ H and f ∈ U . Specifically, the networks have the following structure,
+bk = g(wk · y + pk ),
+
+(2)
+
+where wk ∈ Rd , pk ∈ R and g is a Tauber-Wiener function [5].
+The next lemma extends the above approximation to functionals defined on a compact subspace
+of continuous functions.
+Lemma 4.2 ([5], Theorem 4). Suppose that Y is a Banach space, K ⊂ Y is compact, and
+U ⊂ C(K) is also compact. Let f be a continuous functional on U . For any ϵ > 0, there exist
+weights ck , {yi }Ii=1 ⊂ K and networks bk : RI → R such that,
+f (u) −
+
+K
+X
+
+ck bk (û) < ϵ,
+
+k=1
+
+8
+
+for all u ∈ V , here û = [u(y1 ), ..., u(yI )]⊤ . Specifically, bk has a structure:
+bk (û) = g(wk · û + pk ),
+
+(3)
+
+where wk ∈ RI , pk ∈ R and g is a Tauber-Wiener function.
+Without loss of generality, we consider two clients (C = 2) in the remainder of this paper. Let
+G : V → U be a continuous operator. We assume that G1 : V1 → U and G2 : V2 → U are
+the restrictions of G on V1 and V2 respectively. Specifically, G(u) = G1 (u) for any u ∈ V1 and
+G(u) = G2 (u) for any u ∈ V2 . We will construct the universal approximation for both G1 and
+G2 using a shared output function basis. Let us make the following assumptions.
+Assumption 4.1. We make the following assumptions on the input/output function spaces and
+the operator.
+1. V1 ⊂ C(K1 ), V2 ⊂ C(K2 ) are compact and are defined on compact domains K1 ⊂ K1′ and
+K2 ⊂ K2′ , where K1′ and K2′ are Banach spaces. Additionally, V = V1 ∪ V2 .
+2. Let G, G1 and G2 are continuous, and G(u) = G1 (u) for any u ∈ V1 and G(u) = G2 (u)
+for any u ∈ V2 .
+3. U = G1 (V1 ) ∪ G2 (V2 ) has a compact domain Kx ⊂ Rd .
+The following theorem establishes the universal approximation of continuous nonlinear operators.
+Theorem 4.3. Let G : V → U , G1 : V1 → U and G2 : V2 → U satisfy the Assumption 4.1. For
+any ε > 0, there exist weights c1i,k , c2i,k ∈ R, [y1 , ..., yN1 ]⊤ ⊂ K1 , [z1 , ..., zN2 ]⊤ ⊂ K2 , networks
+b1i,k : RN1 → R, b2i,k : RN2 → R, specified in Eqaution 3, and τk : Kx → R specified in 2 such
+that,
+|G1 (u)(x) −
+
+|G2 (u)(x) −
+
+K
+1
+X I
+X
+k=1 i=1
+I2
+K X
+X
+
+c1i,k b1i,k (û1 )τk (x)| < ε,
+c2i,k b2i,k (û2 )τk (x)| < ε,
+
+k=1 i=1
+
+for any u1 ∈ U1 and u2 ∈ U2 , here û1 = [u(y1 ), ...u(yN1 )]⊤ and û1 = [u(z1 ), ...u(zN2 )]⊤ .
+Proof. Without loss of generality, we will prove the approximation for the first clients. For any
+ε
+2 > 0, by Lemma 4.1, there exist K networks τk (x), functional ak (·) on V such that,
+|G(u)(x) −
+
+K
+X
+k=1
+
+ε
+ak (G(u)) τk (x)| < ,
+2
+
+(4)
+
+for
+PKany u ∈ V and x ∈ εKx . Since G1 (u)
+PK= G(u) for u ∈ V1 , it follows that |G1 (u)(x) −
+a
+(G
+(u))
+τ
+(x)|
+<
+.
+Denote
+L
+=
+1
+k
+k=1 k
+k=1 sup |τk (x)|, it follows by Lemma 4.2 that, for
+2
+
+x∈Kx
+ε
+1 , [y , ..., y ] ⊂ K and networks b1 : RN1 → R
+and
+any
+k
+=
+1,
+...,
+K,
+there
+exist
+weights
+c
+1
+1
+N1
+i,k
+i,k
+2L
+
+such that,
+|ak (G(u)) −
+
+I1
+X
+
+c1i,k b1i,k (û1 )| <
+
+i=1
+
+9
+
+ε
+,
+2L
+
+(5)
+
+Figure 4: Left: the input functions exhibit peaks, with these peaks being concentrated in
+two distinct regions (black and magenta). Such a dataset poses significant challenges to the
+conventional operator learning framework, which mandates uniform sensor placement for all
+input functions. This is due to the necessity for dense sampling to effectively capture the
+sparsely distributed peaks. However, this approach results in a substantial increase in problem
+dimensionality, leading to the presence of numerous redundant entries in the discretized vectors,
+please check the green dots in the middle image.
+where û1 = [u(y1 ), ..., u(yN1 )]⊤ . Let I1 large enough and set c1i,k = 0 if necessary, substitute
+Equation 5 into Equation 4, it follows that,
+|G1 (u)(x) −
+
+K
+1
+X I
+X
+
+c1i,k b1i,k (û1 )τk (x)| < ε,
+
+k=1 i=1
+
+for any u ∈ V1 and x ∈ Kx . The approximation for G2 is similar.
+
+5
+
+Numerical Experiments
+
+In this section, we use four numerical experiments to demonstrate the effectiveness of D2NO in
+approximating nonlinear operators with heterogeneous input function spaces.
+
+5.1
+
+Viscous Burgers’ equation
+
+We begin by studying the viscous Burgers’ equation. Our main objective is to understand and
+approximate the operator that maps the initial condition of the PDE to the solution at the
+terminal time. Specifically, the viscous Burgers’ equation is defined as follows:
+∂us 1 ∂(u2s )
+∂ 2 us
++
+= α 2 , x ∈ [0, 2π], t ∈ [0, T ],
+∂t
+2 ∂x
+∂x
+
+(6)
+
+with the initial condition us (x, 0) = u0s (x) and the boundary conditions us (0, t) = us (2π, t).
+Here, u0s (x) is the initial condition that depends on the parameter s, and α is the viscosity of
+the equation. Our goal is to learn the mapping from u0s to us (t).
+5.1.1
+
+Heterogeneous input functions with double sharp peaks
+
+Firstly, we focus our attention on the challenging scenario described in Figure 4, where input
+functions display heterogeneous properties. Specifically, these input functions exhibit distinct
+sharp peaks, which are concentrated in two separate regions (depicted by the black and magenta
+curves in Figure 4).
+
+10
+
+In the traditional operator learning or DeepONet framework, uniform sensor placement is required for all input functions. Thus, only a limited number of sensors are used to sample the
+peak of one input function, and most of these sensors provide the same function values. This
+uniformity of data significantly affects the quality of training.
+By using Algorithm 1, we can use two clients (C = 2) and two dedicated branch networks to
+capture the input functions individually in the clustered regions. As a result, we can deploy
+separate sensor sets for these two datasets. Figure 4 illustrates how a function from the left
+region is sampled using dedicated sensors tailored to that specific region. In contrast, Figure 4
+shows the same function sampled using uniform sensors for comparison.
+To evaluate the performance of D2NO (see Algorithm 1), we trained a total of 50 independent
+D2NO models and calculated the average L2 -relative error. We compared D2NO with the
+traditional DeepONet model. Specifically, we trained 50 traditional DeepONet models using
+the same network structure and hyperparameters as D2NO. It is important to note that for
+the traditional DeepONet, we used uniform sensors for all input functions. Table 1 presents
+a summary of the results, which demonstrate that the proposed D2NO algorithm significantly
+reduces relative errors while maintaining a comparable computational cost.
+
+L2 -relative error
+
+DeepONet
+18.64%
+
+D2NO
+8.10%
+
+Table 1: The average L2 -relative error computed from 50 independent training runs for both
+the DeepONet and D2NO described in Algorithm 1. As a reference, we predict by the average
+of the training labels, the relative error is 97.59%.
+
+5.1.2
+
+Heterogeneous input functions with different properties
+
+In this experiment, we explore the scenario depicted in Figure 5. This illustration reflects many
+other situations where using different numbers of sensors for different input functions can result
+in improved solutions. Previous attempts have focused on expanding the capabilities of neural
+operators to discretize different input functions in different ways. However, these efforts have
+been limited by the need for an equal number of sensors. Our new algorithm overcomes this
+limitation by allowing the use of varying quantities of sensors for function discretization.
+In our example, we present two different types of input functions: (a) functions with humps,
+represented by the black curve in Figure 5, and (b) functions with relatively smooth profiles,
+represented by the magenta curve in the same figure. Typically, the conventional approach
+involves using the same number of sensors for all functions. However, due to the presence of
+humps in the first function category, a larger number of sensors is required for both types of
+functions. The numerical examples demonstrate that DeepONet-style networks can effectively
+handle challenges presented by smooth input functions, even with a limited number of sensors.
+However, for functions with peaks, a higher number of sensors is required, which increases the
+computational cost when dealing with smoother functions.
+Since the dedicated branch networks are not shared among clients, our algorithm enables the
+creation of separate branch networks for these two function classes. As a result, the sensor
+count and sensor placements can vary depending on the specific function being considered. An
+illustration of this is in Figure 5.
+
+11
+
+Figure 5: Left: illustrations of functions exhibiting varied degrees of smoothness. The black
+curves represent two prototypes from a category of input functions characterized by sharp peaks,
+while the magenta curves display two instances of smooth functions. Right: presentation of
+different sensor counts for discretizing functions depicted in the left visual. The functions with
+humps are finely discretized with 75 sensors, whereas the smooth magenta function is captured
+using only 6 sensors (indicated by the green dots). Middle: uniform sampling.
+We use two clients, each with its own dedicated branch network. For functions that have peak
+characteristics, we use a larger two-layer branch network with dimensions 75 × 100 → 100 × 1.
+On the other hand, for smoother functions, we employ a smaller two-layer branch network with
+dimensions 6 × 50 → 50 × 1. Thus, the proposed D2NO requires the use of 75 sensors and 6
+sensors, respectively.
+Note that our proposed distributed algorithm (D2NO) adjusts the sensor count for different input
+function spaces, unlike the traditional DeepONet approach which uses a uniform configuration
+of 75 sensors for all input functions. Table 2 presents the aggregated results after training 50
+independent models using both the traditional DeepONet and the proposed strategy.
+
+L2 -relative error
+# Unshared parameters
+# Shared parameters
+
+DeepONet
+7.53%
+77K
+51.8K
+
+D2NO
+5.34%
+41.5K
+51.8K
+
+Table 2: The average L2-relative error of 50 independent trainings for DeepONet and D2NO
+(see Algorithm 1). Two dedicated branch networks with distinct structures are used to capture
+hump input functions and smooth input functions, respectively. Note that this approach helps
+to reduce the number of trainable parameters. As a reference, if we were to predict the solution
+by the average of the training samples, the relative error would be 810.61%.
+
+5.2
+
+The Nonlinear Pendulum System
+
+In this experiment, we use the proposed distributed strategy D2NO to approximate the solution
+operator of the nonlinear pendulum system with dynamics:
+ds1 (t)
+= s2 (t),
+dt
+ds2 (t)
+= −k sin(s1 (t)) + u(t).
+dt
+
+(7)
+
+Here, s(t) = (s1 (t), s2 (t))⊤ is the state defined over the time domain t ∈ [0, 1] and u(t) is
+the external force. We aim to approximate the solution operator G : u(t) 7→ s(t) for a fixed
+initial condition (s1 (0), s2 (0)) = (0.0, 0.0), k = 1.0, and an external force u(t) sampled from the
+
+12
+
+Figure 6: (Left): Input functions discretized with uniform sampling and m = 100 sensors.
+(Right): Input functions discretized with uniform sampling and m = 10 sensors. The input
+functions exhibit different frequencies. Such a dataset poses significant challenges to the conventional operator learning framework, which mandates uniform sensor placement for all input
+functions. This is due to the necessity for dense sampling to effectively capture the oscillatory
+behavior. However, this approach results in a substantial increase in problem dimensionality,
+leading to the presence of numerous redundant entries in the discretized vectors.
+mean-zero Gaussian Random Field (GRF):
+u ∼ G(0, κℓ (x1 , x2 )),
+
+(8)
+
+
+where the covariance kernel κℓ (x1 , x2 ) = exp −∥x1 − x2 ∥2 /2ℓ2 is the radial-basis function
+(RBF) with length-scale parameter ℓ > 0, which we will use to generate heterogeneous input
+function spaces, as described next.
+5.2.1
+
+Heterogeneous input functions with different frequencies
+
+We first consider two input function spaces with different frequencies. To this end, we let the
+first input space V1 be a GRF with length scale ℓ = 0.1 and the second input space V2 be a GRF
+with length scale ℓ = 1.0. Figure 6 illustrates sample functions from these two input spaces.
+The traditional DeepONet framework requires placing uniformly a collection of m sensors to
+discretize the input function u. In general, as depicted in Figure 6, a large number of sensors
+(e.g., m = 100) is required to capture effectively the input function u, which, in turn, increases
+the training cost.
+We note that for the input function sampled from the space V2 , using m = 100 sensors is
+excessive. One may require only m = 10 sensors (see Figure 6) to effectively capture input
+functions sampled from V2 . However, as illustrated in Figure 6, using less number of sensors will
+deteriorate our ability to describe the oscillations from the input function sampled from the input
+space V1 . The proposed distributed framework D2NO can effectively tackle the above problem
+by using two clients (C = 2), each with dedicated branch networks, as depicted in Figure 7.
+More specifically, the first client uses a branch network with m = 100 sensors to capture and
+discretize input functions sampled from the input space V1 . The second client uses a branch
+network with m = 10 sensors to capture and discretize input functions sampled from V2 . We let
+the two clients share and synchronize the trunk network.
+
+13
+
+Figure 7: Input functions discretized with federated sampling. A client with dedicated branch
+networks uses m = 100 sensors to discretize the input function sampled from a GRF with lengthscale ℓ = 0.1. Another client with a dedicated branch network uses m = 10 sensors to discretize
+the input function sampled from a GRF with length-scale ℓ = 1.0.
+Training and Testing. To maintain a fair comparison between the traditional DeepONet and
+D2NO, we employ the same neural network architectures except for the dedicated branch Networks. We sample NV1 = NV2 = 1, 000 input trajectories from each input space to train the
+traditional DeepONet and D2NO. We train the traditional DeepONet using stochastic gradientbased optimization for 1000 epochs. Finally, we train each model within the proposed D2NO
+approach using 10 synchronization rounds after 100 local stochastic gradient updates. To test
+the proposed framework, we sample 100 test trajectories from V1 and 100 test trajectories from
+V2 .
+Performance of D2NO. Table 3 shows the performance (i.e., in terms of the L2 − relative error)
+of the proposed D2NO and the traditional DeepONet (with m = 100 and m = 10 sensors) for
+the test trajectories sampled from the input spaces V1 and V2 . The results clearly illustrate that
+the proposed D2NO framework is competitive with the traditional DeepONet with m = 100
+sensors and vastly outperforms the more efficient DeepONet with m = 10 sensors.
+
+L2 −relative error on U1
+L2 −relative error on U2
+
+DeepONet (m = 100)
+3.27%
+1.18%
+
+DeepONet (m = 10)
+16.64%
+3.21%
+
+D2NO
+5.21%
+3.45%
+
+Table 3: The average L2 −relative error for 100 test trajectories sampled from the input space V1
+(GRF with length-scale ℓ = 0.1) and for 100 test trajectories sampled from the input space V2
+(GRF with length-scale ℓ = 1.0), using the traditional DeepONet (m = 100 and m = 10 sensors)
+and the distributed framework D2NO detailed in Algorithm 1.
+Using Distinct Number of Training Samples. Here, we test the proposed D2NO framework on a
+scenario where the number of training trajectories sampled from V1 is NV1 = 200 and the number
+of training trajectories sampled from V2 is NV2 = 1, 800. Table 4 describes the performance of
+the proposed D2NO and the traditional DeepONet. The results clearly illustrate the advantages
+of the proposed D2NO framework.
+
+14
+
+L2 −relative error on U1
+L2 −relative error on U2
+
+DeepONet (m = 100)
+6.34%
+0.78%
+
+DeepONet (m = 10)
+21.23%
+2.56%
+
+D2NO
+7.08%
+3.01%
+
+Table 4: The average L2 −relative error for 100 test trajectories sampled from the input space V1
+(GRF with length-scale ℓ = 0.1) and for 100 test trajectories sampled from the input space V2
+(GRF with length-scale ℓ = 1.0), using the traditional DeepONet (m = 100 and m = 10 sensors)
+and the distributed framework D2NO detailed in Algorithm 1. The frameworks were trained
+using NV1 = 200 input trajectories sampled from V1 and NV2 = 1, 800 input trajectories sampled
+from V2 .
+
+6
+
+Conclusion
+
+In this paper, we have developed a dedicated distributed training strategy for deep neural
+operators (D2NO) that can efficiently handle heterogeneous input function spaces. Our strategy
+involves partitioning the input function space based on the properties and regularity of the
+input functions. Each subset of the input function space is then processed using a dedicated
+branch network, which is trained locally. Additionally, a consensus trunk network is trained in a
+centralized manner. This trunk network acts as a global basis for the local coefficients obtained
+from the dedicated branch networks. We have demonstrated that D2NO serves as a universal
+approximator of continuous nonlinear operators. Finally, we have demonstrated that D2NO not
+only addresses the challenges posed by input functions with heterogeneous properties but also
+offers improved flexibility and computational efficiency using four numerical examples, each with
+heterogeneous input function spaces.
+
+7
+
+Acknowledgement
+
+Z. Zhang was supported in part by AFOSR MURI FA9550-21-1-0084. H. Schaeffer was supported in part by AFOSR MURI FA9550-21-1-0084, NSF DMS-2331033. G. Lin is supported
+by the National Science Foundation (DMS-2053746, DMS-2134209, ECCS-2328241, and OAC2311848), and U.S. Department of Energy (DOE) Office of Science Advanced Scientific Computing Research program DE-SC0021142 and DE-SC0023161. L. Lu was supported by the U.S.
+Department of Energy [DE-SC0022953].
+
+References
+[1] L. Bhan, Y. Shi, and M. Krstic. Operator learning for nonlinear adaptive control. In
+Learning for Dynamics and Control Conference, pages 346–357. PMLR, 2023.
+[2] S. Cai, Z. Wang, L. Lu, T. A. Zaki, and G. E. Karniadakis. Deepm&mnet: Inferring the
+electroconvection multiphysics fields based on operator approximation by neural networks.
+Journal of Computational Physics, 436:110296, 2021.
+[3] L. Cao, T. O’Leary-Roseberry, P. K. Jha, J. T. Oden, and O. Ghattas. Residual-based error
+correction for neural operator accelerated infinite-dimensional bayesian inverse problems.
+arXiv preprint arXiv:2210.03008, 2022.
+
+15
+
+[4] T. Chen and H. Chen. Approximations of continuous functionals by neural networks with
+application to dynamic systems. IEEE Transactions on Neural networks, 4(6):910–918,
+1993.
+[5] T. Chen and H. Chen. Universal approximation to nonlinear operators by neural networks with arbitrary activation functions and its application to dynamical systems. IEEE
+Transactions on Neural Networks, 6(4):911–917, 1995.
+[6] J. Dean, G. Corrado, R. Monga, K. Chen, M. Devin, M. Mao, M. Ranzato, A. Senior,
+P. Tucker, K. Yang, et al. Large scale distributed deep networks. Advances in neural
+information processing systems, 25, 2012.
+[7] B. Deng, Y. Shin, L. Lu, Z. Zhang, and G. E. Karniadakis. Approximation rates of deeponets for learning operators arising from advection–diffusion equations. Neural Networks,
+153:411–426, 2022.
+[8] W. Deng, Q. Zhang, Y.-A. Ma, Z. Song, and G. Lin. On convergence of federated averaging
+langevin dynamics. arXiv preprint arXiv:2112.05120, 2021.
+[9] P. C. Di Leoni, L. Lu, C. Meneveau, G. E. Karniadakis, and T. A. Zaki. Neural operator
+prediction of linear instability waves in high-speed boundary layers. Journal of Computational Physics, 474:111793, 2023.
+[10] A. A. Howard, M. Perego, G. E. Karniadakis, and P. Stinis. Multifidelity deep operator
+networks. arXiv preprint arXiv:2204.09157, 2022.
+[11] Z. Jiang, M. Zhu, D. Li, Q. Li, Y. O. Yuan, and L. Lu. Fourier-mionet: Fourier-enhanced
+multiple-input neural operators for multiphase modeling of geological carbon sequestration.
+arXiv preprint arXiv:2303.04778, 2023.
+[12] P. Jin, S. Meng, and L. Lu. Mionet: Learning multiple-input operators via tensor product.
+SIAM Journal on Scientific Computing, 44(6):A3490–A3514, 2022.
+[13] S. P. Karimireddy, S. Kale, M. Mohri, S. Reddi, S. Stich, and A. T. Suresh. Scaffold:
+Stochastic controlled averaging for federated learning. In International Conference on Machine Learning, pages 5132–5143. PMLR, 2020.
+[14] G. E. Karniadakis, I. G. Kevrekidis, L. Lu, P. Perdikaris, S. Wang, and L. Yang. Physicsinformed machine learning. Nature Reviews Physics, 3(6):422–440, 2021.
+[15] A. Khaled, K. Mishchenko, and P. Richtárik. First analysis of local gd on heterogeneous
+data. arXiv preprint arXiv:1909.04715, 2019.
+[16] S. Lanthaler and A. M. Stuart. The curse of dimensionality in operator learning. arXiv
+preprint arXiv:2306.15924, 2023.
+[17] T. Li, A. K. Sahu, A. Talwalkar, and V. Smith. Federated Learning: Challenges, Methods,
+and Future Directions. IEEE Signal Processing Magazine, 37(3):50–60, 2020.
+[18] X. Li, K. Huang, W. Yang, S. Wang, and Z. Zhang. On the convergence of fedavg on non-iid
+data. arXiv preprint arXiv:1907.02189, 2019.
+[19] X. Li, M. Jiang, X. Zhang, M. Kamp, and Q. Dou. Fedbn: Federated learning on non-iid
+features via local batch normalization. arXiv preprint arXiv:2102.07623, 2021.
+
+16
+
+[20] Z. Li, N. Kovachki, K. Azizzadenesheli, B. Liu, K. Bhattacharya, A. Stuart, and A. Anandkumar. Fourier neural operator for parametric partial differential equations. arXiv preprint
+arXiv:2010.08895, 2020.
+[21] C. Lin, Z. Li, L. Lu, S. Cai, M. Maxey, and G. E. Karniadakis. Operator learning for
+predicting multiscale bubble growth dynamics. The Journal of Chemical Physics, 154(10),
+2021.
+[22] G. Lin, C. Moya, and Z. Zhang. Accelerated replica exchange stochastic gradient langevin
+diffusion enhanced bayesian deeponet for solving noisy parametric pdes. arXiv preprint
+arXiv:2111.02484, 2021.
+[23] G. Lin, C. Moya, and Z. Zhang. B-deeponet: An enhanced bayesian deeponet for solving
+noisy parametric pdes using accelerated replica exchange sgld. Journal of Computational
+Physics, 473:111713, 2023.
+[24] G. Lin, C. Moya, and Z. Zhang. Learning the dynamical response of nonlinear nonautonomous dynamical systems with deep operator neural networks. Engineering Applications of Artificial Intelligence, 125:106689, 2023.
+[25] Y. Liu, Z. Zhang, and H. Schaeffer. Prose: Predicting operators and symbolic expressions
+using multimodal transformers. arXiv preprint arXiv:2309.16816, 2023.
+[26] L. Lu, P. Jin, G. Pang, Z. Zhang, and G. E. Karniadakis. Learning nonlinear operators
+via deeponet based on the universal approximation theorem of operators. Nature Machine
+Intelligence, 3(3):218–229, 2021.
+[27] L. Lu, X. Meng, S. Cai, Z. Mao, S. Goswami, Z. Zhang, and G. E. Karniadakis. A comprehensive and fair comparison of two neural operators (with practical extensions) based on
+fair data. Computer Methods in Applied Mechanics and Engineering, 393:114778, 2022.
+[28] L. Lu, R. Pestourie, S. G. Johnson, and G. Romano. Multifidelity deep neural operators
+for efficient learning of partial differential equations with application to fast inverse design
+of nanoscale heat transport. Physical Review Research, 4(2):023210, 2022.
+[29] S. Mao, R. Dong, L. Lu, K. M. Yi, S. Wang, and P. Perdikaris. Ppdonet: Deep operator networks for fast prediction of steady-state solutions in disk–planet systems. The Astrophysical
+Journal Letters, 950(2):L12, 2023.
+[30] Z. Mao, L. Lu, O. Marxen, T. A. Zaki, and G. E. Karniadakis. Deepm&mnet for hypersonics: Predicting the coupled flow and finite-rate chemistry behind a normal shock using
+neural-network approximation of operators. Journal of computational physics, 447:110698,
+2021.
+[31] B. McMahan, E. Moore, D. Ramage, S. Hampson, and B. A. y Arcas. Communicationefficient learning of deep networks from decentralized data. In Artificial intelligence and
+statistics, pages 1273–1282. PMLR, 2017.
+[32] H. B. McMahan, E. Moore, D. Ramage, and B. A. y Arcas. Federated learning of deep
+networks using model averaging. arXiv preprint arXiv:1602.05629, 2, 2016.
+[33] C. Moya and G. Lin. Fed-deeponet: Stochastic gradient-based federated training of deep
+operator networks. Algorithms, 15(9):325, 2022.
+
+17
+
+[34] C. Moya, S. Zhang, G. Lin, and M. Yue. Deeponet-grid-uq: A trustworthy deep operator
+framework for predicting the power grid’s post-fault trajectories. Neurocomputing, 535:166–
+182, 2023.
+[35] J. Pathak, S. Subramanian, P. Harrington, S. Raja, A. Chattopadhyay, M. Mardani,
+T. Kurth, D. Hall, Z. Li, K. Azizzadenesheli, et al. Fourcastnet: A global data-driven
+high-resolution weather model using adaptive fourier neural operators. arXiv preprint
+arXiv:2202.11214, 2022.
+[36] A. F. Psaros, X. Meng, Z. Zou, L. Guo, and G. E. Karniadakis. Uncertainty quantification in
+scientific machine learning: Methods, metrics, and comparisons. Journal of Computational
+Physics, 477:111902, 2023.
+[37] E. Qian, I.-G. Farcas, and K. Willcox. Reduced operator inference for nonlinear partial
+differential equations. SIAM Journal on Scientific Computing, 44(4):A1934–A1959, 2022.
+[38] I. Sahin, C. Moya, A. Mollaali, G. Lin, and G. Paniagua. Deep operator learning-based
+surrogate models with uncertainty quantification for optimizing internal cooling channel rib
+profiles. International Journal of Heat and Mass Transfer, 219:124813, 2024.
+[39] Y. Sun, C. Moya, G. Lin, and M. Yue. Deepgraphonet: A deep graph operator network
+to learn and zero-shot transfer the dynamic response of networked systems. IEEE Systems
+Journal, 2023.
+[40] S. Wang, H. Wang, and P. Perdikaris. Learning the solution operator of parametric partial
+differential equations with physics-informed deeponets. Science advances, 7(40):eabi8605,
+2021.
+[41] Y. Yang, G. Kissas, and P. Perdikaris. Scalable uncertainty quantification for deep operator networks using randomized priors. Computer Methods in Applied Mechanics and
+Engineering, 399:115399, 2022.
+[42] K. Ye, J. Zhao, X. Liu, C. Moya, and G. Lin. Deeponet based uncertainty quantification
+for power system dynamics with stochastic loads. In 2023 IEEE Power & Energy Society
+General Meeting (PESGM), pages 1–6. IEEE, 2023.
+[43] Z. Zhang, W. T. Leung, and H. Schaeffer. Belnet: Basis enhanced learning, a mesh-free
+neural operator. arXiv preprint arXiv:2212.07336, 2022.
+[44] Z. Zhang, W. T. Leung, and H. Schaeffer. A discretization-invariant extension and analysis
+of some deep operator networks. arXiv preprint arXiv:2307.09738, 2023.
+[45] Z. Zhang, C. Moya, W. T. Leung, G. Lin, and H. Schaeffer. Bayesian deep operator learning
+for homogenized to fine-scale maps for multiscale pde. arXiv preprint arXiv:2308.14188,
+2023.
+[46] M. Zhu, S. Feng, Y. Lin, and L. Lu. Fourier-deeponet: Fourier-enhanced deep operator networks for full waveform inversion with improved accuracy, generalizability, and robustness.
+arXiv preprint arXiv:2305.17289, 2023.
+[47] M. Zhu, H. Zhang, A. Jiao, G. E. Karniadakis, and L. Lu. Reliable extrapolation of deep
+neural operators informed by physics or sparse observations. Computer Methods in Applied
+Mechanics and Engineering, 412:116064, 2023.
+
+18
+
+
