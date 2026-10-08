@@ -1,0 +1,13 @@
+# Deep benchmark on 3 representative problems (SRS §9.1)
+# Full sweep: 9 algorithms × heterogeneity × noise × seeds on Poisson, Antiderivative, Schaffer
+sweep:
+  problem: [poisson, antiderivative, schaffer]
+  aggregator: [fedavg, fedprox, fedadam, fedadagrad, fedyogi, scaffold, median, trimmed_mean, krum]
+  heterogeneity:
+    mode: 1d_partition
+    n_pieces: [10, 2]
+  noise_mode: [none, noisy]
+  noise_fraction: [0.0, 0.2]
+  seed: [42, 43, 44]
+  total_rounds: 30
+  local_epochs: 5

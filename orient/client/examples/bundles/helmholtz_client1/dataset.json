@@ -1,0 +1,14 @@
+{
+  "problem": "helmholtz",
+  "n_samples": 1500,
+  "domain": {
+    "x_interval": [
+      0.0,
+      0.2
+    ],
+    "y_interval": [
+      0,
+      1
+    ]
+  }
+}

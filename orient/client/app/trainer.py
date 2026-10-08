@@ -110,14 +110,27 @@ class LocalTrainer:
         batch_size: int = 256,
         prox_mu: float = 0.0,
         grad_clip: Optional[float] = None,
+        gradient_clip: str = "none",
+        max_norm: float = 1.0,
+        clip_value: float = 0.5,
     ) -> Dict[str, Any]:
-        """Run ``epochs`` local epochs and return ``{"loss": ..., "steps": ...}``.
+        """Run ``epochs`` local epochs and return ``{\"loss\": ..., \"steps\": ...}``.
+
+        Supports SRS FR-CLIENT-9 gradient clipping modes: ``none`` | ``value`` | ``norm``.
+        ``grad_clip`` is backward-compat alias for ``max_norm`` when ``gradient_clip=='norm'``.
 
         Raises ``ValueError`` on non-finite losses/gradients/parameters so a bad
         client exits instead of uploading poisoned weights to the server.
         """
         self._ensure_optimizer(optimizer_spec)
         assert self.optimizer is not None  # for type checkers
+
+        # Resolve clipping mode (new protocol fields take precedence, fallback to legacy grad_clip)
+        clip_mode = (gradient_clip or "none").lower().strip()
+        if grad_clip is not None and clip_mode == "none":
+            # legacy CLI --grad-clip provided as norm value
+            clip_mode = "norm"
+            max_norm = float(grad_clip)
 
         self.model.train()
         steps = _steps_per_epoch(arrays, batch_size)
@@ -142,12 +155,18 @@ class LocalTrainer:
 
                 loss.backward()
                 self._check_gradients_finite()
-                if grad_clip:
+                # SRS gradient clipping: none | value | norm
+                if clip_mode == "norm":
                     grad_norm = torch.nn.utils.clip_grad_norm_(
-                        self.model.parameters(), float(grad_clip)
+                        self.model.parameters(), float(max_norm)
                     )
                     if not torch.isfinite(torch.as_tensor(grad_norm)).all().item():
                         raise ValueError(f"Non-finite gradient norm during clipping: {grad_norm}")
+                elif clip_mode == "value":
+                    torch.nn.utils.clip_grad_value_(self.model.parameters(), float(clip_value))
+                elif clip_mode != "none":
+                    raise ValueError(f"Unknown gradient_clip mode '{clip_mode}'. Options: none, value, norm")
+
                 self.optimizer.step()
                 self._check_parameters_finite()
                 losses.append(float(loss.detach().cpu()))

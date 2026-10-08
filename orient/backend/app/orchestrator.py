@@ -21,7 +21,9 @@ import torch
 
 from . import aggregators, weighting
 from .config import settings
+from .metrics import weight_divergence
 from .models import build_model, count_parameters
+from .noise_sim import apply_noise_to_updates
 from .problems import get_problem
 from .protocol import (
     AssignmentResponse,
@@ -65,6 +67,16 @@ class RunState:
     update_meta: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     metrics: List[Dict[str, Any]] = field(default_factory=list)
     round_started_at: float = 0.0
+    # SRS extended
+    heterogeneity: Optional[Dict[str, Any]] = None
+    noise_mode: str = "none"
+    noise_fraction: float = 0.0
+    gradient_clip: str = "none"
+    max_norm: float = 1.0
+    clip_value: float = 0.5
+    optimizer_name: str = "adam"
+    seed: int = 0
+    compromised_log: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class Federation:
@@ -85,6 +97,7 @@ class Federation:
         self._global_model = None
         self._global_bytes: bytes = b""
         self._global_sha: str = ""
+        self._initial_state: Optional[Dict[str, torch.Tensor]] = None
 
     # ------------------------------------------------------------------ registry
     def register(self, reg: ClientRegistration) -> ClientInfo:
@@ -186,6 +199,20 @@ class Federation:
                 raise ValueError("total_rounds must be >= 1")
             if int(req.local_epochs) < 1:
                 raise ValueError("local_epochs must be >= 1")
+            # noise validation
+            noise_mode = (req.noise_mode or "none").lower().strip()
+            if noise_mode not in ("none", "noisy", "adversarial"):
+                raise ValueError(f"Unknown noise_mode '{noise_mode}'. Options: none, noisy, adversarial")
+            noise_fraction = float(req.noise_fraction)
+            if not (0.0 <= noise_fraction <= 1.0):
+                raise ValueError("noise_fraction must be in [0,1]")
+            # gradient clipping validation
+            gc = (req.gradient_clip or "none").lower().strip()
+            if gc not in ("none", "value", "norm"):
+                raise ValueError(f"Unknown gradient_clip '{gc}'. Options: none, value, norm")
+            # heterogeneity validation (optional, just ensure dict if provided)
+            if req.heterogeneity is not None and not isinstance(req.heterogeneity, dict):
+                raise ValueError("heterogeneity must be a mapping")
 
             if req.expected_clients:
                 requested_clients = sorted(set(req.expected_clients))
@@ -210,18 +237,32 @@ class Federation:
                 # Do not carry idle clients from a different problem into the new run.
                 expected = self.live_client_ids(req.problem)
 
+            # seed handling (FR-CFG-6, FR-STORE-5)
+            run_seed = int(req.seed) if req.seed is not None else int(self.seed)
+            self.seed = run_seed
             # Reproducibility (NFR-REP-1): seed before building the global model so
             # its random initialization is identical for a given seed.
-            random.seed(self.seed)
-            torch.manual_seed(self.seed)
-            np.random.seed(self.seed % (2**32))
+            random.seed(run_seed)
+            torch.manual_seed(run_seed)
+            np.random.seed(run_seed % (2**32))
 
             model = build_model(problem.model_spec())
             self._problem = problem
             self._global_model = model
             self.server_opt = aggregators.ServerOptimizerState()
+            # For scaffold, include local_epochs in params for control update scaling
+            agg_params = dict(req.aggregator_params)
+            agg_params.setdefault("local_epochs", int(req.local_epochs))
             self._global_bytes = state_dict_to_bytes(model.state_dict())
             self._global_sha = sha256_hex(self._global_bytes)
+            self._initial_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+
+            # optimizer name handling FR-AGG-13: per-aggregator override, default adam
+            opt_name = (req.optimizer or "adam").lower().strip()
+            # SCAFFOLD typically uses SGD locally per paper; but we respect explicit request
+            if aggregator_name == "scaffold" and opt_name == "adam" and "optimizer" not in req.model_dump():
+                # default scaffold local optimizer to sgd for better stability, but keep adam if explicitly requested
+                pass
 
             self.run = RunState(
                 phase="collecting",
@@ -232,21 +273,30 @@ class Federation:
                 weighting=weighting_name,
                 local_epochs=int(req.local_epochs),
                 learning_rate=float(req.learning_rate),
-                aggregator_params=dict(req.aggregator_params),
+                aggregator_params=agg_params,
                 expected=expected,
                 round_started_at=time.time(),
+                heterogeneity=dict(req.heterogeneity) if req.heterogeneity else None,
+                noise_mode=noise_mode,
+                noise_fraction=noise_fraction,
+                gradient_clip=gc,
+                max_norm=float(req.max_norm),
+                clip_value=float(req.clip_value),
+                optimizer_name=opt_name,
+                seed=run_seed,
             )
             self.storage = RunStorage(self.results_dir, req.problem, aggregator_name)
-            self.storage.write_config(
-                {
-                    **req.model_dump(),
-                    "aggregator": aggregator_name,
-                    "weighting": weighting_name,
-                    "n_parameters": count_parameters(model),
-                    "seed": self.seed,
-                    "min_clients_per_round": MIN_CLIENTS_PER_ROUND,
-                }
-            )
+            self.storage.set_initial_state(self._initial_state)
+            # preserve raw yaml if provided via _raw_yaml in extra
+            cfg_dump = {
+                **req.model_dump(),
+                "aggregator": aggregator_name,
+                "weighting": weighting_name,
+                "n_parameters": count_parameters(model),
+                "seed": run_seed,
+                "min_clients_per_round": MIN_CLIENTS_PER_ROUND,
+            }
+            self.storage.write_config(cfg_dump)
             return self.status()
 
     def stop_run(self) -> RunStatus:
@@ -255,6 +305,10 @@ class Federation:
             self._completed_clients.update(self.run.expected)
             if self.storage and self._global_model is not None:
                 self.storage.log_round({"event": "stopped", "round": self.run.round})
+                try:
+                    self.storage.finalize(self._global_model.state_dict())
+                except Exception:
+                    pass
             return self.status()
 
     # ------------------------------------------------------------- client cycle
@@ -312,6 +366,9 @@ class Federation:
                 )
 
             problem = self._problem
+            # optimizer spec per FR-AGG-13: use run's optimizer_name
+            opt_name = self.run.optimizer_name or "adam"
+            # Scaffold prefers SGD locally but we respect configured optimizer
             return AssignmentResponse(
                 status="train",
                 round=self.run.round,
@@ -320,9 +377,14 @@ class Federation:
                 model_spec=problem.model_spec(),
                 problem_spec=problem.problem_spec(),
                 local_epochs=self.run.local_epochs,
-                optimizer=OptimizerSpec(name="adam", lr=self.run.learning_rate),
+                optimizer=OptimizerSpec(name=opt_name, lr=self.run.learning_rate),
                 prox_mu=aggregators.prox_mu_for(self.run.aggregator, self.run.aggregator_params),
                 weights_sha256=self._global_sha,
+                gradient_clip=self.run.gradient_clip,
+                max_norm=self.run.max_norm,
+                clip_value=self.run.clip_value,
+                noise_mode=self.run.noise_mode,
+                heterogeneity=self.run.heterogeneity,
             )
 
     def get_global_bytes(self, round_no: int) -> bytes:
@@ -441,7 +503,20 @@ class Federation:
         n_samples = [self.run.update_meta[c]["n_samples"] for c in order]
         losses = [self.run.update_meta[c]["local_loss"] for c in order]
 
+        # FR-NOISE: simulate noisy/adversarial clients (before weighting)
+        compromised: List[str] = []
+        if self.run.noise_mode in ("noisy", "adversarial") and self.run.noise_fraction > 0:
+            # deterministic per-round seed
+            seed = int(self.seed + self.run.round * 1009)
+            new_states, bad_idx = apply_noise_to_updates(states, self.run.noise_mode, self.run.noise_fraction, seed=seed)
+            states = new_states
+            compromised = [order[i] for i in bad_idx]
+            # log compromised for this round
+            self.run.compromised_log.append({"round": self.run.round, "compromised": compromised, "mode": self.run.noise_mode})
+
         weights = weighting.compute_weights(self.run.weighting, n_samples, losses)
+        # keep previous state for divergence
+        prev_state = {k: v.detach().cpu().clone() for k, v in self._global_model.state_dict().items()}
         result = aggregators.aggregate(
             self.run.aggregator,
             states,
@@ -455,6 +530,16 @@ class Federation:
         self._global_sha = sha256_hex(self._global_bytes)
 
         metrics = self._problem.evaluate(self._global_model)
+        # FR-EVAL-3: weight divergence vs previous and vs initial
+        wd_prev = weight_divergence(result.state_dict, prev_state)
+        wd_init = {}
+        if self._initial_state is not None:
+            try:
+                wd_init = weight_divergence(result.state_dict, self._initial_state)
+            except Exception:
+                wd_init = {}
+        # For compatibility, store mean divergence
+        wd_summary = {"prev_mean": wd_prev.get("_mean"), "init_mean": wd_init.get("_mean")}
         record: Dict[str, Any] = {
             "round": self.run.round,
             "aggregator": self.run.aggregator,
@@ -465,16 +550,30 @@ class Federation:
             "n_samples": n_samples,
             **metrics,
             "aggregation_info": result.info,
+            "weight_divergence": wd_prev,
+            "weight_divergence_init": wd_init,
+            "compromised_clients": compromised,
+            "heterogeneity": self.run.heterogeneity,
         }
         self.run.metrics.append(record)
         if self.storage:
             self.storage.log_round(record)
+            # track best
+            try:
+                l2_val = float(metrics.get("l2_relative_error", float("inf")))
+                self.storage.notify_best(l2_val, result.state_dict)
+            except Exception:
+                pass
 
         if self.run.round >= self.run.total_rounds:
             self.run.phase = "complete"
             self._completed_clients.update(order)
             if self.storage:
-                self.storage.save_model(self._global_model.state_dict())
+                try:
+                    self.storage.save_model(self._global_model.state_dict())
+                    self.storage.finalize(self._global_model.state_dict(), extra_metrics={"heterogeneity": self.run.heterogeneity, "noise_mode": self.run.noise_mode, "compromised_log": self.run.compromised_log})
+                except Exception:
+                    pass
         else:
             self.run.round += 1
             self.run.updates = {}

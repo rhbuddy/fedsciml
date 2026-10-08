@@ -1,6 +1,6 @@
 {
   "problem": "gramacy_lee",
-  "n_samples": 2000,
+  "n_samples": 1500,
   "domain": {
     "interval": [
       1.3,

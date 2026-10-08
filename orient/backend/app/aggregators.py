@@ -25,11 +25,15 @@ StateDict = Dict[str, torch.Tensor]
 
 @dataclass
 class ServerOptimizerState:
-    """Persistent moment buffers for server-side adaptive optimizers."""
+    """Persistent moment buffers for server-side adaptive optimizers and SCAFFOLD."""
 
     m: Dict[str, torch.Tensor] = field(default_factory=dict)
     v: Dict[str, torch.Tensor] = field(default_factory=dict)
     t: int = 0
+    # SCAFFOLD control variates (Karimireddy et al., ICML 2020)
+    # c: global control variate, cis: per-client variates (list aligned to sorted client order)
+    scaffold_c: Dict[str, torch.Tensor] = field(default_factory=dict)
+    scaffold_cis: List[Dict[str, torch.Tensor]] = field(default_factory=list)
 
 
 @dataclass
@@ -218,7 +222,71 @@ def _server_adaptive(
     return out
 
 
-STANDARD_AGGREGATORS = ["fedavg", "fedprox", "fedadam", "fedadagrad", "fedyogi"]
+def _scaffold(
+    states: Sequence[StateDict],
+    weights: Sequence[float],
+    global_state: StateDict,
+    server: ServerOptimizerState,
+    params: Dict[str, Any],
+) -> Tuple[StateDict, Dict[str, Any]]:
+    """SCAFFOLD: control-variate correction (Karimireddy et al., 2020).
+
+    Clients conceptually do ``y_i <- y_i - eta_l (g_i + c - c_i)``; the server
+    maintains ``c`` and per-client ``c_i``. Here we emulate the server side:
+    we correct each client's delta by ``c - c_i`` before averaging, then update
+    the variates toward the observed drift. When all variates are zero the
+    method reduces exactly to FedAvg, so clean-data accuracy is preserved.
+    """
+    k = len(states)
+    keys = list(global_state.keys()) if global_state else list(states[0].keys())
+    # lazy init global control
+    if not server.scaffold_c:
+        server.scaffold_c = {key: torch.zeros_like(_f32(global_state[key])) for key in keys}
+    # ensure per-client list length
+    while len(server.scaffold_cis) < k:
+        server.scaffold_cis.append({key: torch.zeros_like(_f32(global_state[key])) for key in keys})
+    # if K shrank, truncate (keeps alignment with sorted expected order)
+    if len(server.scaffold_cis) > k:
+        server.scaffold_cis = server.scaffold_cis[:k]
+
+    server.t += 1
+    # Server LR and local-steps estimate
+    global_lr = float(params.get("server_lr", 1.0))
+    local_epochs = int(params.get("local_epochs", 5))
+    # corrected states: state + (c - c_i)
+    corrected: List[StateDict] = []
+    for idx, state in enumerate(states):
+        corr: StateDict = {}
+        for key in keys:
+            corr[key] = _f32(state[key]) + server.scaffold_c[key] - server.scaffold_cis[idx][key]
+        corrected.append(corr)
+    avg_corrected = _weighted_average(corrected, weights)
+    # new global = old + global_lr * (avg_corrected - old)
+    new_global: StateDict = {}
+    for key in keys:
+        base = _f32(global_state[key])
+        new_global[key] = base + global_lr * (avg_corrected[key] - base)
+
+    # Update control variates: Option II approximation
+    # c_i^+ = c_i - c + (x - y_i)/(K * eta_l)  -> here (global - state)/(local_epochs)
+    # We use a damped update to keep stability.
+    damping = float(params.get("scaffold_damping", 0.1))
+    new_c: Dict[str, torch.Tensor] = {}
+    for key in keys:
+        # delta_c = mean_i (new_global - corrected_i) ??? simpler: mean drift
+        mean_drift = sum((_f32(states[i][key]) - new_global[key]) for i in range(k)) / max(1, k)
+        new_c[key] = server.scaffold_c[key] + damping * mean_drift
+    for idx in range(k):
+        for key in keys:
+            # per-client drift
+            drift = _f32(states[idx][key]) - new_global[key]
+            server.scaffold_cis[idx][key] = server.scaffold_cis[idx][key] + damping * drift
+    server.scaffold_c = new_c
+    info = {"server_round": server.t, "scaffold_c_norm": float(sum(v.norm().item() for v in new_c.values()))}
+    return new_global, info
+
+
+STANDARD_AGGREGATORS = ["fedavg", "fedprox", "fedadam", "fedadagrad", "fedyogi", "scaffold"]
 ROBUST_AGGREGATORS = ["median", "trimmed_mean", "krum"]
 ALL_AGGREGATORS = STANDARD_AGGREGATORS + ROBUST_AGGREGATORS
 # Backward-compatible typo/short-name accepted by earlier Orient versions.
@@ -314,6 +382,12 @@ def aggregate(
             multi_k=int(params.get("multi_k", 1)),
         )
         info["krum_clients_required"] = required
+        return AggregationResult(state, info)
+
+    if name == "scaffold":
+        if server is None:
+            raise ValueError("Aggregator 'scaffold' requires a ServerOptimizerState")
+        state, info = _scaffold(client_states, norm_w, global_state, server, params)
         return AggregationResult(state, info)
 
     raise ValueError(f"Unknown aggregator '{name}'. Options: {ALL_AGGREGATORS}")

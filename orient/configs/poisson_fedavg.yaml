@@ -1,0 +1,17 @@
+# Appendix A.1 FedAvg on Poisson (Validation Gate)
+problem: poisson
+n_clients: 2
+aggregator: fedavg
+aggregation_weights: data_size
+local_epochs: 5
+global_rounds: 100
+heterogeneity:
+  mode: 1d_partition
+  n_pieces: 10
+learning_rate: 0.001
+optimizer: adam
+seed: 42
+noise_mode: none
+noise_fraction: 0.0
+gradient_clip: none
+output_dir: results/poisson/fedavg/

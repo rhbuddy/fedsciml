@@ -121,9 +121,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 trainer.load_weights(bytes_to_state_dict(raw))
 
                 logger.info(
-                    "Round %d/%d: training %d epoch(s) on %d samples",
-                    resp.round, resp.total_rounds, resp.local_epochs, bundle.size,
+                    "Round %d/%d: training %d epoch(s) on %d samples (clip=%s)",
+                    resp.round, resp.total_rounds, resp.local_epochs, bundle.size, resp.gradient_clip,
                 )
+                # SRS gradient clipping: server config takes precedence over CLI legacy flag
                 stats = trainer.train(
                     bundle.arrays,
                     epochs=resp.local_epochs,
@@ -131,6 +132,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     batch_size=args.batch_size,
                     prox_mu=resp.prox_mu,
                     grad_clip=args.grad_clip,
+                    gradient_clip=resp.gradient_clip,
+                    max_norm=resp.max_norm,
+                    clip_value=resp.clip_value,
                 )
                 logger.info(
                     "Round %d: local loss %.6g (%d steps)",

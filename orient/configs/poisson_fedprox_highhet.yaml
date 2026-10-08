@@ -1,0 +1,19 @@
+# Appendix A.2 FedProx with High Heterogeneity
+problem: poisson
+n_clients: 2
+aggregator: fedprox
+mu: 0.01
+aggregation_weights: data_size
+local_epochs: 5
+global_rounds: 100
+heterogeneity:
+  mode: 1d_partition
+  n_pieces: 2  # High heterogeneity
+learning_rate: 0.001
+optimizer: adam
+seed: 42
+noise_mode: none
+noise_fraction: 0.0
+aggregator_params:
+  mu: 0.01
+output_dir: results/poisson/fedprox_highhet/

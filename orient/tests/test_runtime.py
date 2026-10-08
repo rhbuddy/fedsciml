@@ -102,7 +102,20 @@ def test_aggregators() -> None:
             f"{name} converges onto the client mean over repeated rounds",
         )
 
-    check(len(ALL_AGGREGATORS) == 8, "8 aggregators are exposed")
+    # scaffold also converges (with correction)
+    server = ServerOptimizerState()
+    current = {"w": global_state["w"].clone()}
+    for _ in range(100):
+        current = aggregate(
+            "scaffold", states, weights, current, {"server_lr": 0.8}, server
+        ).state_dict
+    check(
+        torch.allclose(current["w"], torch.tensor([3.0, 3.0]), atol=0.5),
+        "scaffold converges onto the client mean",
+    )
+
+    check(len(ALL_AGGREGATORS) == 9, "9 aggregators are exposed (SRS §4.4)")
+    check("scaffold" in ALL_AGGREGATORS, "scaffold in ALL_AGGREGATORS")
 
 
 def test_weighting() -> None:
@@ -118,9 +131,21 @@ def test_weighting() -> None:
 
 def test_problems() -> None:
     section("problems")
+    expected = [
+        "allen_cahn",
+        "antiderivative",
+        "burgers",
+        "diffusion_reaction",
+        "gramacy_lee",
+        "helmholtz",
+        "inverse_dr",
+        "inverse_ns",
+        "poisson",
+        "schaffer",
+    ]
     check(
-        sorted(list_problems()) == ["antiderivative", "gramacy_lee", "poisson", "schaffer"],
-        "4 problems registered",
+        sorted(list_problems()) == expected,
+        "10 problems registered (SRS §4.2)",
     )
 
     for name in list_problems():

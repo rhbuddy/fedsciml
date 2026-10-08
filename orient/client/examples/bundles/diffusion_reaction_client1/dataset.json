@@ -1,0 +1,11 @@
+{
+  "problem": "diffusion_reaction",
+  "n_samples": 1500,
+  "domain": {
+    "fourier_modes": [
+      1,
+      4,
+      5
+    ]
+  }
+}

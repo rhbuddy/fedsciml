@@ -17,12 +17,20 @@ import torch.nn as nn
 
 from .protocol import ModelSpec
 
+
+class Sine(nn.Module):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.sin(x)
+
+
 _ACTIVATIONS: Dict[str, type] = {
     "tanh": nn.Tanh,
     "relu": nn.ReLU,
     "silu": nn.SiLU,
     "gelu": nn.GELU,
     "sigmoid": nn.Sigmoid,
+    "sin": Sine,
+    "sine": Sine,
 }
 
 
@@ -37,8 +45,32 @@ def poisson1d_hard_transform(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     return x + torch.tanh(x) * torch.tanh(np.pi - x) * y
 
 
+def helmholtz_hard_transform(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    """Hard constraint for 2D Helmholtz: u=0 on boundary of [0,1]^2."""
+    # x shape (...,2), y shape (...,1)
+    if x.shape[-1] == 2:
+        x0 = x[..., 0:1]
+        x1 = x[..., 1:2]
+        return x0 * (1 - x0) * x1 * (1 - x1) * y
+    return y
+
+
+def allen_cahn_transform(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    """Allen-Cahn transform: initial condition u(x,0)=x^2 cos(pi x), periodic?"""
+    # x shape (...,2) where [:,0]=x_spatial, [:,1]=t
+    if x.shape[-1] == 2:
+        x_sp = x[..., 0:1]
+        t = x[..., 1:2]
+        # u = x^2 cos(pi x) at t=0, smooth transition
+        ic = torch.square(x_sp) * torch.cos(np.pi * x_sp)
+        return t * (1 - torch.square(x_sp)) * y + ic
+    return y
+
+
 _TRANSFORMS: Dict[str, Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = {
     "poisson1d_hard": poisson1d_hard_transform,
+    "helmholtz_hard": helmholtz_hard_transform,
+    "allen_cahn": allen_cahn_transform,
 }
 
 

@@ -1,0 +1,13 @@
+{
+  "problem": "burgers",
+  "n_samples": 1500,
+  "domain": {
+    "fourier_modes": [
+      1,
+      2,
+      3,
+      4,
+      6
+    ]
+  }
+}

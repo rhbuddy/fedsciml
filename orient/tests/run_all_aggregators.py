@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 VENV_PY = ROOT / ".venv" / "Scripts" / "python.exe"
 PY = str(VENV_PY) if VENV_PY.exists() else sys.executable
 
-AGGREGATORS = ["fedavg", "fedprox", "fedadam", "fedadagrad", "fedyogi", "median", "trimmed_mean", "krum"]
+AGGREGATORS = ["fedavg", "fedprox", "fedadam", "fedadagrad", "fedyogi", "scaffold", "median", "trimmed_mean", "krum"]
 PROBLEM = os.environ.get("E2E_PROBLEM", "gramacy_lee")
 
 # Server-side adaptive optimizers take a normalized step of ~server_lr per round, so
@@ -29,6 +29,7 @@ PLANS = {
     "fedadam": {"rounds": 30, "epochs": 5, "server_lr": 1.0, "clients": 2},
     "fedadagrad": {"rounds": 30, "epochs": 5, "server_lr": 1.0, "clients": 2},
     "fedyogi": {"rounds": 30, "epochs": 5, "server_lr": 1.0, "clients": 2},
+    "scaffold": {"rounds": 15, "epochs": 5, "server_lr": 0.8, "clients": 2},
     "median": {"rounds": 12, "epochs": 5, "server_lr": 0.3, "clients": 2},
     "trimmed_mean": {"rounds": 12, "epochs": 5, "server_lr": 0.3, "clients": 2},
     "krum": {"rounds": 12, "epochs": 5, "server_lr": 0.3, "clients": 5},

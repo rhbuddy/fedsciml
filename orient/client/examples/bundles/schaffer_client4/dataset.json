@@ -1,6 +1,6 @@
 {
   "problem": "schaffer",
-  "n_samples": 2000,
+  "n_samples": 1500,
   "domain": {
     "x1_interval": [
       0.40000000000000036,

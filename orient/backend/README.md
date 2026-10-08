@@ -52,7 +52,7 @@ If a client disappears mid-run the round would stall, so the operator can press
 |---|---|
 | `app/api.py` | FastAPI routes (thin — no science logic) |
 | `app/orchestrator.py` | `Federation`: registry, round engine, aggregation trigger |
-| `app/aggregators.py` | 8 aggregation algorithms on `state_dict` tensors |
+| `app/aggregators.py` | 9 aggregation algorithms (`fedavg/fedprox/fedadam/fedadagrad/fedyogi/scaffold` + `median/trimmed_mean/krum`) on `state_dict` tensors |
 | `app/weighting.py` | `uniform` / `data_size` / `quality` client weights |
 | `app/models.py` | pure-PyTorch model factory (shared with the client) |
 | `app/problems.py` | problem registry: losses, residuals, analytic ground truth |
@@ -63,11 +63,22 @@ If a client disappears mid-run the round would stall, so the operator can press
 | `app/config.py` | env-overridable settings |
 | `ui/dashboard.py` | Streamlit control panel (thin layer over the API) |
 
-## Artifacts
+## Artifacts (SRS §8.2 + FR-STORE)
 
 ```
 results/<problem>/<aggregator>/<run_id>/
+├── config.yaml              exact YAML snapshot (FR-CFG-6 reproducibility)
 ├── config.json              run configuration + parameter count + seed
 ├── metrics.jsonl            one JSON record per completed round
-└── final_model.safetensors  final global weights
+├── metrics.json             summary (best/final L2, histories)
+├── final_model.safetensors  final global weights (wire)
+├── server_final.pth         torch.save final (SRS)
+├── server_best.pth          torch.save best (lowest L2)
+├── loss.npz                 mean_local_loss curve
+├── l2_error.npz             l2_relative_error curve
+└── weight_divergence.npz    per-layer divergence (FR-EVAL-3)
 ```
+
+**Runner:** `python -m app.runner --config configs/poisson_fedavg.yaml` (single) or `--validation-gate poisson` (gate) or sweep YAML → `sweep_summary_*.json` + comparison table.
+
+**Metrics:** `W1` heterogeneity via `app/metrics.py` (`ot.emd2`/`scipy`), per-layer weight divergence, `compromised_clients` + `heterogeneity` logged per round.

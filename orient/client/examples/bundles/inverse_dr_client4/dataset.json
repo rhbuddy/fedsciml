@@ -1,0 +1,10 @@
+{
+  "problem": "inverse_dr",
+  "n_samples": 1500,
+  "domain": {
+    "interval": [
+      0.6000000000000001,
+      0.8
+    ]
+  }
+}
