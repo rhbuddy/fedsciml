@@ -1,0 +1,10 @@
+# Orient Client dependencies
+torch>=2.2
+numpy>=1.26
+safetensors>=0.4
+httpx>=0.27
+pydantic>=2.7
+
+# Local UI
+streamlit>=1.36
+pandas>=2.0

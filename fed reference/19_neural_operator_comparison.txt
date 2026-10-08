@@ -1,0 +1,2456 @@
+A comprehensive and fair comparison of two neural operators
+(with practical extensions) based on FAIR data
+Lu Lua,1 , Xuhui Mengb,1 , Shengze Caib,1 , Zhiping Maoc , Somdatta Goswamib , Zhongqiang
+Zhangd , George Em Karniadakisb,e,∗
+
+arXiv:2111.05512v1 [physics.comp-ph] 10 Nov 2021
+
+a
+
+Department of Chemical and Biomolecular Engineering, University of Pennsylvania
+b
+Division of Applied Mathematics, Brown University
+c
+School of Mathematical Sciences, Xiamen University
+d
+Department of Mathematical Sciences, Worcester Polytechnic Institute
+e
+School of Engineering, Brown University
+
+Abstract
+Neural operators can learn nonlinear mappings between function spaces and offer a new simulation
+paradigm for real-time prediction of complex dynamics for realistic diverse applications as well
+as for system identification in science and engineering. Herein, we investigate the performance
+of two neural operators, which have shown promising results so far, and we develop new practical extensions that will make them more accurate and robust and importantly more suitable for
+industrial-complexity applications. The first neural operator, DeepONet, was published in 2019 [1],
+and its original architecture was based on the universal approximation theorem of Chen & Chen
+[2]. The second one, named Fourier Neural Operator or FNO, was published in 2020 [3], and it is
+based on parameterizing the integral kernel in the Fourier space. DeepONet is represented by a
+summation of products of neural networks (NNs), corresponding to the branch NN for the input
+function and the trunk NN for the output function; both NNs are general architectures, e.g., the
+branch NN can be replaced with a CNN or a ResNet. According to [4], FNO in its continuous
+form can be viewed as a DeepONet with a specific architecture of the branch NN and a trunk
+NN represented by a trigonometric basis. In order to compare FNO with DeepONet for realistic
+setups, we develop several extensions of FNO that can deal with complex geometric domains as
+well as mappings where the input and output function spaces are of different dimensions. We also
+endow DeepONet with special features that provide inductive bias and accelerate training, and we
+present a faster implementation of DeepONet with cost comparable to the computational cost of
+FNO, which is based on the Fast Fourier Transform.
+We consider 16 different benchmarks to demonstrate the relative performance of the two neural
+operators, including instability wave analysis in hypersonic boundary layers, prediction of the vorticity field of a flapping airfoil, porous media simulations in complex-geometry domains, etc. The
+performance of DeepONet and FNO is comparable for relatively simple settings, but for complex
+geometries and especially noisy data, the performance of FNO deteriorates greatly. For example,
+for the instability wave analysis with only 0.1% noise added to the input data, the error of FNO increases 10,000 times making it inappropriate for such important applications, while there is hardly
+any effect of such noise on the DeepONet. This behavior of FNO may be related to an inherent
+mapping instability between function spaces, and hence future work should address this important
+issue. We also compare theoretically the two neural operators and obtain similar error estimates
+∗
+1
+
+Corresponding author. Email: george karniadakis@brown.edu
+These authors contributed equally to this work.
+
+Preprint submitted to Journal of LATEX Templates
+
+November 11, 2021
+
+for DeepONet and FNO under the same regularity assumptions.
+Keywords: nonlinear mappings, operator regression, deep learning, DeepONet, FNO, scientific
+machine learning
+
+1. Introduction
+While there have been rapid developments in machine learning in the last 20 years and there is
+currently plenty of euphoria and admiration about the so-called “unreasonable effectiveness of deep
+learning in artificial intelligence” [5], the development of physics-informed machine learning and
+its application to scientific applications is relatively recent [6]. Physics-informed neural networks
+(PINNs) were introduced first in 2017 [7, 8] for forward, inverse and hybrid problems, and since
+then there have also been rapid developments in this area [9, 10, 11, 12, 13, 14, 15, 16, 17], although
+the achievements so far in scientific and engineering applications have been modest compared to
+applications in imaging, speech recognition and natural language processing. According to some
+estimates, last year alone close to 100,000 papers on machine learning were published, all of which
+were based on the assumption of the universal function approximation of neural networks — a
+theoretical work that goes back to the early 1990s [18, 19].
+At about the same time, a much less known theorem of Chen & Chen [2] on the universal operator approximation by single-layer neural networks was developed but remained largely unknown
+until our work on DeepONet in 2019 [1] with subsequent theoretical and computational extensions
+in [20]. Unlike function regression, operator regression aims to map infinite-dimensional functions
+(inputs) to infinite-dimensional functions (outputs). The work in [20] extended the theorem of
+Chen & Chen [2] to deep neural networks, which are more expressive and break the curse of dimensionality in the input space. More importantly, from the computational point of view, the new
+paradigm of operator regression allows for simulating the dynamics of complex nonlinear systems,
+e.g., fluid flows, corresponding to different boundary and initial conditions without the need for
+retraining the neural network. As noted independently by DeepMind researcher Irina Higgins [21],
+“Once DeepONet is trained, it can be applied to new input functions, thus producing new results
+substantially faster than numerical solvers. Another benefit of DeepONet is that it can be applied
+to simulation data, experimental data or both, and the experimental data may span multiple orders of magnitude in spatio-temporal scales, thus allowing scientists to estimate dynamics better by
+pooling the existing data.” DeepONet can be applied to partial differential equations (PDEs) but
+also to learning explicit mathematical operators, e.g., integration, fractional derivatives, Laplace
+transforms, etc. [20].
+Another parallel effort on operator regression started in 2020 with a paper on a graph kernel
+network (GKN) for PDEs [22]. The authors represented the infinite-dimensional mapping by composing nonlinear activation functions and a class of integral operators with the kernel integration
+computed by message passing on graph networks. Unfortunately, GKN was of limited use as it was
+shown to be unstable with the increase of the number of hidden layers [23]. A different architecture
+was then proposed by the same group in [3], where they formulated the operator regression by
+parameterizing the integral kernel directly in Fourier space. They demonstrated very good accuracy and efficiency for relatively simple settings, including the Burgers’ equation, Darcy flow, and
+the Navier-Stokes equations. However, they made the claim that “The Fourier neural operator is
+the first ML-based method to successfully model turbulent flows with zero-shot super-resolution.
+It is up to three orders of magnitude faster compared to traditional PDE solvers. Additionally,
+it achieves superior accuracy compared to previous learning-based solvers under fixed resolution.”
+This is of course erroneous as the flow considered was a simple smooth laminar flow, and their
+2
+
+comparison with DeepONet was not properly conducted. In fact, as we will demonstrate herein,
+DeepONet can achieve similar and in fact better accuracy for the same or similar benchmarks presented in [3] and even superior accuracy in realistic problems involving complex-geometry domains
+and noisy input data.
+In this paper, we present a very systematic and transparent study of comparing the performance
+of DeepONet and FNO for 16 different benchmarks selected carefully to highlight both the advantages and the limitations of the two neural operators. According to an independent work by [4],
+FNO in its continuous form can be viewed as a DeepONet with a specific architecture of the branch
+and a trunk represented by a trigonometric basis. Hence, in the current work we introduce two
+significant enhancements to FNO so that they can deal with mappings of different dimensionality
+as well as with complex-geometry domains, so that we can make sensible comparisons with DeepONet, which is a general neural operator. We also introduce various enhancements to DeepONet
+to accelerate its training and increase its accuracy, introducing for example the POD modes in the
+trunk net, obtained readily from the available training datasets. In addition to computational tests,
+we also perform a theoretical comparison of DeepONet versus FNO, following the published work
+on the theory of DeepONet in [2, 24, 25, 26], and on the more recent theory of FNO in [4, 27]. On
+this point, it is worth noted that DeepONet was based from the onset on the theorem of Chen &
+Chen [2], whereas the formulation of FNO was not theoretically justified originally, and the recent
+theoretical work covers only invariant kernels. There are also other methods for operator regression
+such as [28, 29, 30, 31], but in this work we only consider DeepONet and FNO.
+In the following, we summarize the new contributions of the current work in addition to designing 16 different benchmarks and obtaining new results for both DeepONet and FNO along with
+their new extensions. More specifically, the new developments for DeepONet are the following:
+• We introduce extra features in the trunk net and the branch net.
+• We impose hard-constraints for Dirichlet and periodic boundary conditions via a modified
+trunk net.
+• We develop a new extension, POD-DeepONet, that employs the POD modes of the training
+data as the trunk net.
+• We analyze and test a new DeepONet scaling that leads to accuracy improvement.
+• We extend DeepONet to deal with multiple outputs.
+• We present a new fast implementation of DeepONet, comparable to FNO for similar settings.
+Similarly, the new developments for FNO are the following:
+• dFNO+: We extend FNO to nonlinear mappings with inputs and outputs defined on different
+domains.
+• gFNO+: We extend FNO to nonlinear mappings with inputs and outputs defined on a
+complex geometry.
+• We add extra features by using them as extra network inputs.
+Moreover, we employ normalization of both inputs and outputs for DeepONet and FNO and demonstrate its effect.
+In our comparative studies, we designed benchmarks with important features typically encountered in real world applications, such as complex-geometry domains, non-smooth solutions,
+3
+
+unsteadiness, and noisy data. On the theoretical side, our contribution is on developing error estimation of the network size by emulating Fourier methods both for DeepONet and FNO. We aim
+to make this study, including codes and data, accessible to all, and to the degree possible we have
+followed the FAIR (Findability, Accessibility, Interoperability, and Reusability) guiding principles
+for scientific data management and stewardship [32].
+The paper is organized as follows. In the next section, we define the problem setup and the data
+types. In Section 3, we describe the DeepONet and FNO architectures as well as their extensions.
+In Section 4, we present a theoretical comparison of the approximation theorems for the two neural
+operators and in addition we compare their error estimates for the solution of the Burgers’ equation.
+In Section 5, we compare the performance of DeepONet and FNO for 16 different benchmarks listed
+in Table 2. Finally, we conclude with a summary in Section 6. The Appendix includes the proof of
+the theorem presented in the main text, description of the data sets, description of the architectures
+employed, and data generation for the Darcy problems and the cavity flows.
+2. Operator learning
+We first present the problem setup of operator learning and then discuss some important aspects
+of the dataset used for learning.
+2.1. Problem setup
+We consider a physical system, which involves multiple functions. Among these functions, we
+are usually interested in one function and aim to predict this function from other functions. For
+example, when the physical system is described by partial differential equations (PDEs), these
+functions typically include the PDE solution u(x, t), the forcing term f (x, t), the initial condition
+(IC) u0 (x), and the boundary conditions (BCs) ub (x, t), where x and t are the space and time
+coordinates, respectively.
+We denote the input function by v defined on the domain D ⊂ Rd , e.g., f (x, t) or u0 (x),
+v : D 3 x 7→ v(x) ∈ R,
+0
+
+and denote the output function by u defined on the domain D0 ⊂ Rd
+u : D0 3 ξ 7→ u(ξ) ∈ R.
+
+Let V and U be the spaces of v and u, respectively, and D and D0 could be two different domains.
+Then, the mapping from the input function v to the output function u is denoted by an operator
+G : V 3 v 7→ u ∈ U.
+In this study,we aim to approximate
+and train the network from a training
+ G by neural networks
+
+dataset T = v (1) , u(1) , v (2) , u(2) , · · · , v (m) , u(m) .
+2.2. Data types
+Deep learning is a powerful method for leveraging big data, but in many science and engineering problems, the available data is not “big” enough to ensure accuracy and reliability of deep
+learning models. What we may have instead is “dinky, dirty, dynamics, and deceptive data” as
+fist characterized by Alexander Kott, chief of the Network Science Division of the US Army Research Laboratory [33]. On the other hand, scientific data should meet principles of findability,
+accessibility, interoperability, and reusability (FAIR) [32].
+4
+
+In addition, we have to facilitate multi-modality input data that may come from diverse sources,
+e.g., static images, videos, Schlieren photography, particle image velocimetry (PIV), particle tracking velocimetry (PTV), radar and satellite images, MRI, CT, X-ray, two-photon microscopy, satellite, synthetic/simulated data, scattered unstructured opportunistic data, etc. We also have to
+facilitate multi-fidelity data that not only include multi-resolution data but also data corresponding to different levels of physical complexity, and hence training of NN requires special multi-fidelity
+methods such as in [34, 35, 36]. Noisy data are omnipresent and effective NN training and inference
+should be stable to noise and provide answers with uncertainty quantification using, e.g., Bayesian
+NN as in [37, 35, 38, 39].
+All the codes and data will be available on Github https://github.com upon publication of
+our paper.
+3. Operator regression networks
+We first introduce the two neural operators, namely the deep operator network (DeepONet) [1,
+20] and the Fourier neural operator (FNO) [3], and subsequently we propose several extensions of
+these two methods.
+3.1. DeepONet
+Next, we provide an introduction to the vanilla2 DeepONet. Although vanilla DeepONet has
+demonstrated good performance in diverse applications [20, 40, 41, 42, 43, 44, 45, 46, 47], here, we
+propose several extensions of DeepONet to achieve better accuracy and faster training.
+3.1.1. Vanilla DeepONet
+Four slightly different versions of DeepONet have been developed in Ref. [20], but in this study
+we use the stacked DeepONet with bias, which exhibits the best performance in practice among all
+our versions of DeepONet. First of all, to work with the input function numerically, we need to discretize the input function v and represent v in a finite-dimensional space (Fig. 1A). We could evaluate v at a set of locations {x1 , x2 , . . . , xm }, i.e., the pointwise evaluations of [v(x1 ), v(x2 ), . . . , v(xm )].
+Many alternative representations could be applied. For example, we could project v to a set of
+basis functions and an approximation of v is then characterized/parameterized by the coefficients.
+In this work, we choose the evaluation approach to dicretize v. One advantage of DeepONet
+is that we do not dicretize the output function u because of the following network design. A
+DeepONet has two sub-networks: a “trunk” network and a “branch” network (Fig. 1A). The trunk
+net takes the coordinates ξ ∈ D0 as the input, while the branch net takes the discretized function
+v as input. Finally, the output of the network is expressed as:
+G(v)(ξ) =
+
+p
+X
+
+bk (v)tk (ξ) + b0 ,
+
+k=1
+
+where b0 ∈ R is a bias. {b1 , b2 , . . . , bp } are the p outputs of the branch net, and {t1 , t2 , . . . , tp } are
+the p outputs of the trunk net.
+We note that DeepONet is a high-level framework without restricting the branch net and the
+trunk net to any specific architecture. As ξ is ususally low dimensional, a standard FNN is commonly used as the trunk net. The choice of the branch net depends on the structure of the input
+2
+
+In this work, “vanilla” means the standard or unmodified version.
+
+5
+
+Figure 1: Architecture of DeepONet. (A) DeepONet architecture. If the trunk net is a feed-forward neural
+network, then it is a vanilla DeepONet. (B) Feature expansion of the trunk-net input. Periodic BCs can also be
+strictly imposed into the DeepONet by using the Fourier feature expansion. (C) Dirichlet BCs are strictly enforced
+in DeepONet by modifying the network output.
+
+function v, and it can be chosen as a FNN, ResNet, CNN, RNN, or a graph neural network (GNN),
+etc. For example, if the discretization of v is on an equispaced 2D grid, then a CNN can be used;
+if the discretization of v is on a unstructured mesh, then a GNN can be used.
+3.1.2. Feature expansion
+In many applications, we not only have a dataset, but also have some prior knowledge about
+the underlying system. For example, we may know that the output functions have an oscillating
+nature or the functions have a fast decay. It is then beneficial to encode the knowledge directly into
+DeepONet by modifying the DeepONet architecture. The specific way to encode the knowledge is
+problem dependent, and here we introduce two ways of feature expansion either in the trunk net
+or in the branch net.
+Feature expansion in the trunk net. If we know some features of the output function u(ξ), then we
+can construct a feature expansion (e1 (ξ), e2 (ξ), . . . ) for the trunk net input (Fig. 1B), which was
+originally proposed and used in PINNs [48, 13]. For example, as proposed in [42], for the problem
+with oscillating solutions, we can first perform a harmonic feature expansion on the input ξ of the
+trunk network as
+ξ 7→ (ξ, cos(ξ), sin(ξ), cos(2ξ), sin(2ξ), . . . ),
+which then becomes input to the trunk net. In this example, the features have analytical formulas.
+In general, we may not have the analytical formulas of features, and we can also use numerical
+values of the features as the extra input of the trunk net. For example, in dynamical systems, we
+can use some historical data as the feature. We note that here we usually still keep ξ as a feature.
+Feature expansion in the branch net. If the feature is a function of x, then we cannot encode it
+in the trunk net, and instead we can use the feature as an extra input function of the branch net
+(Fig. 1A).
+
+6
+
+3.1.3. Hard-constraint boundary conditions
+In some applications, we may know the boundary conditions of the system. Here, we introduce
+how to enforce the Dirichlet BCs and Periodic BCs as hard constraints in DeepONet.
+Dirichlet BCs.. Enforcing Dirichlet BCs in neural networks has been widely used in PINNs [13].
+Let us consider a Dirichlet BC for the DeepONet output:
+G(v)(ξ) = g(ξ),
+
+ξ ∈ ΓD ,
+
+where ΓD is a part of the boundary. To make the DeepONet output satisfy this BC automatically,
+we construct the solution as
+G(v)(ξ) = g(ξ) + `(ξ)N (v)(ξ),
+where N (v)(ξ) is the product of the branch and trunk nets, and `(ξ) is a function satisfying the
+following condition:
+
+`(ξ) = 0, ξ ∈ ΓD ,
+`(ξ) > 0, otherwise.
+Here, we assume g(ξ) is well defined for any ξ, otherwise we can construct a continuous extension
+for g.
+Periodic BCs. Here, we first introduce how to enforce periodic BCs in neural networks in 1D [13, 49]
+by constructing special feature expansion as discussed in Section 3.1.2, and then discuss how to
+extend it to 2D. If the solution u(ξ) is periodic with respect to ξ of the period P , then u(ξ) can
+be represented well by the Fourier series. Hence, we can replace the network input ξ with Fourier
+basis functions, i.e., the features in Fig. 1B are
+{1, cos (ωξ) , sin (ωξ) , cos (2ωξ) , sin (2ωξ) , · · · }
+with ω = 2π
+P . Compared to the aforementioned feature expansion, here we do not have the feature
+ξ any more. Because each Fourier basis function is periodic, it is easy to prove that the DeepONet
+output G(v)(ξ) is also periodic [49]. The number of Fourier features to be used is problem dependent,
+and we may use as few as the first two Fourier basis function {cos (ωξ) , sin (ωξ)}.
+Next, we discuss the 2D case, and with a slight abuse of the notation for x we denote ξ =
+(x, y) ∈ R2 . The basis functions of the Fourier series on a 2D square are:
+{cos (nωx x) cos (mωy y) , cos (nωx x) sin (mωy y) , sin (nωx x) cos (mωy y) , sin (nωx x) sin (mωy y)}m,n=0,1,2,···
+with ωx = P2πx and ωy = P2πy . If we only choose m, n ∈ {0, 1}, the basis are:
+{1, cos(ωx x), sin(ωx x), cos(ωy y), sin(ωy y),
+cos(ωx x) cos(ωy y), cos(ωx x) sin(ωy y), sin(ωx x) cos(ωy y), sin(ωx x) sin(ωy y)}
+or equivalently (due to trigonometric identities):
+n
+π o
+1, cos (ωx x − φ) , cos (ωy y − φ) , cos (ωx x ± ωy y − φ) : φ ∈ {0, } .
+2
+π
+Here, φ is the phase offset and has two values (0 and 2 ). However, these phase offsets may not
+be optimal, and thus instead of using fixed phase offsets, we can use multiple phase offsets and set
+them as trainable parameters:
+{1, cos (ωx x − φ1,1 ) , · · · , cos (ωx x − φ1,m ) , cos (ωy y − φ2,1 ) , · · · , cos(ωy y − φ2,m ),
+cos(ωx x+ωy y−φ3,1 ), · · · , cos(ωx x+ωy y−φ3,m ), cos(ωx x−ωy y−φ4,1 ), · · · , cos(ωx x−ωy y−φ4,m )},
+where φi,j (i = 1, · · · , 4 and j = 1, · · · , m) are trainable.
+7
+
+3.1.4. POD-DeepONet: Precomputed POD basis as the trunk net
+The vanilla DeepONet uses the trunk net to automatically learn the basis of the output function
+from the data. Here, we propose the POD-DeepONet, where we compute the basis by performing
+proper orthogonal decomposition (POD) on the training data (after first removing the mean).
+Then, we use this POD basis as the trunk net and only use neural networks for the branch net to
+learn the coefficients of the POD basis (Fig. 1A). The output can be written as:
+G(v)(ξ) =
+
+p
+X
+
+bk (v)φk (ξ) + φ0 (ξ),
+
+k=1
+
+where φ0 (ξ) is the mean function of u(ξ) computed from the training dataset. {b1 , b2 , . . . , bp } are
+the p outputs of the branch net, and {φ1 , φ2 , . . . , φp } are the p precomputed POD modes of u(ξ).
+The proposed POD-DeepONet shares a similar idea of using POD to represent functions as in [28].
+3.1.5. Rescaling DeepONet with second moment analysis
+It has been shown that it could be difficult to train neural networks if the variance of the
+output of each layer vanishes or explodes [50, 51]. To facilitate network training, it is beneficial
+to have unit variance after the random initialization of neural networks. Based on this idea,
+different initialization methods have been developed for different activation functions, e.g., the
+Glorot initialization for tanh [50] and the He initialization for ReLU [52].
+In DeepONet, the branch and trunk nets are two independent networks, and thus existing
+methods can be applied directly to maintain its variance. However, the DeepONet output is a
+product of the outputs of branch net and trunk net, which is not guaranteed to have unit variance.
+Hence, it is important to rescale the DeepONet output by its standard deviation as:
+" p
+#
+X
+1
+G(v)(ξ) = q
+bk (v)tk (ξ) + b0 .
+P
+Var[ pk=1 bk (v)tk (ξ)] k=1
+P
+Next, we analyze the variance Var[ pk=1 bk (v)tk (ξ)]. We assume that both the branch net and
+the trunk net are standard fully-connected neural networks:
+b
+σ (bLb −1 (v(x1 ), v(x2 ), . . . , v(xm ))),
+bk (v(x1 ), v(x2 ), . . . , v(xm )) = wk,L
+b 1
+
+nb
+
+b
+)> , bLb −1 ∈ R k,Lb ,
+(wk,L
+b
+nt
+
+t
+)> , tLt −1 ∈ R k,Lt −1 ,
+(wk,L
+t −1
+
+t
+tLt −1 (x) + θkt ),
+tk = σ2 (wk,L
+t −1
+
+where bLb −1 and tLt −1 are the outputs of the last hidden layer of the branch net and the trunk net,
+respectively, and they are fully-connected ReLU networks.
+We consider the ReLU activation function in both the branch and trunk nets, and thus use the
+He initialization [52]. We assume that all the biases are initialized to 0 and all the weights have the
+Gaussian distribution with mean 0 while all the random variables are independent and the weights
+of the same layer have the same variance. Then, at the initialization step we have [52]:
+1
+b
+b
+E[b2k ] = E[(wk,L
+)2 ]E[σ12 (bLb −1 )] = nbk,Lb Var[(wk,L
+) ]Var[(bLb −1 )1 ],
+b
+b 1
+2
+1
+1
+t
+t
+E[t2k ] = E[(wk,L
+tLt −1 )2 ] = ntk,Lt −1 Var[(wk,L
+) ]Var[(tLt −1 )1 ].
+t −1
+t −1 1
+2
+4
+
+E[bk ] = 0,
+
+As in the He initialization, we initialize the weights such that Var[b(Lb −1 )1 ] = 1/2 and Var[(tLt −1 )1 ] =
+b
+t
+1/2. Taking 12 nbk,Lb Var[(wk,L
+)1 ] = 1 and 21 ntk,Lt −1 Var[(wk,L
+) ] = 1, we then have
+t −1 1
+b
+1
+Var[bk ] = ,
+2
+8
+
+1
+E[t2k ] = .
+4
+
+Observe that bk and tk are independent and that E[bk ] = 0 and E[bk tk ] = 0. Moreover, E[bi bj ] = 1/2
+if i = j and E[bi bj ] = 0 if i 6= j. Then
+p
+p
+p
+p
+p
+X
+X
+X
+X
+X
+p
+2
+2
+2
+Var[
+bk tk ] = E[(
+bk tk ) ] = E[
+bk bl tk tl ] =
+E[bk ]E[tk ] =
+Var[bk ]E[t2k ] = .
+8
+k=1
+
+k=1
+
+k,l=1
+
+k=1
+
+k=1
+
+√
+The analysis above suggests that the scaling factor of the DeepONet should be O(1/ p). In our
+√
+experiment with POD-DeepONet, we indeed obtain better accuracy when it is scaled by O(1/ p).
+However, the analysis applies to the He initialization and only considers the initialization stage, thus
+√
+the scaling O(1/ p) may not be optimal during network training in practice. In some numerical
+experiments, we find that the vanilla DeepONet works well even without scaling. POD-DeepONet
+obtains a bit better accuracy when it is scaled by O(1/p).
+3.1.6. Multiple outputs
+We have discussed the DeepONet for a single output function, but this can be extended to
+multiple output functions. Let us assume that we have n output functions. Here we propose a few
+possible approaches:
+1. The simplest approach is that we can directly use n independent DeepONets, and each DeepONet outputs only one function.
+2. The second approach is that we can split the outputs of both the branch net and the trunk
+net into n groups, and then the kth group outputs the kth solution. For example, if n = 2 and
+both the branch and trunk nets have 100 output neurons, then the dot product between the
+first 50 neurons of the branch and trunk nets generates the first function, and the remaining
+50 neurons generate the second function.
+3. The third approach is similar to the second approach, but we only split the branch net and
+share the trunk net. For example, for n = 2, we split the 100 output neurons of the branch
+net into 2 groups, but the trunk net only has 50 output neurons. Then, we use the first group
+of the branch net and the entire trunk net to generate the first output, and use the second
+group and the trunk net to generate the second output.
+4. Similarly, we can also split the trunk net and share the branch net.
+It is not easy to determine a priori which approach would work best, as this may be highly
+problem dependent. In this work, we use the second approach. More investigation and comparison
+between these four approaches both theoretically and computationally should be done in the future.
+3.1.7. Fast algorithms and code implementation
+For different types of data sets, we can use different code implementation for DeepONet to
+dramatically reduce the computational cost and memory usage by orders of magnitudes. We
+consider the following three cases:
+1. The straightforward way (flexible but expensive). If different output u has different number and different locations of ξ, then each data point is a triplet (v, ξ, u(ξ)). This
+implementation can be used for any problem setup.
+2. Removing the redundancy in branch net input (cheaper). If the number of trunk net
+input ξ is the same for all branch net input v (the values of ξ can be different for different v),
+then we can share the same input v in the branch net for all the corresponding ξ.
+3. Removing the redundancy in both branch and trunk net inputs (cheapest). In
+addition to Case 2 above, if the trunk net input ξ is the same for all branch net input v, then
+all input v can share the same trunk net input ξ.
+9
+
+Here, we only introduce the underlying idea, but for the detailed code implementation, we refer
+the reader to our code.
+3.2. FNO
+Next, we introduce the vanilla FNO and then discuss how to generalize the vanilla FNO for
+problems whose inputs and outputs are defined on different domains or on a complex geometry.
+3.2.1. Vanilla FNO
+FNO is formulated by parameterizing the integral kernel directly in Fourier space. The main
+network parameters are defined and learned in the Fourier space rather than the physical space,
+i.e., the coefficients of the Fourier series of the output function are learned from the data.
+Different from DeepONet, FNO discretizes both the input function v(x) and the output function
+u(ξ) by using pointwise evaluations in an equispaced mesh. Also, FNO requires that v and u are
+defined on the domain (i.e., D = D0 , and x and ξ become the same variable), and the same
+discretization (i.e., the same mesh) is used for v and u. In short, FNO maps the discretization
+of v in an equispaced mesh to the discretization of u on the same mesh. For example, if D is a
+rectangular domain in 2D, then FNO input v is a 2D matrix (i.e., an image). When we present
+the architecture of FNO, we will discuss both the function value on one mesh location and also the
+function values on all mesh locations, so we use the following convention for a function f : f (x)
+means the value of f (x) in a mesh location x, and the bold font f means the values of f (x) in all
+mesh locations.
+In FNO, for any location x on the mesh, the function value v(x) is first lifted to a higher
+dimensional representation z0 (x) by
+z0 (x) = P (v(x)) ∈ Rdz
+using a local transformation P : R → Rdz (Fig. 2), which is parameterized by a shallow fullyconnected neural network or simply a linear layer. We note that z0 is defined on the same mesh as
+v, and the values of z0 in the mesh can be viewed as an image with dz channels. Then L Fourier
+layers are applied iteratively to z0 . Let us denote zL as the output of the last Fourier layer, and
+the dimension of zL (x) is also dz . Hence, at the end, another local transformation Q : Rdz → R is
+applied to project zL (x) to the output (Fig. 2) by
+u(x) = Q(zL (x)).
+We parameterize Q by a fully-connected neural network.
+Next we introduce the Fourier layer by using the Fast Fourier Transform (FFT). For the output
+of the lth Fourier layer zl with dv channels, we first compute the following transform by FFT F
+and inverse FFT F −1 (the top path of the Fourier layer in Fig. 2):
+F −1 (Rl · F(zl )) .
+The details are as follows:
+• F is applied to each channel of zl separately, and we usually truncate the higher modes of
+F(zl ), keeping only the first k Fourier modes in each channel. So F(zl ) has the shape dv × k.
+For 2D functions, k = k1 × k2 , where k1 and k2 are the number of modes to keep in the first
+and second dimensions, respectively. For 3D functions, it can be done similarly.
+
+10
+
+Figure 2: Architecture of FNO with extra features added to the input. Figure is adapted from [3].
+
+• We apply a different (complex-number) weight matrix of shape dv × dv for each mode index
+of F(zl ), so we have k trainable matrices, which form a weight tensor Rl ∈ Cdv ×dv ×k . Then,
+Rl · F(zl ) has the same shape of dv × k as F(zl ).
+• Before we perform the inverse FFT, we need to append zeros to Rl · F(zl ) to fill in the
+truncated modes.
+Moreover, in each Fourier layer, a residual connection with a weight matrix Wl ∈ Rdv ×dv is used to
+compute a new set of dv channels, and each new channel is a linear combinations between all the
+zl channels (the bottom path of the Fourier layer in Fig. 2). Wl · zl has the same shape as zl . We
+can implement Wl · zl by a matrix multiplication or by a convolution layer with the kernel size 1.
+Then, the output of the (l + 1)th Fourier layer zl+1 is
+
+zl+1 = σ F −1 (Rl · F(zl )) + Wl · zl + bl ,
+where σ is a nonlinear activation function, and bl ∈ Rdv is a bias. In this work, we use ReLU in all
+cases.
+We note that in practice, to achieve good accuracy, we need to use the coordinates x as the
+input as well, in addition to v(x), i.e., the FNO input is the values of (x, v(x)) ∈ Rd+1 in a grid
+(i.e., an image with d + 1 channels). This is a special case of the feature expansion that we will
+discuss in Section 3.2.4.
+3.2.2. dFNO+: Operators with inputs and outputs defined on different domains
+One limitation of FNO is that it requires D and D0 to be the same domain, which is not always
+satisfied. Here, we discuss two scenarios where D 6= D0 , and propose new extensions of FNO to
+address this issue.
+Case I: The output space is a product space of the input space and another space D0 , i.e., D0 =
+D × D0 . We use a specific example to illustrate the idea. We consider the PDE solution operator
+mapping from the initial condition to the solution in the whole domain:
+G : v(x) = u(x, 0) 7→ u(x, t),
+where x ∈ [0, 1] and t ∈ [0, T ]. Here, D = [0, 1], D0 = [0, 1] × [0, T ], and thus D0 = [0, T ]. In order
+to match the input and output domains, we propose the following two methods.
+11
+
+Method 1: Expand the input domain. We can extend the input function by adding the
+extra coordinate t, defining ṽ as
+ṽ(x, t) = v(x).
+Then, FNO is used to learn the mapping from ṽ(x, t) to u(x, t).
+Method 2 [3]: Shrink the output domain via RNN. We can also reduce the dimension of
+the output by decomposing G into a series of operators. We denote a new time-marching operator
+G̃ : u(x, t) 7→ u(x, t + ∆t),
+
+x ∈ D,
+
+i.e, G̃ predicts the solution at t + ∆t from the solution at t. Then, we apply G̃ to the input v(x)
+repeatedly to obtain the solution in the whole domain, which is similar to a RNN.
+Case II: The input space is a subset of the output space, i.e., D ⊂ D0 . In general, we can always
+extend v from D to D0 by padding zeros in the domain D0 \ D, i.e., we define
+(
+v(ξ), if ξ ∈ D
+ṽ(ξ) =
+,
+0,
+if ξ ∈ D0 \ D
+and then learn the mapping from ṽ to u.
+However, in some cases, this padding strategy may not be efficient. For example, we consider a
+PDE defined on a rectangular domain (x, y) ∈ D0 = [0, 1]2 , and the operator is the mapping from
+the Dirichlet boundary condition v defined in the four boundaries (D = {0, 1}×[0, 1]∪[0, 1]×{0, 1})
+to the solution u(x, y) inside the rectangular domain. In this example, D is essentially a 1D space
+and occupies zero area in D0 . We propose a better strategy so that we first unfold the curve of v
+into a 1D function ṽ defined in [0, 4]:
+
+
+v(x̃, 0),
+if x̃ ∈ [0, 1] (bottom boundary)
+
+
+
+v(1, x̃ − 1), if x̃ ∈ [1, 2] (right boundary)
+ṽ(x̃) =
+,
+
+v(3
+−
+x̃,
+1),
+if
+x̃
+∈
+[2,
+3]
+(top
+boundary)
+
+
+
+v(0, 4 − x̃), if x̃ ∈ [3, 4] (left boundary)
+and then, we use the method in Case I above to learn the operator from ṽ in 1D to u in 2D.
+3.2.3. gFNO+: Operators with inputs and outputs defined on a complex geometry
+FNO uses FFT, which requires the input and output functions to be defined on a Cartesian
+domain with a lattice grid mesh. However, for the PDEs defined on a complex geometry D (e.g.,
+L-shape, triangular domain, etc), an unstructured mesh is usually used, and thus we need to deal
+with two issues: (1) non-Cartesian domain, and (2) non-lattice mesh. For the second issue of
+unstructured mesh, we need to do interpolation between the unstructured mesh and a lattice grid
+mesh.
+For the issue of the Cartesian domain, we first define the Cartesian domain D̃, which is the
+minimum bounding box of D, and then extend v (the same for u) from D to D̃ by
+(
+v(x), if x ∈ D
+ṽ(x) =
+.
+v0 (x), if x ∈ D̃ \ D
+Here, the choice of v0 (x) is not unique. The simplest choice is v0 (x) = 0, i.e., zero padding.
+However, we find that such zero padding leads to large error of FNO, which may be due to the
+discontinuity from v(x) to v0 (x). We propose to compute v0 (x) by “nearest neighbor”:
+for x ∈ D̃ \ D,
+
+v0 (x) = v(x0 ),
+12
+
+where x0 = min kp − xk,
+p∈D
+
+so that ṽ(x) is continuous on the boundary of D. In the training, we use a mask to only consider
+the points inside D in the loss function.
+3.2.4. Feature expansion
+In FNO, the features can be applied by using them as extra network inputs. As we mentioned
+at the end of Section 3.2.1, in practice we need to use the coordinates x as the input, which is a
+special case of feature expansion. If we have a feature f (x), then the FNO input is the values of
+(x, v(x), f (x)) ∈ Rd+2 , i.e., an image with d + 2 channels.
+3.3. Comparison between DeepONet and FNO
+Here, we list a comparison between DeepONet and FNO in Table 1 in terms of some of their
+properties instead of accuracy. The first three points have been discussed in the introduction above
+of DeepONet and FNO. Because FNO also discretizes the output function, then after the network
+training, it can only predict the solution in the same mesh as the input function, whereas DeepONet
+can make predictions at any location. For the training, FNO requires a full field observation data,
+but DeepONet is more flexible, except that POD-DeepONet requires a full field data to compute
+the POD modes.
+
+Input domain D0 & Output domain D0
+Discretization of output function u
+Mesh
+Prediction location
+Full field observation data
+
+DeepONet
+
+FNO
+
+Arbitrary
+No
+Arbitrary
+Arbitrary
+No
+
+Cuboid, D = D0
+Yes
+Grid
+Grid points
+Yes
+
+Table 1: Comparison between vanilla DeepONet and vanilla FNO.
+
+3.4. Other technical details
+There are several other useful techniques that may improve the performance of DeepONet and
+FNO, such as learning rate decay, L2 regularization, and input normalization. Here, we emphasize
+the output normalization. Let us assume that in the training dataset the mean function and
+the standard deviation function of u is ū(ξ) and std[u](ξ), respectively. Then, we construct the
+surrogate model as
+u(ξ) = std[u](ξ) · N (v)(ξ) + ū(ξ),
+where N is a DeepONet or FNO. Hence, for any ξ, the mean value of N (v)(ξ) is zero and the
+standard deviation is one.
+4. Theoretical comparison
+In this section, we compare the universal approximation theorem of operators using DeepONet
+and FNO. We also compare their error estimates for the solution operator from the Burgers’ equation.
+
+13
+
+4.1. Universal approximation theorem for operators
+Theorem 4.1 (Generalized universal approximation theorem for operators [20]). Suppose
+that X is a Banach space, K1 ⊂ X, K2 ⊂ Rd are two compact sets in X and Rd , respectively, V is
+a compact set in C(K1 ) Assume that G : V → C(K2 ) is a nonlinear continuous operator. Then for
+any  > 0, there exist positive integers m, p, branch nets bk : V → R, and trunk nets tk : Rd → R,
+and x1 , x2 , · · · , xm ∈ K1 , such that
+sup sup G(v)(x) −
+v∈V x∈K2
+
+p
+X
+k=1
+
+bk (v(x1 ), v(x2 ), . . . , v(xm )) tk (x) < .
+|
+{z
+} | {z }
+branch
+
+trunk
+
+Furthermore, the functions bk and tk can be chosen as diverse classes of neural networks, satisfying
+the classical universal approximation theorem of functions, e.g., fully-connected neural networks,
+residual neural networks, and convolutional neural networks.
+This theorem was proved in [2] with two-layer neural networks. Also, the theorem holds when
+the Banach space C(K1 ) is replaced by Lq (K1 ) and C(K2 ) replaced by Lr (K2 ), q, r ≥ 1. Some
+extensions have been made in [24] for measurable operators, which contains discontinuous operators
+that can be approximated by continuous operators. The conclusion can be readily extended to the
+case of vector (multiple) output functions.
+The FNO for operator regression is proposed in [3], and the corresponding universal approximation theorem is presented in [4]. We present the theorem for completeness. Define Td = [0, 2π]d
+and the Hilbert space with smooth index s by H s Td ; Rdv for Rdv -valued functions defined on
+Td . Let V(Td ; Rdv ) be a Banach space of Rdv -valued functions defined on Td . Let P be a lifting
+operator from V(Td ; Rdv ) → U(Td ; Rda ) and the projection Q
+: U(Td ; Rda ) → U(Td ; Rdu ). Let
+PN
+IN denote the Fourier interpolation operator, i.e., IN f (x) = i=1 f (xi )Li (x), where xi ’s are the
+Fourier collocation points on Td and Li (x) are corresponding Lagrange interpolation trigonometric
+polynomials. Therefore the output of the lth Fourier block is defined as
+
+
+ 
+−1
+Rl (k) · F(z)(k) (x) .
+Ll (z)(x) = σ Wl z(x) + bl (x) + F
+Here, Wl ∈ Rdl ×dl and the function bl (x) is Rdl -valued, and the coefficients Rl (k) ∈ Rdl ×dl define a
+convolution operator via the Fourier transform. Then, the FNO in its continuous form is defined
+as follows
+F(v) = Q ◦ IN ◦ LL ◦ IN ◦ · · · ◦ L1 ◦ IN ◦ P (v).
+
+(4.1)
+
+Theorem 4.2 (Universal approximation theorem of FNO [4]). Let
+s, s0 ≥ 0 and Ω ⊂ Td be a
+
+0
+domain with Lipschitz
+boundary. Let G : H s Ω; Rdv → H s Ω; Rdu be a continuous operator. Let
+
+s
+d
+v
+V ⊂ H Ω; R
+be a compact subset. Then for any  > 0, there exists a FNO of the form (4.1),
+
+
+0
+s
+d
+d
+v
+F : H T ;R
+→ H s Td ; Rdu such that
+sup kG(v) − F(v)kH s0 ≤ .
+
+v∈V
+
+The conclusion above can be found in Theorem 2.15 of [4].
+Both DeepONet and FNO suffer from the curse of dimensionality if one uses ReLU or tanh
+networks for Lipschitz continuous operators, due to the approximation capacity of these networks for
+high dimensional inputs (v(x1 ), v(x2 ), . . . , v(xm )). However, rates of convergence for the DeepONet
+14
+
+are obtained for [25, 24], for some solution operators from PDEs. Next, we compare error estimates
+of DeepONet and FNO for 1D Burgers equations with periodic boundary conditions. As will be
+shown, the inputs of the operator will be first approximated by some numerical methods such that
+one has a possibly high-dimensional inputs for the neural network operators. This will introduce
+approximation errors in the inputs and thus in the outputs. Then extra errors will be induced by
+the network approximation emulating the analytical (after approximation of the input function)
+method of the solution.
+4.2. 1D Burgers’ equation
+Consider the Burgers’ equation with periodic boundary condition
+
+ut + uux = κuxx , (x, t) ∈ R × (0, ∞), κ > 0,
+u(x − π, t) = u(x + π, t), u(x, 0) = u0 (x).
+
+(4.2)
+
+Let M0 , M1 > 0. Define
+S = S(M0 , M1 ) := {v ∈ W
+
+1,∞
+
+Z π
+(−π, π) : kvkL∞ ≤ M0 , k∂x vkL∞ ≤ M1 , v̄ :=
+
+v(s) ds = 0}.
+−π
+
+Pm−1
+We consider the Fourier interpolation of u0 , u(x, 0) = u0 (x) =
+j=0 u0,j Lj (x), where −π =
+x0 < x1 < · · · < xm = π, u0,j = u0 (xj ), and Lj (x) is the Lagrange interpolation trigonometric
+polynomials at u0,m = (u0,0 , u0,1 , · · · , u0,m−1 )> .
+Define xlj = x0j + 2πl, j = 0, 1, · · · , m, for each l ∈ Z. Then {xlj }m
+j=0 form a partition of
+[−π + 2πl, π + 2πl). For simplicity, we denote xj = x0j . To make sure that v0 (x) in (4.3) is 2πRπ
+periodic, we require that the initial condition has zero mean in a period ū0 := −π u0 (s)ds = 0.
+Then, by the Cole-Hopf transformation, the solution to (4.2) can be written as
+(
+vt = κvxx ,
+−2κvx
+
+
+Rx
+u=
+(4.3)
+, where
+1
+u
+(s)ds
+.
+v(x, 0) = v0 (x) = exp − 2κ
+v
+0
+−π
+Since 0 < exp(− πkuκ0 k∞ ) ≤ v0 (x) ≤ exp( πkuκ0 k∞ ), the solution u can be written explicitly as
+R
+∂x K(x, y, t)v0 (y)dy
+u(x) = G(u0 )(x) := −2κ RR
+, x = (x, t),
+(4.4)
+R K(x, y, t)v0 (y)dy
+
+
+2
+1
+where K(x, y, t) = √4πκt
+exp − (x−y)
+is the heat kernel. It can be readily checked that u(x) is
+4κt
+a unique solution to (4.2).
+We may obtain a neural network for operators of regression of G by first approximating it
+with classical numerical methods and then emulating these methods using neural networks. Let
+us first approximate G. Define Vm := V(u0,m ) = (V0 , V1 , · · · , Vm−1 )>, where V0 = 1 and Vj =
+P R xj
+exp(−
+Lk (y) dy u0 (yk ) ), j = 1, · · · , m − 1. Define Gm (u0,m )(x) = Gem ◦ V(u0,m ) (x) where
+k −π
+
+2κ
+
+−2κ R ∂x K(x, y, t)(Im v0 )(y)dy
+V0 c10 (x) + V1 c11 (x) + · · · + Vm−1 c1m−1 (x)
+R
+=
+, (4.5)
+V0 c20 (x) + V1 c21 (x) + · · · + Vm−1 c2m−1 (x)
+R K(x, y, t)(Im v0 )(y)dy
+R
+
+Gm (u0,m )(x) =
+
+where Gem is a rational function with respect to Vm , with both the numerator and the denominator
+being m-th degree m-variate polynomials with m terms and Im is the Fourier interpolation operator
+and for j = 0, · · · , m − 1,
+Z xX
+Z xX
+
+
+1
+2
+cj (x) = −2κ
+∂x K(x, y + 2πl, t) Lj (y) dy, cj (x) =
+K(x, y + 2πl, t) Lj (y) dy.
+0
+
+0
+
+l∈Z
+
+15
+
+l∈Z
+
+By the Lipschitz continuity of the solution operator G(·) of the Burgers equation, we have the
+following estimate.
+
+Theorem 4.3. Let u0 ∈ S 0 = u0 |[−π,π] ∈ S : u0 grows at most quadratically at ∞ . Let G(u0 )(x)
+and Gm (u0,m )(x) be defined in (4.4) and (4.5), respectively. Suppose h is small enough. Then there
+is a uniform constant C depending only on t, the lower and upper bounds M0 and M1 and κ, such
+that for any t ∈ (0, +∞), we have
+sup kG(u0 )(·, t) − Gm (u0,m )(·, t)kL2 (−π,π) ≤ Ch, where h = 2π/m.
+
+u0 ∈S 0
+
+Proof. The proof can be found in Section S1.
+Second, we emulate Gm by a neural network. To this end, it is important to realize that a
+rational function can be approximated by a ReLU network according to the following theorem.
+Theorem 4.4 ([53]). Let ε ∈ (0, 1] and nonnegative integer k be given. Let p : [0, 1]d → [−1, 1]
+and q : [0, 1]d → [2−k , 1] be polynomials of degree ≤ r,
+ each with ≤ s monomials. Then there exists a
+ReLU network f of size (number of total neurons) O k 7 ln( 1ε )3 +min{srk ln(sr/ε), sdk 2 ln(dsr/ε)2 }
+such that supx∈[0,1]d f (x) − p(x)
+q(x) ≤ ε.
+Observing that Gm (u0,m ) = G 0 (Vm ) is a rational function with respect to Vm while Vm is
+an exponential function in u0,m . Then by approximation of rational polynomials in Theorem 4.4,
+there exists a ReLU network of size O(m2 ln(m)) (s = r = m in Theorem 4.4) to obtain accuracy
+of O(m−1 ) for each x. For the approximation of ‘exp’ by ReLU networks, we only need a network
+size of O(ln(m)) to obtain accuracy of O(m−1 ) , according to [54]. Thus, we need a ReLU network
+N (u
+of size O(m3 ln(m)) to emulate Gm (u0,m ) and denote this ReLU network by Gm
+0,m ).
+N
+The network Gm (u0,m )(xj ) can be viewed as FNO, where for all the kernels Rl ≡ 0. Thus,
+the FNO of size O(m3 ln(m)) can achieve the accuracy of O(m−1 ). According to [25], the network
+N (u
+Gm
+0,m )(xj ) serves as a branch net while only a ReLU network of size O(ln m) is needed for the
+trunk net. The size of the DeepONet is thus O(m3 ln(m)). In conclusion, we find that
+• both FNO and DeepONet of size O(m3 ln(m)) can achieve the accuracy of O(m−1 ).
+There are many ways to approximate the solution operator and emulate the corresponding numerical methods. Thus, the estimation of sizes ofP
+networks may be not optimal3 . However, we
+can always connect FNO F(v) and DeepONet by N
+i=1 F(v)(xj )Lj (x), where Lj (x) is a basis of
+interpolation type, i.e., Lj (xj ) = 1 and Lj (xi ) = 0 for all i 6= j. Depending on the underlying problems, the basis Lj (x) can be trigonometric polynomials, piecewise or global algebraic polynomials,
+splines, neural networks, etc. In other words, FNO can be thought of as a special form of branch
+network in DeepONet.
+5. Numerical results
+We compare the performance of DeepONet and FNO on 16 different problems listed in Table 2.
+To evaluate the performance of the networks, we compute the L2 relative error of the predictions,
+and for each case, five independent training trials are performed to compute the mean error and
+the standard deviation. The dataset sizes for each problem are listed in Table S1, and the network
+sizes of DeepONets are listed in Tables S2 and S3.
+3
+
+To make a fair comparison between DeepONet and FNO, we always emulate the same numerical methods.
+
+16
+
+Section
+
+Problems
+
+§5.1
+§5.2
+§5.3
+§5.4.1
+§5.4.2
+§5.4.3
+§5.5
+§5.6
+§5.7
+
+Burgers’ equation
+5 Darcy problems in a rectangular domain and complex geometries
+Multiphysics electroconvection problem
+3 Advection problems
+Linear instability waves in high-speed boundary layers
+Compressible Euler equation with non-equilibrium chemistry
+Predicting surface vorticity of a flapping airfoil
+Navier-Stokes equation in the vorticity-velocity form
+2 problems of regularized cavity flows
+Table 2: 16 problems tested in this study.
+
+5.1. Burgers’ equation
+Problem setup. We first consider the one-dimensional Burgers’ equation:
+∂u
+∂u
+∂2u
++u
+= ν 2,
+∂t
+∂x
+∂x
+
+x ∈ (0, 1), t ∈ (0, 1],
+
+with periodic boundary condition, where ν = 0.1 is the viscosity. Here, we learn the operator
+mapping from the initial condition u(x, 0) = u0 (x) to the solution u(x, t) at t = 1, i.e.,
+G : u0 (x) 7→ u(x, 1).
+We use the dataset generated in Ref. [3], where the initial condition is generated according to a
+random distribution µ = N (0, 625(−∆ + 25I)−2 ). We use a spatial resolution with 128 grids to
+represent the input and output functions.
+Results. As discussed in Section 3.1.3, in DeepONet, we impose the periodic boundary condition
+by applying four Fourier basis {cos(2πx), sin(2πx), cos(4πx), sin(4πx)} to the input of the trunk
+net. By using the output normalization, the error of DeepONet decreases slightly from 2.29±0.10%
+to 2.15±0.09% (Table 3), and thus DeepONet is not sensitive to the output normalization. FNO is
+more sensitive to the output normalization, and by using the output normalization FNO achieves
+an error of 1.93±0.04% (Table 3).
+As we showed in Section 3.1.5, DeepONet has variance proportional to p instead of 1 when each
+√
+branch and trunk net has variance 1 and thus a scale of 1/ p is needed. A different scaling is
+required for POD-DeepONet as the precomputed POD modes are in place of the trunk nets and
+√
+are not networks to be trained. We tested different scaling factors, including 1/ p, 1/p and 1/p1.5
+(Table 3), and POD-DeepONet with the factor 1/p has the smallest error of 1.94±0.07%, which is
+almost the same as the error of FNO with the output normalization. For the following problems
+all POD-deepONet, we use the scale 1/p.
+5.2. Darcy problem
+We consider two-dimensional Darcy flows in different geometries filled with porous media, which
+can be described by the following equation:
+− ∇ · (K(x, y)∇h(x, y)) = f, (x, y) ∈ Ω,
+
+(5.1)
+
+where K is the permeability field, h is the pressure, and f is a source term which can be either a
+constant or a space-dependent function. Boundary conditions will be described in the problem setup
+17
+
+§5.1 Burgers’
+DeepONet w/o normalization
+DeepONet w/ normalization
+FNO w/o normalization
+FNO w/ normalization
+POD-DeepONet (w/o rescaling)
+√
+POD-DeepONet (rescaling by 1/ p)
+POD-DeepONet (rescaling by 1/p)
+POD-DeepONet (rescaling by 1/p1.5 )
+
+2.29±0.10%
+2.15±0.09%
+2.23±0.04%
+1.93±0.04%
+3.46±0.06%
+2.40±0.06%
+1.94±0.07%
+2.41±0.04%
+
+Table 3: L2 relative error for the Burgers’ equation in §5.1. Here, p is the number of outputs of the branch
+and trunk nets.
+
+below. Four different geometries are considered in the present study, including a rectangular domain
+in Section 5.2.1, a pentagram with a hole in Section 5.2.2, a triangular domain in Section 5.2.3,
+and a triangular domain with notch in Section 5.2.4. We generate the dataset by solving Eq. (5.1)
+using the MATLAB Partial Differential Equation Toolbox (for more details see Section S4).
+5.2.1. Darcy problem in a rectangular domain
+Problem setup. The first example of Darcy flow is defined in a rectangular domain [0, 1]2 with zero
+Dirichlet boundary condition. We are interested in learning the mapping from the permeability
+field K(x, y) to the pressure field h(x, y), i.e.,
+G : K(x, y) 7→ h(x, y).
+Here, we consider two datasets of different types of permeability fields:
+• Piecewise constant (PWC). The first dataset is from Ref. [3]. The coefficient field K is
+defined as K = ψ(µ), where µ = N (0, (−∆ + 9I)−2 ) with zero Neumann boundary conditions
+on the Laplacian, and the mapping ψ performs the binarization on the function, namely it
+converts the positive values to 12 and the negative values to 3. The grid resolution of K and
+h is 29 × 29.
+• Continuous (Cont.). We use a truncated Karhunen-Loève (KL) expansion to express the
+permeability field K(x, y) = exp(F (x, y)), where F (x, y) denotes a truncated KL expansion
+for a given Gaussian process. Specifically, we keep the leading 100 terms in the KL expansion
+for the Gaussian process with zero mean and the following covariance kernel:
+
+
+−(x − x0 ) −(y − y 0 )2
+0 0
+K((x, y), (x , y )) = exp
++
+,
+2l12
+2l22
+with l1 = l2 = 0.25. Both K(x) and h(x) have the same resolution of 20 × 20.
+Examples of these two Darcy datasets can be found in Fig. S1.
+Results. We enforce the zero Dirichlet boundary condition on DeepONet by choosing the surrogate
+solution as
+û(x, y) = 20x(1 − x)y(1 − y)N (x, y, K),
+where N is a DeepONet, as we discussed in Section 3.1.3. We use the coefficient 20 such that
+20x(1 − x)y(1 − y) is of order 1 for x ∈ [0, 1] and y ∈ [0, 1]. Similar to the Burgers’ problem, by
+18
+
+using the output normalization, a better accuracy of DeepONet and FNO is obtained (Table 4). For
+the case PWC, all the methods have errors around 2%, and POD-DeepONet achieves the smallest
+error. For the case Cont., all the methods have the error around 1%, and FNO is slightly better.
+However, POD-DeepONet is only worse by one standard deviation of the error (Table 4), so there
+is no significant difference between the performance of POD-DeepONet and FNO.
+§5.2.1 Darcy (PWC)
+
+§5.2.1 Darcy (Cont.)
+
+2.91±0.04%
+2.98±0.03%
+4.83±0.12%
+2.41±0.03%
+2.32±0.03%
+
+2.04±0.13%
+1.36±0.12%
+2.38±0.02%
+1.19±0.05%
+1.26±0.07%
+
+DeepONet w/o normalization
+DeepONet w/ normalization
+FNO w/o normalization
+FNO w/ normalization
+POD-DeepONet
+
+Table 4: L2 relative error for the Darcy problem in a rectangular domain in §5.2.1. PWC, piecewise
+constant. Cont, continuous.
+
+5.2.2. Darcy problem in a pentagram with a hole
+Problem setup. Here we consider the Darcy flow in a pentagram with a hole, where K(x, y) = 0.1
+and f = −1. The following Gaussian process is employed to generate boundary conditions for each
+boundary in the pentagram:
+h(x) ∼ GP(0, K(x, x0 )),
+K(x, x0 ) = exp[−
+
+(x − x0 )2
+], l = 0.2,
+2l2
+
+(5.2)
+
+x, x0 ∈ [0, 1],
+Specifically, we draw one sample function from the above Gaussian process at each time, and
+compute the boundary values based on x for each boundary of the pentagram. While the boundary
+values at the boundary of the hole is fixed as 1, i.e., h(x) = 1, for all test cases. In the present
+case, we generate 2000 sample functions from Eq. (5.2) as boundary conditions, then we employ
+the operator networks to learn the mapping from the boundary condition to the pressure field in
+the entire domain”
+G : h(x, y)|∂Ω 7→ h(x, y).
+Two representative solutions with corresponding boundary conditions are displayed in Fig. 3(a).
+Results. As shown in Table 4, the normalization of inputs/outputs helps to reduce the generation
+error in DeepONet, and hence, we utilize the normalization in DeepONet for all the Darcy problems
+in what follows.
+The results from the DeepONet, POD-DeepONet, and dgFNO+ are presented in Table 5. We
+note that FNO cannot be used for these problems, and instead we use dgFNO+, which is the
+combination of dFNO+ in Section 3.2.2 and gFNO+ in Section 3.2.3. In particular, the following
+grid size, i.e., 44 × 44, is employed in dgFNO+, which has almost the same nodes as in the original
+mesh, i.e., 1,938. As shown, the results from DeepONet and POD-DeepONet are quite similar,
+while both are about 2% more accurate than the dgFNO+.
+We further test an additional case using dgFNO+, in which we use a uniform grid with a
+resolution 50 × 50. The L2 relative error for this case is 2.78 ± 0.01%, which is better than the
+dgFNO+ with the resolution 44 × 44 but is still less accurate than the DeepONet and PODDeepONet.
+19
+
+(a)
+
+(b)
+
+(c)
+Figure 3: Darcy flow in the domains of a pentagram and a triangle. (a) Darcy flow in a pentagram with
+a hole: two representative cases. For each case, Left: boundary condition; Right: pressure field. (b) Darcy flow in
+a triangular domain: two representative cases. Left: boundary condition; Right: pressure field. (c) Darcy flow in a
+triangular domain: Left: The first four POD modes used in POD-DeepONet. Right: An example of the augmented
+data for FNO training, where the padding is set by “nearest neighbor”.
+
+20
+
+5.2.3. Darcy problem in a triangular domain
+Problem setup. The setup for the case considered here is the similar as in Section 5.2.2, i.e.,
+K(x, y) = 0.1, and f = −1. We also utilize the Gaussian process in Eq. (5.2) to generate the
+boundary conditions for each boundary of the triangular domain, and then use the operator networks to map the boundary conditions to the pressure field in the entire domain. Specifically, 861
+nodes are employed in the numerical solver. Similarly, we also display two representative solutions
+with corresponding boundary conditions in Fig. 3(b).
+Results. As demonstrated in Table 5, both the DeepONet and POD-DeepONet are more accurate
+than the dgFNO+. POD-DeepONet achieves the best accuracy (0.18%) among the three test
+approaches. The first four POD modes are demonstrated in Fig. 3(c)(Left), where we note that
+each mode is scaled by its L2 -norm. For dgFNO+, we use a uniform grid with a resolution of
+51 × 51 and the “nearest neighbor” in Section 3.2.3, and an example of the solution is illustrated
+in Fig. 3(c) (Right).
+5.2.4. Darcy problem in a triangular domain with notch
+Problem setup. On the triangular domain discussed in Section 5.2.3, we now add a notch and also
+learn the operator mapping from the boundary conditions to the pressure field. The boundary
+conditions are generated using the Gaussian process discussed in Eq. (5.2). A representative case is
+shown in Fig. 4, where the predicted results and the errors corresponding to DeepONet, dgFNO+,
+and POD-DeepONet are shown for a specific boundary.
+
+Figure 4: Darcy flow in a triangular domain with a notch. For a representative boundary condition, the
+pressure field is obtained using DeepONet, dgFNO+, and POD-DeepONet. The prediction errors for the three
+operator networks are shown against the respective plots. The ground truth is simulated using the PDE Toolbox in
+Matlab. The predicted solutions and the ground truth share the same colorbar, while the errors corresponding to
+each of the neural operators are plotted on the same colorbar.
+
+Results. The L2 relative error for this example is given in Table 5. Amongst all the methods, PODDeepONet outperforms the others, followed by DeepONet. The L2 relative error for predicting the
+flow in a triangular domain with a notch is 2.64 ± 0.02% using DeepONet, and is 7.82 ± 0.03% using
+dgFNO+. The lowest prediction error is 1.0 ± 0.00%, obtained using POD-DeepONet.
+
+21
+
+DeepONet
+FNO
+POD-DeepONet
+dgFNO+
+
+§5.2.2
+Darcy (Pentagram)
+
+§5.2.3
+Darcy (Triangular)
+
+§5.2.4
+Darcy (Notch)
+
+1.19±0.12%
+—
+0.82±0.05%
+3.34±0.01%
+
+0.43±0.02%
+—
+0.18±0.02%
+1.00±0.03%
+
+2.64±0.02%
+—
+1.00±0.00%
+7.82±0.03%
+
+Table 5: L2 relative error for the Darcy flows in complex geometries. dgFNO+ is the combination of dFNO+
+and gFNO+.
+
+5.3. Multiphysics electroconvection problem
+Problem setup. Following the setup in [41], we consider a 2D electroconvection problem, which is
+a multiphysics phenomenon involving coupling of the flow field with the electric field, the cation
+and anion concentration fields. The full governing equations, including the Stokes equations, the
+electric potential and the ion transport equations, can be written as follows:
+∂u
+= −∇p + ∇2 u + fe ,
+∂t
+∇ · u = 0,
+−22 ∇2 φ = ρe ,
+
+(5.3)
+
+
+∂c±
+= −∇ · c± u − ∇c± ∓ c± ∇φ ,
+∂t
+where u and p are the velocity and the pressure fields, respectively, and φ is the electric potential.
+Moreover, c+ and c− are the cation and anion concentrations, respectively. Also, ρe = (c+ − c− )
+is the free charge density, fe = −0.5ρe ∇φ/22 is the electrostatic body force, where  is the Debye
+length. The investigated domain is defined as Ω : [−1, 1] × [0, 1] with a regular mesh containing
+101 × 51 grid points. By defining  = 0.01, the electroconvection described in Eq. (5.3) becomes a
+steady flow, where the flow pattern is uniquely dependent on the electric potential difference (∆Φ)
+acted on the upper and lower boundaries.
+In this problem, the operator networks are expected to learn the mapping from the 2D electric
+potential field φ(x, y) to the 2D cation concentration field c+ (x, y):
+G : φ(x, y) 7→ c+ (x, y).
+Different flow fields are generated by modifying the boundary condition of φ, namely using ∆Φ =
+5, 10, . . . , 75, which results in 15 steady states for network training. We also consider two unseen
+conditions, namely ∆Φ = 13.4 and ∆Φ = 62.15, which are applied for testing. The equations are
+solved by using a high-order spectral element method. Three training cases of the electroconvection
+flow are demonstrated in Fig. 5 and more details are included in [41].
+Results. The evaluation errors for this example are given in Table 6, where we find that the testing
+errors of the different methods are all very small. Nevertheless, POD-DeepONet outperforms others,
+followed by DeepONet with data normalization. The reason that FNO performs relatively worse
+in this case is because of a stiff boundary at y = 0 in the output field, where the concentration
+drops from c+ = 2 to approximately zero. Note that the output resolution of this data set is
+101 × 51, which means that there are 5151 sampling points for each output function used for
+training. However, it is reported in [41] that the DeepONet can be trained with much less data
+22
+
+Figure 5: Electroconvection problem: three representative cases. First row: electric potential field. Second
+row: cation concentration field. Note that there is a stiff boundary at y = 0 in the concentration field, where the
+concentration drops from c+ = 2 to approximately zero.
+
+measurements (i.e., 800 random points for each output function) to achieve a similar accuracy of
+0.49±0.04%. This also demonstrates the flexibility of DeepONet training, since FNO requires the
+output representation to be on a regular mesh, while DeepONet does not have such a stringent
+requirement.
+§5.3
+Electroconvection
+DeepONet w/o normalization
+DeepONet w/ normalization
+FNO w/o normalization
+FNO w/ normalization
+POD-DeepONet
+
+0.26±0.04%
+0.28±0.02%
+1.00±0.01%
+0.43±0.01%
+0.14±0.03%
+
+Table 6: L2 relative error for the multiphysics electroconvection problem.
+
+5.4. Wave propagation for continuous and discontinuous problems
+5.4.1. Advection equation
+Problem setup. We consider the wave advection equation
+∂u ∂u
++
+= 0,
+∂t
+∂x
+
+x ∈ [0, 1],
+
+t ∈ [0, 1],
+
+with periodic boundary condition. We choose the initial condition as a square wave centered at
+x = c of width w and height h
+u0 (x) = h1{c− w2 ,c+ w2 } ,
+where (c, w, h) are randomly chosen from [0.3, 0.7] × [0.3, 0.6] × [1, 2]. We first learn the mapping
+from the initial condition u0 (x) to the solution at t = 0.5:
+Case I:
+
+G1 : u0 (x) 7→ u(x, t = 0.5),
+
+23
+
+and then learn the operator mapping from the initial condition u0 (x) to the solution u(x, t) =
+u0 (x − t) of the whole domain
+Case II:
+
+G2 : u0 (x) 7→ u(x, t).
+
+The mesh of the solution is chosen as 40×40 in space-time. We also test a more complicated initial
+condition (Case III):
+q
+u0 (x) = h1 1{c1 − w2 ,c1 + w2 } + max(h22 − a2 (x − c2 )2 , 0).
+Results. For case I, DeepONet, POD-DeepONet and FNO all have errors < 1%, while PODDeepONet achieves the smallest error (< 0.1%, Table 7). To evaluate the robustness of the operator
+networks, we add some small Gaussian noise to the input function during the testing stage. The
+noise level is defined as the percentage of the maximum value for the input function. Several
+examples are demonstrated in Fig. 6, where we find that FNO is extremely sensitive to noise, i.e.,
+it cannot handle 0.1% Gaussian noise of the input. On the contrary, DeepONet is more robust,
+and it predicts perfectly for the input with 0.1% noise. Moreover, it can also handle larger noise
+levels (as shown in Fig. 6C).
+A
+
+B
+
+C
+
+Figure 6: Advection equation (1D): one testing example of FNO and DeepONet for noisy inputs. (A)
+FNO solution for an input with 0.1% Gaussian noise. (B) DeepONet solution for input with 0.1% Gaussian noise.
+(C) DeepONet solution for input with 5.0% Gaussian noise. The L2 relative errors compared to the exact solution
+of clean input for (A–C) are 270%, 0.36% and 9.28%, respectively. The functions in the plots are discretized with 40
+uniform grid points.
+
+For Cases II and III, DeepONet and POD-DeepONet still obtain good accuracy of the order of
+0.1% (Table 7). Because FNO cannot directly map from the 1D initial condition to the 2D solution,
+we considered the following three approaches.
+• Brute-force FNO (2D): We first use FNO in a brute-force way. Because the input u0 is
+only a function of x, we directly repeat the same u0 multiple times to match the 2D size of
+the output function, so that it is a valid 2D input. We find that the training loss is always
+very large ∼ O(0.1) and cannot be improved, even if we do not truncate Fourier modes, use a
+large hidden dimension, and add more hidden layers. The L2 relative error is ∼50% (Table 7).
+• dFNO+1: We use dFNO+ in Section 3.2.2 for Case I using Method 1. Compared to the
+brute-force FNO above, here we also add the t coordinate as input, and the optimization of
+FNO improves significantly. dFNO+1 achieves an error < 1% (Table 7), but it is still worse
+than DeepONet and POD-DeepONet.
+
+24
+
+• dFNO+2: We also use dFNO+ in Section 3.2.2 for Case I using Method 2, i.e., instead of
+using FNO in 2D, we test FNO in 1D with RNN for time-marching. We find that dFNO+2
+is very hard to train, and the final result is unstable, as also observed in [3]. In our 10
+independent experiments, dFNO+2 gets stuck at a bad local minimum with (L2 relative
+error > 20%) for 4 times. Here we truncate the FFT to the first 16 modes, but using more
+modes does not improve the accuracy or reduce the probability of training failure. We also
+note that the training cost of dFNO+2 is much more expensive than FNO in 2D.
+5.4.2. Linear instability waves in high-speed boundary layers
+Problem setup. The early stages of transition to turbulence in high-speed aerodynamics often involve exponential amplification of linear instability waves. A visualization of an instability wave
+in a high-speed and spatially developing boundary layer is shown in Fig. 7A. We aim to predict
+the evolution of linear instability waves in a compressible boundary layer, i.e., how the upstream
+instability wave will amplify or decay within a region of interest downstream. Here, we consider
+small-amplitude instability waves, which can be accurately described by the linear parabolized stability equations (PSE) derived from the Navier-Stokes equations by decomposing the flow into the
+sum of a base flow and a perturbation.
+The instability waves depends on the flow parameters. Here we consider air with Prandtl number
+P r = 0.72 and ratio of specific heats γ = 1.4. The free-stream Mach number is M a = 4.5 and the
+free-stream temperature
+is T0 = 65.15K. We set the inflow location of our configuration slightly
+p
+upstream
+p at Rex0 = 1800. When the perturbation frequency is ω, the instability frequency is
+ω106 / Rex0 . In our dataset, the Reynolds number of the domain of integration spans from 18002
+to 23222 , and the problem was solved for 59 different perturbation frequencies in the range [100, 125]
+with arbitrarily sampled phase. Moreover, the input function is defined on a mesh with resolution
+(20, 47), and the output function is on a mesh with resolution (111, 47). Because the output
+functions in the dataset differ in amplitudes by more than two orders of magnitude, a weighted
+MSE is used, where each loss term is weighted by the the amplitude of each function. More details
+about this problem and the dataset can be found in Ref. [42].
+Results. This problem has been solved by DeepONet with 4 Fourier features in Ref. [42]. The
+accuracy of DeepONet is 8.90±0.60% (the forward case with two-mode combinations F2 in Fig. 18
+in Ref. [42]), and the training trajectory is shown in Fig. 7B (extracted from Fig. 15a in Ref. [42]).
+The output functions in the dataset differ by more than two orders of magnitude, and thus if we
+compute the PDE modes, the functions with large magnitude dominate. Hence, we first normalize
+all the functions such that the maximum value of each function is 1, and then compute the POD
+modes. This POD normalization makes POD-DeepONet work better, but POD-DeepONet still has
+a larger error (20.8±1.12%) than DeepONet. A better strategy to compute the POD modes for
+problems with multiple scales need to be developed in the future. For FNO, because the input and
+outputs functions have different mesh resolution, we first use a linear interpolation to interpolate the
+input function from (20, 47) to (111, 47). FNO performs better than POD-DeepONet, but is much
+worse than DeepONet with Fourier features. Although DeepONet and FNO have a similar training
+error, DeepONet has a smaller testing error than FNO (Fig. 7B). In FNO, the generalization gap
+between the training and testing errors is more than one order of magnitude gap, while there is
+almost no generalization gap for DeepONet.
+We further analyze the robustness of different networks to input uncertainties by adding a
+Gaussian noise of 0.1% to the input functions during testing. We note that training data is still
+noiseless. We also add the result of CNN in Ref. [42] for the comparison. The errors of DeepONet
+and POD-DeepONet only increase slightly for noisy inputs and remain satisfactory, but the errors
+25
+
+A
+
+B 100
+
+C
+
+DeepONet: Train
+DeepONet: Test
+FNO: Train
+FNO: Test
+
+103
+102
+
+L2 relative error
+
+10-1
+
+DeepONet
+POD-DeepONet
+CNN
+FNO
+
+Loss
+
+101
+100
+
+10-2
+
+10-1
+10-3
+0
+
+100
+
+200
+
+300
+400
+Epochs
+
+500
+
+600
+
+10-2
+
+0
+
+0.1%
+Gaussian noise level
+
+Figure 7: Linear instability waves in high-speed boundary layers. (A) Visualization of an instability wave in
+a spatially developing boundary layer. At the inlet to the computational domain, the base flow is superposed with
+instability waves. The dashed line marks the 99% thickness of the boundary layer. The objective is to accurately
+predict the downstream evolution of the instability wave. (B) The training and testing losses during the training
+process. (C) The L2 relative errors of different networks for noiseless inputs and inputs with a 0.1% Gaussian noise.
+Panel A is adapted from Ref. [42].
+
+26
+
+of CNN and FNO increase by two and four orders of magnitudes, respectively (Fig. 7C). This
+implies that the mapping that FNO has learned is unstable, hence future work should address this
+important issue.
+5.4.3. Compressible Euler equations with non-equilibrium chemistry
+Problem setup. We consider one-dimensional inviscid high-speed flows with dissociation involving
+three species and non-equilibrium chemistry described by a general equation of state as studied in
+the works of [55, 56]:
+
+
+
+
+
+
+2M1 ω
+ρ1 u
+ρ1
+
+ −M2 ω 
+
+ ρ2 
+ρ2 u
+
+
+
+
+
+
+,
+
+
+ ρ3  + 
+0
+ρ3 u
+
+ =
+
+
+
+2
+
+
+ ρu + p 
+ ρu 
+0
+0
+(E + p)u x
+ρE t
+and
+ρ=
+
+3
+X
+
+ρs ,
+
+p = RT
+
+s=1
+
+3
+X
+ρs
+s=1
+
+Ms
+
+,
+
+E=
+
+3
+X
+s=1
+
+1
+ρs es (T ) + ρ1 h01 + ρu2 ,
+2
+
+where the enthalpy h01 is a constant, R is the universal gas constant, Ms is the molar mass of species
+s, and the internal energy es (T ) = 3R/2Ms and 5R/2Ms for mono-atomic and diatomic species,
+respectively. The rate of the chemical reaction is given by
+
+ ! 3
+ρ2
+ρ1 2 X ρs
+ω = kf (T )
+− kb (T )
+, kf = CT −2 e−E/T ,
+M2
+M1
+Ms
+kb = kf /e
+
+s=1
+b1 +b2 log z+b3 z+b4 z 2 +b5 z 3
+
+,
+
+z = 10000/T,
+
+where bi , C and E are constants which can be found in [57, 55]. The model involves three species,
+namely, O2 , O and N2 (ρ1 = ρO , ρ2 = ρO2 and ρ3 = ρN2 ) with the reaction:
+O2 + N2 ⇐⇒ O + O + N2 .
+We consider the following initial condition:
+T0 (x) = 8000K, p0 (x) =
+
+pL − pR
+(1 − tanh(x/η)) + pL ,
+2
+
+where η is a parameter in the range of [0.02, 0.2], and pL and pR are constant left and right pressure
+levels. This is a multi-physics problem involving different quantities. Here, we only consider the
+pressure field and the Nitrogen density to demonstrate the comparison between different operator
+learners. The neural operators are expected to learn two mappings: from the initial condition p0 (x)
+to the solution p(x) at t = 0.0002, and from N2 (x, t = 0) to N2 (x, t = 0.0002).
+Results. The L2 relative errors of DeepONet and FNO are in Table 7 and a testing example is
+demonstrated in Fig. 8. All the networks provide results with good accuracy, and POD-DeepONet
+performs the best. We note that the FNO relies on Fourier transformation, which is not very
+accurate for discontinuous functions. On the contrary, the DeepONet performs well for functions
+with discontinuity, as shown in the insets of Fig. 8.
+
+27
+
+Figure 8: Compressible Euler equations: results of a testing example. Left: neural operators for pressure.
+Right: neural operators for N2 density. The black dash line is the initial condition. The red, orange, blue lines denote
+the exact solution, the FNO prediction and the DeepONet prediction, respectively.
+
+DeepONet
+FNO
+POD-DeepONet
+dFNO+1
+dFNO+2
+
+DeepONet
+FNO
+POD-DeepONet
+
+§5.4.1
+Advection (I)
+
+§5.4.1
+Advection (II)
+
+§5.4.1
+Advection (III)
+
+0.22±0.03%
+0.66±0.10%
+0.04±0.00%
+—
+—
+
+0.27±0.01%
+54.4±0.00%
+0.08±0.00%
+0.22±0.01%
+3.89±1.26%
+
+0.32±0.04%
+47.7±0.00%
+0.40±0.00%
+0.60±0.02%
+10.9±2.08%
+
+§5.4.2
+Instability waves
+
+§5.4.3
+Compressible Euler (p)
+
+§5.4.3
+Compressible Euler (N2 )
+
+8.90±0.60%
+17.8±0.92%
+20.8±1.12%
+
+0.068±0.011%
+0.076±0.005%
+0.020±0.004%
+
+0.043±0.006%
+0.044±0.004%
+0.012±0.002%
+
+Table 7: L2 relative error of wave propagation for continuous and discontinuous problems in Section 5.4.
+
+28
+
+5.5. Predicting surface vorticity of a flapping airfoil
+Problem setup. Here, we predict the surface vorticity of a flapping airfoil based on the angle of
+attack. We perform simulation of the flow over a NACA0012 airfoil. The flapping airfoil setup is
+achieved by defining a oscillating inflow velocity, which is expressed as:
+α0 π sin(2f πt) + 1.0
+×
+),
+180
+2
+α0 π sin(2f πt) + 1.0
+v = U∞ sin(
+×
+),
+180
+2
+
+u = U∞ cos(
+
+where α0 = 15◦ is the reference angle of attack (AOA), f = 0.2 is the frequency and U∞ = 1. In
+this case, the Reynolds number based on the chord length is Re = 2500. We can simply define the
+normalized time-dependent AOA as α(t) = sin(2f πt), which is used as the input of the learning
+algorithms hereafter. Specifically, we aim to map the AOA α(t) to the vorticity on the airfoil
+surface, which is denoted by ω(s, t) and s is the location index on the surface. The airfoil geometry
+is illustrated in Fig. 9A, where the surface of the airfoil is discretized by using 152 points.
+In this example, we only have one time-dependent signal, which covers about 56.4 time units.
+We apply approximately 36.6 time units for neural network training and the rest are used for
+prediction and validation. Moreover, we divide the training data into multiple independent signals,
+which involve two periods and have different phases. An example of the input-output functions for
+standard DeepONet and FNO training is illustrated in Fig. 9B. By doing this, the training data
+contain 28 input-output pairs, while the testing data (about 20 time units) are composed of two
+signals whose phases are not included in training.
+For vanilla DeepONet and FNO, the operator can be expressed as: ω(s, t) = G(α)(s, t). In this
+example, we also adopt a modified DeepONet with feature expansion, where a couple of historical
+states of the time signal are fed into the trunk net as the features and replace the time coordinate
+(Section 3.1.2). Such an operator is denoted as:
+ω(s, t) = G(α)(s, ω(s, t − 1), . . . , ω(s, t − k)),
+where k denotes the number of historical states. We note that in the prediction stage, only the
+initial data of ω is given. The predictions from the network itself are concatenated and fed into the
+trunk net for the future predictions. A schematic of this DeepONet is shown in Fig. 9C.
+Results. The L2 relative errors of DeepONet and FNO for the testing data are given in Table 8. Note
+that here we learn an operator mapping from a 1D function (i.e., function of time) to a 2D function
+(i.e., function of time and space). As mentioned above, FNO requires dimension augmentation for
+the input function in this case. If the input only involves the time coordinate, i.e., the brute-force
+way in Section 5.4.1, then FNO fails to predict correctly the output (16.20% error). However, when
+the input is augmented to involve both time and space coordinates (Section 3.2.2 Case I Method
+1), the relative error of dFNO+ reduces to 3.56%.
+The vanilla DeepONet predicts the output with satisfactory result (3.65%). In addition, when we
+apply the modified DeepONet with 5 historical states of the investigated quantity as the features,
+the error becomes even smaller (2.87%). The prediction results of this modified DeepONet are
+illustrated in Figs. 9D and E, where (D) shows the time-dependent signals and (E) shows the
+vorticity profiles over the airfoil surface. It is worth noting again that in the prediction process, the
+predictions from DeepONet are concatenated to the input of the trunk net in order to perform future
+evaluation. We can observe great consistency between the truth and the DeepONet prediction from
+the figures.
+29
+
+A
+
+C
+𝑠 = 37
+
+𝛼𝑡−𝑚+1
+𝛼𝑡−𝑚+2
+…
+𝛼𝑡−1
+𝛼𝑡
+
+𝑠=0
+
+𝑠 = 75
+
+𝑏1
+Branch
+Net
+
+𝑏2
+…
+𝑏𝑃
+×
+
+B
+
+input
+
+𝜔(𝑠, 𝑡 − 𝑘)
+…
+𝜔 𝑠, 𝑡 − 1
+𝑠
+
+output
+
+𝜔(𝑠, 𝑡)
+
+𝑡1
+Trunk
+Net
+
+𝑡2
+…
+𝑡𝑃
+
+prediction
+
+E
+
+D
+Training
+
+Prediction
+
+Truth
+
+|Truth - Pred|
+
+𝑡 = 39.9
+
+𝑠 = 75
+
+𝑡 = 41.1
+
+𝑠 = 37
+𝑠=0
+
+𝑡 = 51.9
+
+Figure 9: Predicting vorticity on the surface of a flapping airfoil. (A) Geometry of NACA0012 airfoil. (B)
+An example of the input function α(t) and output function ω(s, t) that are used to train the operator networks. (C)
+Schematic of the modified DeepONet, which includes a few historical states in the trunk net as the features to replace
+the time coordinate. (D) Testing result of the modified DeepONet. Top: 2D visualization in space-time; bottom: 1D
+signals at different surface locations. (E) Vorticity profiles on the airfoil surface at three time stamps. The red and
+blue colors in (D) and (E) represent the truth and the DeepONet prediction, respectively.
+
+§5.5
+Flapping airfoil
+DeepONet
+FNO
+DeepONet (feature expansion)
+dFNO+
+
+3.65±0.02%
+16.20±0.01%
+2.87±0.24%
+3.56±0.10%
+
+Table 8: L2 relative error of predicting surface vorticity of a flapping airfoil.
+
+30
+
+5.6. Navier-Stokes equation in the vorticity-velocity form
+Problem setup. Following the problem setup in [3], we consider the 2D incompressible Navier-Stokes
+equation in the vorticity-velocity form:
+∂t ω + u · ∇ω = ν∆ω + f ,
+
+x ∈ [0, 1]2 , t ∈ [0, T ],
+
+∇ · u = 0,
+
+x ∈ [0, 1]2 , t ∈ [0, T ],
+x ∈ [0, 1]2 ,
+
+ω(x, 0) = ω0 (x),
+
+where ω(x, y, t) and u(x, y, t) are the vorticity and velocity, respectively. The viscosity ν in our
+experiment is 0.001. The forcing term is defined as:
+f (x, y) = 0.1 sin(2π(x + y)) + 0.1 cos(2π(x + y))
+and the periodic boundary condition is imposed. The data set we use in this paper is identical to
+that in [3]. We are interested in learning the operator mapping the vorticity field at the first ten
+time steps t ∈ [0, 10] to the vorticity at a target time step T = 20. The solution is determined by
+modifying the initial condition ω0 , which is given by a random field µ = N (0, 73/2 (−∆ + 49I)−2.5 ).
+The spatial resolution is fixed to be 64 × 64 both for training and testing.
+Results. DeepONet in this example is imposed with periodic boundary condition in Section 3.1.3
+and a CNN is used to process the input function (namely ω(t1 − t10 )) in the branch net. For
+FNO, the input is the concatenation of ω(t1 − t10 ) and the grid points. The L2 relative errors
+of DeepONet and FNO are illustrated in Table 9, indicating that the accuracy of DeepONet and
+FNO are comparable in this case. First, we find that the networks without data normalization
+perform the worst (both giving more than 2% errors). The data normalization improves the testing
+accuracy for both DeepONet and FNO, resulting in the errors of 1.78% and 1.81%, respectively.
+The best result is obtained by POD-DeepONet (1.71%).
+§5.6
+Navier-Stokes
+DeepONet w/o normalization
+DeepONet w/ normalization
+FNO w/o normalization
+FNO w/ normalization
+POD-DeepONet
+
+2.51±0.07%
+1.78±0.02%
+2.62±0.03%
+1.81±0.02%
+1.71±0.03%
+
+Table 9: L2 relative error for the Navier-Stokes equation in the vorticity-velocity form.
+
+5.7. Regularized cavity flows
+Here we consider a two-dimensional lid-driven flow in a square cavity (i.e., x, y ∈ [0, 1]), which
+can be described by the incompressible Navier-Stokes equations as
+∇ · u = 0,
+∂t u + u · ∇u = −∇P + ν∇2 u,
+where u = (u, v) denotes the velocity in x− and y− directions, respectively; P is the pressure;
+and ν is the kinematic viscosity. We consider two cases with different boundary conditions for the
+31
+
+upper wall, i.e., a time-independent (Case A) and a time-dependent one (Case B). In particular,
+the boundary conditions are expressed as
+!
+cosh[r(x − L2 )]
+Case A: u = U 1 −
+, v = 0,
+cosh( rL
+2 )
+!
+cosh[r(x − L2 )]
+Case B: u = U 1 −
++ 0.8 sin(2πx) sin(5t) , v = 0,
+cosh( rL
+2 )
+where U , r and L are constant. Specifically, r = 10, L = 1 is the length of the cavity. In addition,
+the remaining walls are stationary in both cases. The aforementioned equations are then solved
+using the lattice Boltzmann method (LBM) [58] to generate training data (see more details for the
+data generation in Section S5).
+For Case A, we generate 100 velocity flow fields at different Reynolds numbers (Re = U L/ν),
+i.e., spanning from 100 to 2080 with a step size 20. We then simulate the flow fields for 10 randomly
+generated Reynolds numbers within the range [100, 2080], which are not seen in the training dataset
+and employ them as the testing dataset. We take the boundary condition on the upper wall as the
+input for the operator networks, and the corresponding output is the converged velocity field.
+In Case B, we fix the Re as 1000, and set the maximum iteration number in LBM as 1, 500, 000,
+i.e., T = 1, 500, 000dt, where dt is the time step used in LBM. We then save the velocity fields every
+100 time steps in the last 10,000 iterations, suggesting that we have a total number of 100 snapshots
+for the velocity fields. Similarly, we train the operator networks to learn the mapping from the
+boundary condition to the corresponding velocity field. Specifically, we consider the following two
+cases:
+• Unsteady I: We utilize the first 90 snapshots in the training and the last 10 as testing dataset.
+• Unsteady II: We utilize the first 10 snapshots in the training and the last 10 as testing dataset.
+A representative velocity field for Re = 1000 is illustrated in Fig. 10.
+Note that the boundary condition is assumed to be known in both Cases A and B. We then use
+sin(5t), which is introduced in the boundary condition in Case B as an extra feature for the networks
+to enhance the predicted accuracy. In particular, we employ sin(5t) as (1) an additional input for
+the Branch networks of DeepONet (by concatenating the boundary condition and sin(5t)), and (2)
+an additional channel in dFNO+, i.e., we change the inputs from (x, y, t, ubc ) to (x, y, t, sin(5t), ubc ),
+where ubc represents the velocity along the x direction at the upper wall. See more details on the
+feature expansion of DeepONet and FNO in Sections 3.1.2 and 3.2.4.
+
+(a)
+
+(b)
+
+Figure 10: Unsteady cavity flows for Re = 1000 at T = 1, 500, 000dt. (a) Velocity field obtained from LBM.
+Left: u, Right: v. (b) Time series for the velocity at location A. u and v are normailized by U , and t is normalized
+by L/U .
+
+32
+
+Results. As displayed in Table 10: (1) For Case A, the results from dFNO+ are slightly more
+accurate than DeepONet, while POD-DeepONet achieves the best accuracy among them. (2)
+For Case B, DeepONet, dFNO+, and POD-DeepONet without feature expansion cannot provide
+accurate predictions for the velocity fields, and the relative errors from these three methods are quite
+similar. However, the extra feature can significantly reduce the predicted accuracy as compared
+to the results without feature expansion for all operator networks. In addition, DeepONet and
+dFNO+ with feature expansion have similar accuracy, and POD-DeepONet provides the most
+accurate predictions among all the methods. It is also interesting to observe that we can still get
+quite accurate predictions (around 2% relative errors for all methods) for the velocity field as we
+reduce the number of training dataset from 90 to 10 with the feature expansion in Unsteady II.
+
+DeepONet
+FNO
+POD-DeepONet
+dFNO+
+DeepONet (feature expansion)
+POD-DeepONet (feature expansion)
+dFNO+ (feature expansion)
+
+§5.7
+Cavity (Steady)
+
+§5.7
+Cavity (Unsteady I)
+
+1.20±0.23%
+—
+0.33±0.08%
+0.63±0.04%
+
+14.4±0.53%
+—
+14.2±0.51%
+15.0±0.17%
+0.51±0.12%
+0.18±0.02%
+0.56±0.03%
+
+§5.7
+Cavity (Unsteady II)
+—
+
+2.24±0.21%
+1.51±0.27%
+1.78±0.22%
+
+Table 10: L2 relative error for the regularized cavity flows. Unsteady I: number of training data: 90; number
+of testing data: 10. Unsteady II: number of training data: 10; number of testing data: 10.
+
+6. Summary
+In this study, we have investigated the performance of two neural operators that have shown
+early promising results: the deep operator network (DeepONet) and the Fourier neural operator
+(FNO). The main difference between DeepONet and FNO is that DeepONet does not discretize
+the output, but FNO does. Moreover, DeepONet can employ any type of neural network architectures in the branch net whereas FNO has a fixed architecture, and hence DeepONet is more
+flexible than FNO in terms of problem settings and datasets (see comparison details in Table 1).
+Here, we have designed 16 benchmarks that have elements of industrial-complexity applications,
+e.g., unsteadiness, complex geometry, noisy data, and have generated data that will be available
+publicly so that interested researchers can test their own ideas against the results presented herein.
+In particular, we have shown that the vanilla DeepONet and the vanilla FNO may lead to suboptimal results in several of the 16 benchmarks that exhibit multiscale behavior and non-smooth
+solutions. To this end, we have proposed several extensions of both DeepONet and FNO (e.g.,
+POD-DeepONet, dFNO+, gFNO+, and feature expansion) to either improve their accuracy or expand their capability to tackle diverse PDE based applications, especially for FNO to be able to deal
+with problems involving complex-geometry domains and mappings with different dimensionality of
+the input-output spaces.
+We have compared DeepONet and FNO both theoretically and computationally. We have
+theoretically showed that FNO and DeepONet of the same size exhibit the same accuracy when
+emulating the Cole-Hopf transformation for Burgers’ equation. In particular, FNO in its continuous
+form can be thought of as a subcase of DeepONet with a specially-designed branch network and a
+discrete trigonometric basis to replace the trunk net. On the computational side, we have performed
+33
+
+extensive experiments of 16 PDE problems, and we demonstrated that when proper extensions were
+employed, both DeepONet and FNO exhibited good accuracy for diverse applications, with similar
+performance in most problems. However, one major difference we found is the robustness to noise.
+In the examples of simulating the advection equation and instability waves, FNO was shown to be
+extremely sensitive to noise and totally failing to predict the solution even only when 0.1% Gaussian
+noise was imposed on the testing data. On the contrary, DeepONet was much more robust and
+able to predict satisfactory results for relatively large noise levels. This extreme sensitivity of FNO
+to noise implies that it may learn an unstable operator, which may not be able to generalize well
+even within the distribution of inputs. In contrast, our experience even with the vanilla DeepONet
+is, e.g., see [43], that it generalizes well even for non-smooth solutions within and outside the
+distribution. For example, using the DeepONet as a building block in [43] for modeling hypersonic
+flows, we were able to obtain very accurate results outside the Mach number training range [8, 10],
+e.g., at Mach number 7 and 11, by assimilating only up to five new measurements of velocity and
+temperature.
+Training neural operators could be very expensive, but the theoretical works in [24, 25] and
+[4] have shown that both DeepONet and FNO can break the curse of dimensionality in the input
+space for solution operators arising from the majority of partial differential equations. We have
+also demonstrated exponential convergence of the DeepONet error with respect to the size of the
+training data, see [20], although for larger data sizes the convergence rate switches to algebraic due
+to the finite size of the neural network architecture. We believe that this is a possible direction for
+future work, i.e., to design new architectures that can sustain exponential convergence rate for all
+data sizes. Moreover, the demand for large data sets could be reduced significantly by incorporating
+physics-informed learning in the loss function of the neural operators as it was demonstrated in
+the works of [46] and [45]. However, as demonstrated in [45], a hybrid physics-data training is
+more effective for realistic problems of the type considered herein, and simply using the governing
+equations in the loss as suggested in [46] without using data may lead to erroneous results, e.g., for
+the compressible Euler equations considered in the current work.
+Acknowledgements
+This work was supported by DARPA/CompMods HR00112090062, DOE PhILMs project (no.
+DE-SC0019453), and OSD/AFOSR MURI grant FA9550-20-1-0358. Zhang was also partially supported by AFOSR under award number FA9550-20-1-0056.
+References
+[1] L. Lu, P. Jin, G. E. Karniadakis, DeepONet: Learning nonlinear operators for identifying differential equations based on the universal approximation theorem of operators, arXiv preprint
+arXiv:1910.03193 (2019).
+[2] T. Chen, H. Chen, Universal approximation to nonlinear operators by neural networks with
+arbitrary activation functions and its application to dynamical systems, IEEE Transactions on
+Neural Networks 6 (4) (1995) 911–917.
+[3] Z. Li, N. Kovachki, K. Azizzadenesheli, B. Liu, K. Bhattacharya, A. Stuart, A. Anandkumar, Fourier neural operator for parametric partial differential equations, arXiv preprint
+arXiv:2010.08895 (2020).
+
+34
+
+[4] N. Kovachki, S. Lanthaler, S. Mishra, On universal approximation and error bounds for Fourier
+neural operators, arXiv preprint arXiv:2107.07562 (2021).
+[5] T. J. Sejnowski, The unreasonable effectiveness of deep learning in artificial intelligence, Proceedings of the National Academy of Sciences 117 (48) (2020) 30033–30038.
+[6] G. E. Karniadakis, I. G. Kevrekidis, L. Lu, P. Perdikaris, S. Wang, L. Yang, Physics-informed
+machine learning, Nature Reviews Physics 3 (6) (2021) 422–440.
+[7] M. Raissi, P. Perdikaris, G. E. Karniadakis, Physics informed deep learning (part i): Datadriven solutions of nonlinear partial differential equations, arXiv preprint arXiv:1711.10561
+(2017).
+[8] M. Raissi, P. Perdikaris, G. E. Karniadakis, Physics informed deep learning (part ii): Datadriven discovery of nonlinear partial differential equations., arXiv preprint arXiv:1711.10566
+(2017).
+[9] L. Lu, X. Meng, Z. Mao, G. E. Karniadakis, DeepXDE: A deep learning library for solving
+differential equations, SIAM Review 63 (1) (2021) 208–228.
+[10] G. Pang, L. Lu, G. E. Karniadakis, fPINNs: Fractional physics-informed neural networks,
+SIAM Journal on Scientific Computing 41 (4) (2019) A2603–A2626.
+[11] D. Zhang, L. Lu, L. Guo, G. E. Karniadakis, Quantifying total uncertainty in physics-informed
+neural networks for solving forward and inverse stochastic problems, Journal of Computational
+Physics 397 (2019) 108850.
+[12] D. Zhang, L. Guo, G. E. Karniadakis, Learning in modal space: Solving time-dependent
+stochastic pdes using physics-informed neural networks, SIAM Journal on Scientific Computing
+42 (2) (2020) A639–A665.
+[13] L. Lu, R. Pestourie, W. Yao, Z. Wang, F. Verdugo, S. G. Johnson, Physics-informed neural
+networks with hard constraints for inverse design, arXiv preprint arXiv:2102.04626 (2021).
+[14] X. Meng, Z. Li, D. Zhang, G. E. Karniadakis, PPINN: Parareal physics-informed neural network for time-dependent pdes, Computer Methods in Applied Mechanics and Engineering 370
+(2020) 113250.
+[15] A. D. Jagtap, G. E. Karniadakis, Extended physics-informed neural networks (XPINNs): A
+generalized space-time domain decomposition based deep learning framework for nonlinear
+partial differential equations, Communications in Computational Physics 28 (5) (2020) 2002–
+2041.
+[16] J. Yu, L. Lu, X. Meng, G. E. Karniadakis, Gradient-enhanced physics-informed neural networks for forward and inverse PDE problems, arXiv preprint arXiv:2111.02801 (2021).
+[17] S. Cai, Z. Mao, Z. Wang, M. Yin, G. E. Karniadakis, Physics-informed neural networks
+(PINNs) for fluid mechanics: A review, arXiv preprint arXiv:2105.09506 (2021).
+[18] G. Cybenko, Approximation by superpositions of a sigmoidal function, Mathematics of Control, Signals and Systems 2 (4) (1989) 303–314.
+[19] K. Hornik, M. Stinchcombe, H. White, Multilayer feedforward networks are universal approximators, Neural Networks 2 (5) (1989) 359–366.
+35
+
+[20] L. Lu, P. Jin, G. Pang, Z. Zhang, G. E. Karniadakis, Learning nonlinear operators via DeepONet based on the universal approximation theorem of operators, Nature Machine Intelligence
+3 (3) (2021) 218–229.
+[21] I. Higgins, Generalizing universal function approximators, Nature Machine Intelligence 3 (3)
+(2021) 192–193.
+[22] Z. Li, N. Kovachki, K. Azizzadenesheli, B. Liu, K. Bhattacharya, A. Stuart, A. Anandkumar, Neural operator: Graph kernel network for partial differential equations, arXiv preprint
+arXiv:2003.03485 (2020).
+[23] H. You, Y. Yu, M. DÉlia, T. Gao, S. Silling, Nonlocal kernel network (NKN): a stable and
+resolution-independent deep neural network, Preprint (2021).
+[24] S. Lanthaler, S. Mishra, G. E. Karniadakis, Error estimates for DeepONets: A deep learning
+framework in infinite dimensions, arXiv preprint arXiv:2102.09618 (2021).
+[25] B. Deng, Y. Shin, L. Lu, Z. Zhang, G. E. Karniadakis, Convergence rate of DeepONets for
+learning operators arising from advection-diffusion equations, arXiv preprint arXiv:2102.10621
+(2021).
+[26] A. Yu, C. Becquey, D. Halikias, M. E. Mallory, A. Townsend, Arbitrary-depth universal approximation theorems for operator neural networks, arXiv preprint arXiv:2109.11354 (2021).
+[27] N. Kovachki, Z. Li, B. Liu, K. Azizzadenesheli, K. Bhattacharya, A. Stuart, A. Anandkumar,
+Neural operator: Learning maps between function spaces, arXiv preprint arXiv:2108.08481
+(2021).
+[28] K. Bhattacharya, B. Hosseini, N. B. Kovachki, A. M. Stuart, Model reduction and neural
+networks for parametric pdes, arXiv preprint arXiv:2005.03180 (2020).
+[29] N. Trask, R. G. Patel, B. J. Gross, P. J. Atzberger, GMLS-Nets: A framework for learning
+from unstructured data, arXiv preprint arXiv:1909.05371 (2019).
+[30] H. You, Y. Yu, N. Trask, M. Gulian, M. D’Elia, Data-driven learning of nonlocal physics from
+high-fidelity synthetic data, Computer Methods in Applied Mechanics and Engineering 374
+(2021) 113553.
+[31] R. G. Patel, N. A. Trask, M. A. Wood, E. C. Cyr, A physics-informed operator regression
+framework for extracting data-driven continuum models, Computer Methods in Applied Mechanics and Engineering 373 (2021) 113500.
+[32] M. D. Wilkinson, M. Dumontier, I. J. Aalbersberg, G. Appleton, M. Axton, A. Baak,
+N. Blomberg, J.-W. Boiten, L. B. da Silva Santos, P. E. Bourne, et al., The fair guiding
+principles for scientific data management and stewardship, Scientific Data 3 (1) (2016) 1–9.
+[33] H. Maupin, US Army Research Laboratory South Partnership Summit 2018, Tech. rep., Army
+Research Lab Aberdeen Proving Ground United States (2019).
+[34] X. Meng, G. E. Karniadakis, A composite neural network that learns from multi-fidelity data:
+Application to function approximation and inverse PDE problems, Journal of Computational
+Physics 401 (2020) 109020.
+
+36
+
+[35] X. Meng, H. Babaee, G. E. Karniadakis, Multi-fidelity Bayesian neural networks: Algorithms
+and applications, Journal of Computational Physics 438 (2021) 110361.
+[36] L. Lu, M. Dao, P. Kumar, U. Ramamurty, G. E. Karniadakis, S. Suresh, Extraction of mechanical properties of materials through deep learning from instrumented indentation, Proceedings
+of the National Academy of Sciences 117 (13) (2020) 7052–7062.
+[37] L. Yang, X. Meng, G. E. Karniadakis, B-PINNs: Bayesian physics-informed neural networks
+for forward and inverse PDE problems with noisy data, Journal of Computational Physics 425
+(2021) 109913.
+[38] A. Olivier, M. D. Shields, L. Graham-Brady, Bayesian neural networks for uncertainty quantification in data-driven materials modeling, Computer Methods in Applied Mechanics and
+Engineering 386 (2021) 114079.
+[39] X. Meng, L. Yang, Z. Mao, J. d. A. Ferrandis, G. E. Karniadakis, Learning functional priors
+and posteriors from data and physics, arXiv preprint arXiv:2106.05863 (2021).
+[40] C. Lin, Z. Li, L. Lu, S. Cai, M. Maxey, G. E. Karniadakis, Operator learning for predicting
+multiscale bubble growth dynamics, The Journal of Chemical Physics 154 (10) (2021) 104118.
+[41] S. Cai, Z. Wang, L. Lu, T. A. Zaki, G. E. Karniadakis, DeepM&Mnet: Inferring the electroconvection multiphysics fields based on operator approximation by neural networks, Journal
+of Computational Physics 436 (2021) 110296.
+[42] P. C. Di Leoni, L. Lu, C. Meneveau, G. Karniadakis, T. A. Zaki, DeepONet prediction of linear
+instability waves in high-speed boundary layers, arXiv preprint arXiv:2105.08697 (2021).
+[43] Z. Mao, L. Lu, O. Marxen, T. A. Zaki, G. E. Karniadakis, DeepM&Mnet for hypersonics:
+Predicting the coupled flow and finite-rate chemistry behind a normal shock using neuralnetwork approximation of operators, Journal of Computational Physics 447 (2021) 110698.
+[44] C. Lin, M. Maxey, Z. Li, G. E. Karniadakis, A seamless multiscale operator neural network
+for inferring bubble dynamics, Journal of Fluid Mechanics 929 (2021).
+[45] S. Goswami, M. Yin, Y. Yu, G. Karniadakis, A physics-informed variational DeepONet for
+predicting the crack path in brittle materials, arXiv preprint arXiv:2108.06905 (2021).
+[46] S. Wang, H. Wang, P. Perdikaris, Learning the solution operator of parametric partial differential equations with physics-informed DeepONets, arXiv preprint arXiv:2103.10974 (2021).
+[47] M. Yin, E. Ban, B. V. Rego, E. Zhang, C. Cavinato, J. D. Humphrey, G. E. Karniadakis, Simulating progressive intramural damage leading to aortic dissection using an operator-regression
+neural network, arXiv preprint arXiv:2108.11985 (2021).
+[48] A. Yazdani, L. Lu, M. Raissi, G. E. Karniadakis, Systems biology informed deep learning
+for inferring parameters and hidden dynamics, PLoS computational biology 16 (11) (2020)
+e1007575.
+[49] S. Dong, N. Ni, A method for representing periodic functions and enforcing exactly periodic
+boundary conditions with deep neural networks, Journal of Computational Physics 435 (2021)
+110242.
+
+37
+
+[50] X. Glorot, Y. Bengio, Understanding the difficulty of training deep feedforward neural networks, in: Proceedings of the thirteenth international conference on artificial intelligence and
+statistics, JMLR Workshop and Conference Proceedings, 2010, pp. 249–256.
+[51] L. Lu, Y. Shin, Y. Su, G. E. Karniadakis, Dying ReLU and initialization: Theory and numerical
+examples, Communications in Computational Physics 28 (5) (2020) 1671–1706.
+[52] K. He, X. Zhang, S. Ren, J. Sun, Delving deep into rectifiers: Surpassing human-level performance on imagenet classification, in: Proceedings of the IEEE international conference on
+computer vision, 2015, pp. 1026–1034.
+[53] M. Telgarsky, Neural networks and rational functions, in: 34th International Conference on
+Machine Learning, ICML 2017, International Machine Learning Society (IMLS), 2017, pp.
+5195–5210.
+[54] J. A. A. Opschoor, C. Schwab, J. Zech, Exponential ReLU DNN expression of holomorphic
+maps in high dimension, Constructive Approximation (2021).
+[55] W. Wang, C.-W. Shu, H. C. Yee, B. Sjögreen, High-order well-balanced schemes and applications to non-equilibrium flow, Journal of Computational Physics 228 (18) (2009) 6682–6702.
+[56] X. Zhang, C.-W. Shu, Positivity-preserving high order discontinuous Galerkin schemes for
+compressible Euler equations with source terms, Journal of Computational Physics 230 (4)
+(2011) 1238–1248.
+[57] P. A. Gnoffo, R. N. Gupta, J. L. Shinn, Conservation equations and physical models’ for
+hypersonic air flows in thermal and chemical nonequilibrium, NASA Technical Paper 2869
+(1989).
+[58] X. Meng, Z. Guo, Multiple-relaxation-time lattice Boltzmann model for incompressible miscible
+flow with large viscosity ratio and high Péclet number, Physical Review E 92 (4) (2015) 043305.
+[59] Z. Guo, C. Zheng, B. Shi, Non-equilibrium extrapolation method for velocity and pressure
+boundary conditions in the lattice Boltzmann method, Chinese Physics 11 (4) (2002) 366.
+
+38
+
+S1. Proof of Theorem 4.3
+Proof. By the fact that ∂x K(x, y, t) = −∂y K(x, y, t) and integration by parts, we have
+R
+R
+2κ R ∂x K(x, y, t)(Im v0 − v0 )(y)dy
+R RK(x, y, t)(Im v0 − v0 )(y)dy
+R
+G(u0 )(x) − Gm (u0,m ; x) = u(x)
+−
+K(x, y, t)(Im v0 )(y)dy
+K(x, y, t)(Im v0 )(y)dy
+R
+R
+R R
+K(x, y, t)(Im v0 − v0 )(y)dy 2κ R K(x, y, t)∂y (Im v0 − v0 )(y)dy
+R
+= u(x) R R
+−
+R K(x, y, t)(Im v0 )(y)dy
+R K(x, y, t)(Im v0 )(y)dy
+=: I1 + I2 .
+Then by the fact that u0 ∈ W 1,∞ and properties of of the heat kernel, we have u ∈ W 1,∞ and also
+kI1 kL2 (−π,π) ≤ C kIm v0 − v0 kL2 (−π,π) ,
+
+kI2 kL2 (−π,π) ≤ C kIm v0 − v0 kH 1 (−π,π) .
+
+We observe that
+∂x v0 (s)
+
+=
+
+∂xx v0 (s)
+
+=
+
+M0
+1
+v0 (s) ,
+v0 (s) u0 (s) ≤
+2κ
+2κ
+M2 M 
+ u2 (s) ∂ u (s) 
+x 0
+1
+0
+0
+−
+v
+(s)
+≤
++
+v0 (s) .
+0
+2
+2
+4κ
+2κ
+4κ
+2κ
+
+By the estimates of the Fourier interpolation error
+kIm v0 − v0 kH 1 (−π,π) ≤ Ch ∂x2 v0 L2 (−π,π) ≤ C(M0 , M1 , κ)h,
+we then have kI1 kL2 (−π,π) ≤ Ch and kI2 kL2 (−π,π) ≤ Ch and whence for some small h (large m)
+kG(u0 )(·, t) − Gm (u0,m )(·, t)kL2 (−π,π) ≤ Ch.
+Here C > 0 depends on t, M0 , M1 , and κ and C may be very large when κ is small.
+S2. Dataset size
+S3. Architectures of DeepONets
+We list the architectures of DeepONet and POD-DeepONet for each example in Tables S2 and
+S3.
+S4. Data generation for Darcy flows
+We employ the PDEtoolbox in Matlab to solve Eq. (5.1) for the Darcy flows in different geometries of Sec. 5.2.
+• Rectangular domain: The Dirichlet boundary conditions are imposed on the inlet and the
+outlet, i.e., h(x = 0, y) = 1, and h(x = 1, y) = 0, and the Neumann boundary conditions
+are employed on the upper and bottom walls. We employ 1,893 unstructured meshes in our
+simulations, and then interpolate the solution to a 20 × 20 uniform grid to make it consistent
+with the generated permeability field. In addition, we obtain 1,200 solutions with different
+permeability fields, and use 1,000 of them for training and 200 for testing.
+
+39
+
+No. of training data
+
+No. of testing data
+
+1000
+1000
+1000
+1900
+1900
+1900
+15
+1000
+1000
+40800
+100
+28
+1000
+100
+90
+10
+
+200
+200
+200
+100
+100
+100
+2
+1000
+200
+10000
+50
+2
+200
+10
+10
+10
+
+§5.1
+§5.2.1 PWC
+§5.2.1 Cont.
+§5.2.2
+§5.2.3
+§5.2.4
+§5.3 Electroconvection
+§5.4.1 Advection I
+§5.4.1 Advection II/III
+§5.4.2
+§5.4.3 Euler
+§5.5 Airfoil
+§5.6 NS
+§5.7 Cavity (Steady)
+§5.7 Cavity (Unsteady I)
+§5.7 Cavity (Unsteady II)
+
+Table S1: Dataset size for each problem, unless otherwise stated.
+
+§5.1 Burgers
+§5.2.1 PWC
+§5.2.1 Cont.
+§5.2.2
+§5.2.3
+§5.2.4
+§5.3 Electroconvection
+§5.4.1 Advection I
+§5.4.1 Advection II/III
+§5.4.2
+§5.4.3 Euler
+§5.5 Airfoil
+§5.6 NS
+§5.7 Cavity
+
+Branch net
+
+Trunk net
+
+Activation
+function
+
+Depth 4 & Width 128
+CNN
+CNN
+[128, 128]
+[128, 128]
+[128, 128]
+[256, 256, 128]
+Depth 2 & Width 256
+Depth 2 & Width 512
+Depth 6 & Width 200
+Depth 2 & Width 256
+Depth 2 & Width 200
+CNN
+CNN
+
+Depth 4 & Width 128
+Depth 5 & Width 128
+[128, 128, 100]
+[128, 128, 128, 128]
+[128, 128, 128]
+[128, 128, 128]
+[128, 128, 128]
+Depth 4 & Width 256
+Depth 4 & Width 512
+Depth 7 & Width 200
+Depth 4 & Width 256
+Depth 4 & Width 200
+[128, 128, 64]
+[128, 128, 128, 100]
+
+tanh
+ReLU
+tanh
+tanh
+ReLU
+ReLU
+ReLU
+ReLU
+ReLU
+ELU
+ReLU
+ReLU
+tanh
+tanh
+
+Table S2: DeepONet architecture for each problem, unless otherwise stated.
+
+40
+
+§5.1 Burgers
+§5.2.1 PWC
+§5.2.1 Cont.
+§5.2.2
+§5.2.3
+§5.2.4
+§5.3 Electroconvection
+§5.4.1 I
+§5.4.1 II
+§5.4.1 III
+§5.4.2
+§5.4.3 Euler
+§5.6 NS
+§5.7
+
+Branch net
+
+No. of POD modes
+
+Depth 3 & Width 128
+CNN
+CNN
+[64, 64]
+Depth 3 & Width 128
+CNN
+Depth 3 & Width 256
+Depth 2 & Width 256
+Depth 2 & Width 512
+Depth 2 & Width 512
+Depth 6 & Width 256
+Depth 2 & Width 256
+CNN
+CNN
+
+32
+115
+10
+8
+32
+20
+12
+38
+38
+32
+9
+16
+29
+6
+
+Table S3: POD-DeepONet architecture for each problem, unless otherwise stated. The activation functions
+are the same as those in Table S2.
+
+• Pentagram with a hole: The Dirichlet boundary conditions are imposed on all boundaries,
+which are generated from the Gaussian processes in Eq. (5.2). We employ 1,938 unstructured
+meshes in our simulations, and obtain solutions for 2,000 different boundary conditions. We
+then use 1,900 of them for training the operator networks, and utilize the remaining for
+testing.
+• Triangular domain: We utilize the same Gaussian processes in Eq. (5.2) to generate the
+Dirichlet boundary conditions for all boundaries here, and then employ 861 unstructured
+meshes in our simulations. Similarly, we generate 2,000 solutions with different boundary
+conditions, and use 1,900 of them for training and 100 for testing.
+• Triangular domain with a notch: We employ 1,084 unstructured meshes in our simulations to generate 2,000 solutions with different boundary conditions. From the generated
+datasets, 1,900 samples are used for training, while the remaining 100 are employed as testing
+samples.
+
+S5. Data generation for regularized cavity flow
+For both the steady and unsteady cases, we employ the multi-relaxation-time lattice Boltzmann
+equation model (MRT-LBE) [58] with a N × N = 256 × 256 uniform grid in our simulations. In
+addition, the non-equilibrium extrapolation [59] is employed for all boundary conditions. The time
+step is set as dt = dx = L/N .
+For the steady case (Case A), we terminate the iteration as the following criterion is met:
+P
+|uT +1000 − uT |
+P
+E=
+≤ 10−6 ,
+uT
+where T denotes the number of iterations. For the unsteady case (Case B), we set the maximum
+iteration number as 1, 500, 000, and use the velocity fields in the last 10,000 iterations as the
+training/testing dataset in the DeepONet/FNO.
+41
+
+(a)
+
+(b)
+
+Figure S1: Two datasets of Darcy flow. (a) Data from [3]. (b) Newly-generated data.
+
+(a)
+
+(b)
+
+(c)
+
+(d)
+
+Figure S2: Darcy flows: Unstructured meshes for solving Eq. (5.1) in different geometries.
+
+42
+
+

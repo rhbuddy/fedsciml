@@ -1,0 +1,3345 @@
+Reliable extrapolation of deep neural operators informed by physics
+or sparse observations
+Min Zhu1 , Handi Zhang2 , Anran Jiao3 , George Em Karniadakis4,5 , and Lu Lu1,*
+1
+
+arXiv:2212.06347v1 [cs.LG] 13 Dec 2022
+
+Department of Chemical and Biomolecular Engineering, University of Pennsylvania,
+Philadelphia, PA 19104, USA
+2
+Graduate Group in Applied Mathematics and Computational Science, University of
+Pennsylvania, Philadelphia, PA 19104, USA
+3
+Department of Computer and Information Science, University of Pennsylvania,
+Philadelphia, PA 19104, USA
+4
+Division of Applied Mathematics, Brown University, Providence, RI 02912, USA
+5
+School of Engineering, Brown University, Providence, RI 02912, USA
+*
+Corresponding author. Email: lulu1@seas.upenn.edu
+
+Abstract
+Deep neural operators can learn nonlinear mappings between infinite-dimensional function
+spaces via deep neural networks. As promising surrogate solvers of partial differential equations
+(PDEs) for real-time prediction, deep neural operators such as deep operator networks (DeepONets) provide a new simulation paradigm in science and engineering. Pure data-driven neural
+operators and deep learning models, in general, are usually limited to interpolation scenarios,
+where new predictions utilize inputs within the support of the training set. However, in the inference stage of real-world applications, the input may lie outside the support, i.e., extrapolation is
+required, which may result to large errors and unavoidable failure of deep learning models. Here,
+we address this challenge of extrapolation for deep neural operators. First, we systematically
+investigate the extrapolation behavior of DeepONets by quantifying the extrapolation complexity via the 2-Wasserstein distance between two function spaces and propose a new behavior of
+bias-variance trade-off for extrapolation with respect to model capacity. Subsequently, we develop a complete workflow, including extrapolation determination, and we propose five reliable
+learning methods that guarantee a safe prediction under extrapolation by requiring additional
+information—the governing PDEs of the system or sparse new observations. The proposed
+methods are based on either fine-tuning a pre-trained DeepONet or multifidelity learning. We
+demonstrate the effectiveness of the proposed framework for various types of parametric PDEs.
+Our systematic comparisons provide practical guidelines for selecting a proper extrapolation
+method depending on the available information, desired accuracy, and required inference speed.
+
+Keywords: Neural operators; DeepONet; Extrapolation complexity; Bias-variance trade-off; Finetuning; Multifidelity learning; Out-of-distribution inference
+
+1
+
+Introduction
+
+The universal approximation theorem of neural networks (NNs) for functions [1] has provided a
+rigorous foundation of deep learning. As an increasingly popular alternative to traditional numerical
+1
+
+methods such as finite difference and finite element methods, neural networks have been applied in
+solving partial differential equations (PDEs) in the field of scientific machine learning (SciML) [2, 3].
+Physics-informed neural networks (PINNs) [4, 5] have provided a new paradigm for solving forward
+as well as inverse problems governed by PDEs by embedding the PDE loss into the loss function
+of neural networks.
+Neural networks are universal approximators of not only functions but also nonlinear operators,
+i.e., mappings between infinite-dimensional function spaces [6, 7, 8]. Hence, NNs can approximate
+the operators of PDEs, and once the network is trained, it only requires a forward pass to obtain
+the PDE solution for a new condition. The deep operator network (DeepONet) [7], the first neural
+operator, has demonstrated good performance for building surrogate models for many types of
+PDEs. For example, DeepONet has been applied in multiscale bubble dynamics [9, 10], brittle
+fracture analysis [11], instabilities in boundary layers [12], solar-thermal systems forecasting [13],
+electroconvection [14], hypersonics with chemical reactions [15], and fast multiscale modeling [16].
+In addition, several extensions of DeepONet have been proposed in recent studies, including DeepONet for multiple-input operators (MIONet) [17], DeepONet with proper orthogonal decomposition
+(POD-DeepONet) [18], physics-informed DeepONet [19, 11], multifidelity DeepONet [20, 21, 22],
+DeepM&Mnet for multiphysics problems [14, 15], multiscale DeepONet [23], and DeepONet with
+uncertainty quantification [24, 25, 26, 27].
+Despite the aforementioned success, neural networks are usually limited to solving interpolation
+problems, i.e., inference is accurate only for inputs within the support of the training set, while NNs
+would fail if the new input is outside the support of the training set (i.e., extrapolation) [28, 29]. We
+provide an illustrative example in Fig. 1A, where we trained two fully-connected neural networks
+(three hidden layers, 64 neurons per layer, and ReLU activation function) to learn the ground-truth
+function y = sin(2πx). The training data is 100 equispaced points in the domain of [0, 1]. After
+training, the two NNs perform well in the interpolation region. However, the two networks have
+very large prediction error in the extrapolation region (x < 0 or x > 1).
+This difficulty of extrapolation has also been observed in DeepONets [7, 9, 15, 30, 16, 31]. When
+we use DeepONets to learn an operator G : v(x) 7→ u(ξ), we usually generate a training dataset by
+randomly sampling input functions v from a space of mean-zero Gaussian random field (GRF; or
+Gaussian process (GP)) with a predefined covariance kernel kl (x1 , x2 ):
+v(x) ∼ GP(0, kl (x1 , x2 )).
+A typical choice of the kernel is the radial-basis function kernel (or squared-exponential kernel,
+Gaussian kernel)
+
+
+kx1 − x2 k2
+kl (x1 , x2 ) = exp −
+,
+(1)
+2l2
+where l > 0 is the correlation length. The value of l determines the smoothness of sampled functions,
+with a larger l leading to smoother functions. Several functions randomly sampled from the spaces
+of GRFs with different l are shown in Fig. 1B.
+In real applications, there is no guarantee that in the inference stage, a new input is always in
+the interpolation region, and extrapolation would lead to large errors and possible failure of NNs.
+In this study, our first goal is to understand the extrapolation of DeepONets. We quantitatively
+measure the extrapolation complexity via the 2-Wasserstein distance between two function spaces.
+Subsequently, we systematically study how the extrapolation error of DeepONet changes with
+respect to multiple factors, including model capacity (e.g., network size and training iterations),
+training dataset size, and activation functions.
+
+2
+
+Figure 1: Examples of NNs and DeepONets for interpolation and extrapolation. (A) Two
+independent NNs are trained to learn y = sin(2πx) using the data in [0, 1]. (B) Functions randomly
+sampled from GRF spaces of different correlation lengths l are taken as the input functions for the
+branch net of DeepONet.
+
+3
+
+In the second part of this work, we address the extrapolation issue for DeepONets. Given a
+training dataset, in general, it is almost impossible to have an accurate prediction for a new input
+outside the support of training dataset. In order to reduce the extrapolation error, we assume that
+we have one of the following extra information: (1) we know the governing PDE of the system, or
+(2) we have extra sparse observations at some locations ξ for the output function u. Based on the
+type of information, we propose several methods to solve the extrapolation problem. Specifically,
+we first train a DeepONet by using the training dataset. Next, for the first case with physics, we
+fine-tune the pre-trained DeepONet with the PDE loss as done in PINNs. For the second case with
+new observations, we propose to either fine-tune the pre-trained DeepONet with the new data,
+or train another machine learning model (neural networks or Gaussian process regression) using
+multifidelity learning [32, 33, 34, 35, 36], where the prediction from the pre-trained DeepONet is
+of low-fidelity while the new data is of high-fidelity.
+The idea of using new observations to fine-tune a pre-trained DeepONet for extrapolation has
+been used in Refs. [9, 15]. However, as we show in our numerical experiments, their fine-tuning
+approach is not always stable and accurate, so here we propose a better approach for fine-tuning.
+Moreover, fine-tuning a pre-trained network with new data is conceptually related to transfer
+learning (TL) [37, 38, 39] and few-shot learning (FSL) [40, 41]. In Ref. [42], a transfer learning
+technique was developed for DeepONets to solve the same PDEs but on different domains. Although
+we only consider DeepONets in this study, the proposed methods can directly be applied to other
+deep neural operators, such as Fourier neural operators [43, 18], graph kernel networks [44], nonlocal
+kernel networks [45], and others [46, 30, 47].
+The paper is organized as follows. In Section 2, after briefly introducing the architecture of
+DeepONet, we first introduce a definition of the extrapolation complexity and subsequently empirically investigate the extrapolation error with respect to various factors. In Section 3, we provide a
+general workflow for extrapolation and propose several methods to improve the DeepONet performance for extrapolation, including fine-tuning with physics, fine-tuning with sparse observations,
+and multifidelity learning. Then in Section 4, we compare the performance of different methods
+in six numerical examples. Finally, we conclude the paper and discuss some future directions in
+Section 5.
+
+2
+
+Extrapolation of deep neural operators
+
+We briefly explain the architecture of the deep operator network (DeepONet) and then focus on
+how extrapolation errors vary with respect to different factors, including extrapolation complexity,
+training phase, training dataset size, and network architecture (e.g., network size and activation
+function).
+
+2.1
+
+Operator learning via DeepONet
+
+To define the setup of operator learning, we consider a function space V of function v defined on
+the domain D ⊂ Rd :
+v : D 3 x 7→ v(x) ∈ R,
+0
+
+and another function space U of function u defined on the domain D0 ⊂ Rd .
+u : D0 3 ξ 7→ u(ξ) ∈ R.
+Let G be an operator that maps V to U:
+G : V → U,
+4
+
+v 7→ u.
+
+DeepONet [7] was developed to learn the operator G based on the universal approximation
+theorem of neural networks for operators [6]. A DeepONet consists of two sub-networks: a trunk
+network and a branch network (Fig. 1B). For m scattered locations {x1 , x2 , . . . , xm } in D, the branch
+network takes the function evaluations [v(x1 ), v(x2 ), . . . , v(xm )] as the input, and the output of the
+branch network is [b1 (v), b2 (v), . . . , bp (v)], where p is the number of neurons. The trunk network
+takes ξ as the input and the outputs [t1 (ξ), t2 (ξ), . . . , tp (ξ)]. Then, by taking the inner product of
+trunk and branch outputs, the output of DeepONet is:
+G(v)(ξ) =
+
+p
+X
+
+bk (v)tk (ξ) + b0 ,
+
+k=1
+
+where b0 ∈ R is a bias.
+
+2.2
+
+Experiment setup
+
+We consider two examples to demonstrate the extrapolation of DeepONets.
+Antiderivative operator. The first one is an ordinary differential equation (ODE) defined by
+du(x)
+= v(x),
+dx
+
+x ∈ [0, 1],
+
+with an initial condition u(0) = 0. We use DeepONet to learn the solution operator, i.e., an
+antiderivative operator
+Z
+x
+
+G : v(x) 7→ u(x) =
+
+v(τ )dτ.
+0
+
+Diffusion-reaction equation. The second example is a diffusion-reaction equation defined by
+∂u
+∂2u
+= D 2 + ku2 + v(x),
+∂t
+∂x
+
+x ∈ [0, 1], t ∈ [0, 1],
+
+with zero initial and boundary conditions. In this example, k and D are set at 0.01. DeepONet is
+trained to learn the mapping from the source term v(x) to the solution u(x, t):
+G : v(x) 7→ u(x, t).
+Training and test datasets. The input functions v are sampled from a mean-zero Gaussian
+random field (GRF) v ∼ GP(0, kl (x1 , x2 )) with the radial-basis function (RBF) kernel of Eq. (1).
+However, the training and test datasets use different values of l. The reference solution u(x) of the
+ODE is obtained by Runge-Kutta(4, 5), and the reference solution u(x, t) of the PDE is obtained
+by a second-order finite difference method with a mesh size of 101 × 101.
+
+2.3
+
+Interpolation and extrapolation regions
+
+The input functions for training and testing are generated from GRFs, with a larger l leading to
+smoother functions (Fig. 1B). Hence, if the correlation length for training (ltrain ) is different from
+the correlation length for testing (ltest ), then it is extrapolation (Ex.). The level of extrapolation
+can be represented by the difference between ltrain and ltest .
+For both problems, we choose ltrain and ltest in the range {0.1, 0.2, . . . , 1.0}. The training
+dataset size is chosen as 1000. The L2 relative errors of DeepONets trained and tested on datasets
+5
+
+with different ltrain and ltest are shown in Figs. 2A and B. When ltrain = ltest (Figs. 2A and B,
+diagonal dash lines), the training and test functions are sampled from the same space, and thus it
+is interpolation and the error is smaller than 10−2 . In the bottom right region where ltrain > ltest ,
+the error of DeepONet is larger. When ltrain < ltest (Figs. 2A and B, left top region), although it is
+extrapolation, DeepONet still has a small error, i.e., DeepONet can predict accurately for smoother
+functions. Therefore, we have three scenarios:
+
+
+Interpolation (In.), when ltrain = ltest ,
+Prediction = Ex.− ,
+when ltrain < ltest ,
+
+ +
+Ex. ,
+when ltrain > ltest .
+Here, the extrapolation for functions with smaller l (i.e., less smoother) is denoted by Ex.+ , while
+extrapolation for functions with larger l (i.e., more smoother) is denoted by Ex.− .
+
+Correlation length for training
+
+10 1
+
+Correlation length for testing
+
+Correlation length for training
+
+10 2
+
+10 3
+
+F 100
+
+10 1
+
+W2 1.7
+
+10 2
+
+W2
+
+100
+
+10 1
+
+n
+tio
+Ex. +
+
+0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0
+
+Correlation length for training
+
+10 2
+
+10 3
+
+10 1
+
+W2 2.1
+
+10 2
+
+10 1
+
+10 1
+
+Int
+erp
+ola
+
+n
+tio
+0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0
+
+Extrapolation error
+
+E 100
+
+Ex. +
+
+Ex.
+
+Extrapolation error
+
+0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0
+
+10 1
+
+Int
+erp
+ola
+
+Ex. +
+
+Ex.
+
+0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0
+
+C
+
+Correlation length for testing
+
+Int
+erp
+ola
+
+tio
+
+n
+
+10 1
+
+10 2
+
+Extrapolation error
+
+D100
+
+Ex.
+
+0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0
+
+B
+
+Correlation length for testing
+
+0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0
+
+A
+
+W2 1.9
+
+10 2
+
+W2
+
+100
+
+10 1
+
+W2
+
+100
+
+Figure 2: L2 relative errors of DeepONets trained and tested on datasets with different
+correlation lengths. (A and D) ODE problem. (B and E) Diffusion-reaction equation with
+k = 0.01. (C and F) Diffusion-reaction equation with k = 0.5. (A–C) The testing error for
+different pairs of training and testing functions. (D–F) The Ex.+ error grows with a polynomial
+rate with respect to the W2 distance between the training and test spaces. The error is the mean
+of 10 runs, and the error bars represent the one standard deviation.
+
+2.4
+
+Extrapolation complexity and 2-Wasserstein distance
+
+We have tested DeepONet with different levels of extrapolation. To quantify the extrapolation
+complexity, we measure the distance between two GRFs using the 2-Wasserstein (W2 ) metric [48],
+as was suggested in Ref. [7]. Let us consider two Gaussian processes f1 ∼ GP(m1 , k1 ) and f2 ∼
+6
+
+GP(m2 , k2 ) defined on a space X, where m1 , m2 are the mean functions and k1 , k2 are the covariance
+functions. A covariance functions ki is associated with a covariance operator Ki : L2 (X) → L2 (X)
+given by
+Z
+[Ki φ](x) =
+
+ki (x, s)φ(s)ds,
+
+∀φ ∈ L2 (X).
+
+X
+
+Then the W2 metric between the two GPs f1 and f2 is obtained as
+ 1 #) 12
+ 1
+1
+2
+km1 − m2 k22 + Tr K1 + K2 − 2 K12 K2 K12
+,
+
+(
+W2 (f1 , f2 ) :=
+
+"
+
+where Tr is the trace. Following the definition, a larger W2 distance represents a greater difference
+between two GRF spaces.
+We show the testing error between each pair of GRFs with different correlation lengths in
+Figs. 2A, B and C, and the relationship between the error and W2 distance is shown in Figs. 2D,
+E and F. We find that the extrapolation error grows with respect to the W2 distance between the
+two GRF spaces. Specially, for the ODE problem, we have
+Error ∝ W21.7 .
+
+(2)
+
+For the diffusion-reaction equation with the coefficient k = 0.01, we have
+Error ∝ W22.1 ,
+
+(3)
+
+Error ∝ W21.9 .
+
+(4)
+
+and for the coefficient k = 0.5,
+Therefore, the W2 distance between the training and test spaces can be used as a measure of the
+extrapolation complexity.
+In Eqs. (2), (3), and (4), the test errors of different problems converge with different rates. For
+the diffusion-reaction equation, the value of k has an influence on the convergence rate. To further
+confirm if the influence of k on the convergence rate is significant, we compute the 95% confidence
+intervals for the two convergence rates above as [2.01, 2.25] and [1.79, 1.92], and the p-values of
+the two-sided T-test is 0.0001, which implies the difference of the convergence rates is significant.
+Moreover, we observe that for a larger value of k, the extrapolation error grows slower, which is a
+surprising result since larger k leads to a stronger nonlinearity in the PDE. This is a preliminary
+result, and further investigation is required in future work.
+
+2.5
+
+Understanding the extrapolation error
+
+To further understand the extrapolation error, we use the diffusion-reaction equation as an example
+and investigate several factors that contribute to the extrapolation error. Unless otherwise stated,
+we use the following hyperparameters. The DeepONet has one hidden layer for the branch net and
+two hidden layers for the trunk net, each with 100 neurons per layer. The activation function for
+both branch and trunk nets is ReLU. The correlation length of the training dataset is ltrain = 0.5.
+In this case, ltest < 0.5, ltest > 0.5 and ltest = 0.5 represents Ex.+ , Ex.− , and interpolation,
+respectively. DeepONets are trained with the Adam optimizer with a learning rate of 0.001 for
+500,000 iterations.
+Our main findings of this subsection are as follows.
+
+7
+
+• Section 2.5.1: Similar to the classical U-shaped bias-variance trade-off curve for the test error
+of interpolation, Ex.+ also has a U-shaped curve with respect to the network size and the
+number of training iterations. Compared with interpolation, Ex.+ has larger error and earlier
+transition point.
+• Section 2.5.2: Increasing training dataset size results in better accuracy for Ex.+ .
+• Section 2.5.3: Different activation functions perform differently for Ex.+ . The layer-wise locally adaptive activation functions (L-LAAF) [49, 50] slightly outperform their corresponding
+non-adaptive activation functions.
+2.5.1
+
+Bias-variance trade-off for extrapolation
+
+One of the central tenets in machine learning is the bias-variance trade-off [51, 52], which implies
+a U-shaped curve for test error of interpolation as the model capacity grows, while the training
+error decreases monotonically (Fig. 3A). The bottom of the U-shaped curve is achieved at the
+transition point which balances the bias and variance. To the left of the transition point, the model
+is underfitting, and to the right, it is overfitting. There are several factors that affect the model
+capacity, such as network sizes and training iterations. Here, we show that the test error of Ex.+
+also has a U-shaped curve.
+To investigate the influence of the network size, we choose different network widths ranging
+from 1 to 500. We use a smaller training dataset of 100 so that we can observe the overfitting more
+easily. The correlation length of the test datasets is chosen from 0.2 to 0.6. For a fixed test dataset,
+we observe a U-shaped curve (Fig. 3B). Moreover, the transition point between underfitting and
+overfitting (indicated by the arrows in Fig. 3B) occurs earlier for Ex.+ than interpolation.
+Next, we study the two phases of underfitting and overfitting during the training of DeepONets.
+We use five test datasets generated with different correlation lengths ltest from 0.1 to 0.5. As shown
+in Fig. 3C, a smaller ltest leads to a larger extrapolation error during the entire training process.
+Moreover, the transition point between underfitting and overfitting (indicated by the arrows in
+Fig. 3C) occurs earlier for smaller ltest .
+Here, we have observed the classical U-shaped curves for the test errors of interpolation and
+extrapolation. However, recently a “double-descent” test error curve has been observed for neural
+networks [53, 54], i.e., when the model capacity is further increased, after a certain point the test
+error would decrease again. We do not observe the double-descent behavior for DeepONets, and
+one possible reason is that our model capacity is not large enough.
+2.5.2
+
+Training dataset size
+
+Next, we explore the effect of training dataset size in both interpolation and extrapolation cases.
+The dataset size ranges from 10 to 2000, and we show the test errors of four datasets in Fig. 3D.
+It is well known that a larger training dataset leads to better accuracy for interpolation. As shown
+in Fig. 3D, for extrapolation, a larger training dataset still leads to a smaller test error. However,
+the improvement exhibits a diminishing trend as the dataset size goes large.
+2.5.3
+
+Activation function
+
+Another factor that the accuracy of DeepONet is contingent upon is the activation function. To
+evaluate the effect of activation functions, for the trunk nets, we consider four activation functions
+widely used in deep learning, including the hyperbolic tangent (tanh), rectified linear units (ReLU,
+
+8
+
+10 2
+10 3
+100
+
+E 100
+
+ltest=0.2
+ltest=0.3
+ltest=0.4
+ltest=0.5
+ltest=0.6
+
+10 2
+
+101
+
+Network width
+
+102
+
+10 1
+
+10 2
+ltest=0.1
+ltest=0.3
+ltest=0.5
+ltest=0.7
+
+102
+
+Size of training dataset
+
+103
+
+10 2102
+
+103
+tanh
+SiLU
+GELU
+ReLU
+Hat
+
+L 2 relative error
+
+L 2 relative error
+
+L 2 relative error
+
+Error
+
+Model capacity
+
+10 1
+
+10 3
+101
+
+10 1
+
+10 1
+
+Extrapolation
+Interpolation
+Training
+
+D 100
+
+C
+
+100
+
+F 100
+
+ltest=0.1
+ltest=0.2
+ltest=0.3
+ltest=0.4
+ltest=0.5
+
+104
+
+105
+
+No. of iterations
+
+L-LAAF-tanh
+L-LAAF-SiLU
+L-LAAF-GELU
+L-LAAF-ReLU
+L-LAAF-Hat
+
+L 2 relative error
+
+B
+L 2 relative error
+
+A
+
+10 1
+
+104
+
+103
+
+No. of Iterations
+
+105
+
+10 2102
+
+103
+
+104
+
+No. of Iterations
+
+105
+
+Figure 3: Test error of Ex.+ for the diffusion-reaction equation. (A) Schematic of typical
+curves for training error, interpolation test error, and Ex.+ test error versus model capacity. Test
+error has a U-shaped error curve. Red star and green dot represent the location where overfitting
+starts in Ex.+ and interpolation scenario, respectively. (B) The test error for different test datasets
+when using different network widths. The arrows indicate the transition point between underfitting
+and overfitting. The curves and shaded regions represent the mean and one standard deviation of
+10 runs. (C) The test error for different test datasets during the training of DeepONet. The
+network width is 100. (D) The test error for different test datasets when using different training
+dataset sizes. (E) The test error when using different activation functions. (F) The test error when
+using layer-wise locally adaptive activation functions (L-LAAF). For all the experiments, we use
+ltrain = 0.5.
+
+9
+
+max(0, x)) [55], sigmoid linear units (SiLU, 1+ex−x ) [56], and Gaussian error linear units (GELU,
+√ 
+
+x · 21 1 + erf(x/ 2) ) [57]. In addition, we explore the Hat activation function [58] defined by
+
+
+x < 0 or x ≥ 2,
+0,
+Hat(x) := x,
+0 ≤ x < 1,
+
+
+2 − x, 1 ≤ x < 2.
+For branch nets, we still use ReLU. The correlation lengths for training and testing datasets are
+ltrain = 0.5 and ltest = 0.3, respectively. ReLU and Hat have similar results and outperform the
+rest of the activation functions (Fig. 3E). GELU also presents a satisfactory performance despite
+the overfitting after a certain number of training iterations.
+Besides these commonly used activation functions, we also consider the layer-wise locally adaptive activation functions (L-LAAF) [49, 50] in the form of σ(n·a·x), where σ is a standard activation
+function, n is a scaling factor, and a is a trainable parameter. L-LAAF introduces the trainable
+parameter in each layer, thus leading to a local adaptation of activation function. The performance
+of L-LAAF depends on the scaling factor n, so we performed a grid search for n from 1, 2, 5, and 10
+(Appendix Fig. 16). With other settings remaining the same, L-LAAF with the optimal n slightly
+outperforms non-adaptive activation functions (Fig. 3F). L-LAAF-Hat and L-LAAF-ReLU perform
+the best among the five activation functions, and most importantly the tendency of overfitting is
+alleviated.
+
+3
+
+Reliable learning methods for safe extrapolation
+
+As we demonstrate in Section 2, compared with interpolation, extrapolation leads to a much larger
+prediction error. However, extrapolation is usually unavoidable in real applications. In this section,
+we propose several reliable learning methods to guarantee a safe prediction in the extrapolation
+region.
+
+3.1
+
+Workflow of extrapolation
+
+We continue to consider the setup of operator learning in Section 2.1. We assume that we have a
+training dataset T , and then we train a DeepONet with T . We denote this pre-trained DeepONet
+by Gθ , where θ is the set of trainable parameters in the network. If the size of T is large enough
+and the DeepONet is well trained, then the pre-trained DeepONet can have accurate predictions
+for interpolation. In this study, we do not develop new methods to improve the interpolation
+performance. Our goal is to have an accurate prediction for a new input function v, irrespective if
+v belongs to interpolation or extrapolation.
+In general, it is very difficult to have an accurate prediction for extrapolation [28, 59, 29],
+e.g., see the simple problem of function regression in Fig. 1A and the examples of DeepONets in
+Refs. [7, 9, 15, 30, 16]. Hence, in order to reduce the extrapolation error, it is essential to have
+additional information. Here, we consider the following two scenarios and develop corresponding
+methods to address the extrapolation problem.
+1. Physics (Section 3.3): We know the governing PDEs and/or the physical constraints of the
+system:
+F[u; v] = 0
+with suitable initial and boundary conditions
+B[u; v] = 0.
+10
+
+2. Sparse observations (Sections 3.4 and 3.5): We have sparse observations of the output function
+u = G(v) at Nobs locations:
+D = {(ξ1 , u(ξ1 )), (ξ2 , u(ξ2 )), . . . , (ξNobs , u(ξNobs ))} .
+
+(5)
+
+Since we aim to handle any input function v, the first step is to determine if v is in the region
+of interpolation or extrapolation, which is discussed in Section 3.2. If it is interpolation, then it
+becomes trivial, i.e., we only need to predict the output by the trained DeepONet; otherwise, we
+need to extrapolate via the proposed methods. The entire workflow is shown in Fig. 4.
+
+Figure 4: Flowchart of predicting the output ũ for an input v. For extrapolation, we use one
+of the following learning methods: fine-tune with physics, fine-tune with sparse new observations,
+or multifidelity learning. Here,  denotes a user specified threshold to determine interpolation or
+extrapolation.
+
+3.2
+
+Determination of interpolation or extrapolation
+
+One approach to determine interpolation or extrapolation is to compare the new function v with
+the functions in the training dataset. If v is less smooth than the training functions, then it
+is extrapolation, otherwise it is interpolation as we presented in Section 2. Here, because we
+have extra information of either physics or observations, we first predict the output ũ by the pretrained DeepONet Gθ , i.e., ũ = Gθ (v), and then check if the ũ is consistent with the physics F or
+observations D.
+Specifically, we propose to compute one of the following errors of mismatch:
+• Mismatch error of physics, i.e., the mean PDE residual:
+Z
+1
+Ephys =
+|F[ũ; v]|dξ,
+Area(Ω) Ω
+where Ω is the domain of the PDE.
+
+11
+
+• Mismatch error of observations, i.e., the root relative squared error (RRSE):
+v
+u PN
+obs
+u
+(ũ(ξi ) − u(ξi ))2
+Eobs = t i=1PN
+.
+obs
+2 (ξ )
+u
+i
+i=1
+To compute F[ũ; v] in Ephys , we need the derivatives of the DeepONet output ũ with respect to the
+trunk net input ξ while the branch net input is fixed at v. This can be computed via automatic
+differentiation as was done in physics-informed neural networks (PINNs) and physics-informed
+DeepONets [19, 11].
+To verify that Ephys and Eobs are good metrics of interpolation and extrapolation, we take the
+diffusion-reaction equation as an example. We train a DeepONet with the functions sampled from
+GRF with ltrain = 0.5, and then compute Ephys and Eobs for different functions randomly sampled
+from GRFs with different correlation lengths l. We denote the value of Ephys or Eobs for l = ltrain
+by 0 . In the interpolation and Ex.− regions, i.e., l ≥ ltrain , the value of Ephys or Eobs is close
+to 0 (Fig. 5A). In the Ex.+ region, i.e., l < ltrain , the value of Ephys or Eobs is much larger than
+0 . Moreover, for two spaces with larger 2-Wasserstein distance, the mismatch error is also larger
+(Fig. 5B). Therefore, we can select the threshold  = α0 , where α ≥ 1 is a user specified tolerance
+factor, and then compare Ephys or Eobs with . If Ephys >  or Eobs > , then it is Ex.+ ; otherwise,
+it is interpolation or Ex.− (Fig. 4).
+
+Mismatch error
+
+100
+10 1
+
+B 101
+
+Ex.
+
+100
+10 1
+
+0
+
+10 2
+
+0.2
+
+0.4
+
+0
+
+10 2
+
+0
+
+10 3
+
+Physics
+Observations
+
+Mismatch error
+
+Ex. +
+
+Interpolation
+
+A 101
+
+0
+
+10 3
+0.6
+
+0.8
+
+Correlation length for testing
+
+1.0
+
+0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8
+
+2-Wasserstein distance
+
+Figure 5: Mismatch error of physics (Ephys ) or observations (Eobs ) for the diffusionreaction equation. (A) Mismatch error for different testing correlation length. (B) Mismatch
+error for different 2-Wasserstein distance. The correlation length for training is 0.5. The number
+of new observations for Eobs is 100. The curves and shaded regions represent the mean and one
+standard deviation of 100 test functions.
+
+3.3
+
+Extrapolation via fine-tuning with physics (FT-Phys)
+
+We first discuss how to extrapolate with the additional information of physics (Algorithm 1). For
+a new input v in the extrapolation region, the prediction ũ by the pre-trained DeepONet Gθ may
+not satisfy the PDE. We propose to fine-tune Gθ to minimize the loss
+Lphys = wF LF + wB LB ,
+12
+
+(6)
+
+where LF is the loss of PDE residuals
+LF =
+
+1 X
+|F[Gθ (v)(ξ); v]|2 ,
+|TF |
+ξ∈TF
+
+LB is the loss of initial and boundary conditions
+1 X
+LB =
+|B[Gθ (v)(ξ); v]|2 ,
+|TB |
+ξ∈TB
+
+and wF and wB are the weights. TF and TB are two sets of points sampled in the domain and on the
+initial and boundary locations, respectively. A DeepONet has two subnetworks (a branch net and
+a trunk net), and thus we could choose to fine-tune the entire DeepONet or only one subnetwork,
+while other parts remain unchanged. Moreover, as each subnetwork has multiple layers, we can
+also only fine-tune certain layers of the subnetwork. In this study, we consider four approaches:
+(1) fine-tuning both trunk and branch nets (Branch & Trunk), (2) fine-tuning the branch net, (3)
+fine-tuning the trunk net, and (4) fine-tuning the last layer of the trunk net (Trunk last).
+Algorithm 1: Extrapolation via fine-tuning with physics.
+Input: A pre-trained DeepONet Gθ , and a new input function v
+Data: Physics information F and B
+Output: Prediction u = Gθ (v)
+1 Fix the input of the branch net of Gθ to be v;
+2 Sample the two sets of training points TF and TB for the equation and initial/boundary
+conditions;
+3 Select the weights wF and wB ;
+4 Train all the parameters or a subset of the parameters of Gθ by minimizing the loss Lphys
+of Eq. (6);
+The idea of first pre-training and then fine-tuning is also relevant to the field of transfer learning
+(TL) [37, 38, 39], which aims to extract the knowledge from one or more source tasks and then
+apply the knowledge to a target task. However, most TL methods are developed to deal with
+covariate shift, label shift (or prior shift, target shift), and conditional shift, but not extrapolation.
+As the branch net input is fixed at v, this fine-tuning method works in the same way as PINNs [4,
+5]. Compared with a PINN with random initialization, a pre-trained DeepONet provides a better
+initialization, which makes the training much faster, especially when the extrapolation complexity is
+small. The proposed method also uses the same technique as physics-informed DeepONets [19, 11],
+but physics-informed DeepONets still require the target function space for training.
+
+3.4
+
+Extrapolation via fine-tuning with sparse new observations
+
+With the information of new sparse observations D in Eq. (5), we propose a few different approaches
+for Ex.+ scenario. Similar to the fine-tuning with physics, the first proposed method is also in the
+spirit of transfer learning, i.e., we fine-tune the pre-trained DeepONet with the new observations
+(Algorithm 2).
+Fine-tune with new observations alone (FT-Obs-A). As the pre-trained DeepONet is not
+consistent with the ground truth observations, we fine-tune the DeepONet to better fit the observations. Specifically, we further train the DeepONet by minimizing the mean squared error
+13
+
+(MSE)
+N
+
+Lobs =
+
+obs
+1 X
+(Gθ (v)(ξi ) − u(ξi ))2 .
+Nobs
+
+(7)
+
+i=1
+
+In this approach, we only use the new observations for fine-tuning, and thus we call it “fine-tune
+alone” to distinguish from the next approach.
+Algorithm 2: Extrapolation via fine-tuning with new observations.
+Input: A pre-trained DeepONet Gθ , and a new input function v
+Data: New observations D
+Output: Prediction u = Gθ (v)
+1 Fix the input of the branch net of Gθ to be v;
+2 Fine-tune Gθ by minimizing the loss of Eq. (7) for fine-tuning alone or Eq. (8) for
+fine-tuning together;
+The approach above is simple and has low computational cost. However, as Nobs is usually very
+small, it may have the issue of overfitting. It may also have the issue of catastrophic forgetting [60,
+61], i.e., DeepONet would forget previously learned information upon learning the new observations.
+Considering the fact that both the training dataset and the new observations satisfy the same
+operator G, they can be learned by the same DeepONet at the same time. Hence, we propose the
+following fine-tuning approach to prevent overfitting and catastrophic forgetting.
+Fine-tune with training data and new observations together (FT-Obs-T). Instead of
+fitting DeepONet with only the new observations, we fine-tune the pre-trained DeepONet with new
+observed data together with the original training dataset T via the loss
+LT ,obs = LT + λLobs
+
+(8)
+
+where LT is the original loss for T , e.g., MSE loss, and λ is a weight.
+Compared with the FT-Obs-A above, FT-Obs-T keeps learning from T via the loss of LT , which
+mitigates the problem of catastrophic forgetting. Moreover, LT has an effect of regularization to
+prevent the overfitting of new sparse observations. By tuning the value of λ, we can balance
+remembering the original information T and learning from the new information D.
+
+3.5
+
+Extrapolation via multifidelity learning with sparse new observations
+
+In all the previous methods, we use the idea of fine-tuning. Here, we propose a different approach
+based on multifidelity learning [32]. The idea of multifidelity learning is that instead of learning
+from a large dataset of high accuracy (i.e., high fidelity), we only use a small high-fidelity dataset
+complemented by another dataset of low accuracy (i.e., low fidelity). Specifically, to predict G(v) for
+the new function v, the sparse new observations D is the high-fidelity dataset, while the prediction
+ũ = Gθ (v) from the pre-trained DeepONet is the low-fidelity dataset.
+We integrate high- and low-fidelity datasets via two multifidelity methods: multifidelity Gaussian process regression (MFGPR) [33] or multifidelity neural networks (MFNN) [34, 35, 36]. In
+MFGPR, we model the high- and low-fidelity functions by Gaussian processes with the radial-basis
+function kernel in Eq. (1). Then, the model is trained by minimizing the negative log marginal
+likelihood on the datasets. In MFNN, we have one fully-connected neural network to learn the
+low-fidelity dataset and another fully-connected neural network to learn the correlation between
+14
+
+low- and high-fidelity. For more details of MFNN, see Refs. [34, 35]. The algorithm is shown in
+Algorithm 3.
+Algorithm 3: Extrapolation via multifidelity learning with new observations.
+Input: A pre-trained DeepONet Gθ , and a new input function v
+Data: New observations D
+Output: Prediction u
+1 Compute the prediction ũ = Gθ (v);
+|S|
+|S|
+2 Sample a set of dense points S = {ξi }i=1 and use {(ξi , ũ(ξi ))}i=1 as the low-fidelity dataset;
+3 Use D as the high-fidelity dataset;
+4 Train a multifidelity model (MFGPR or MFNN) on the multifidelity datasets;
+
+4
+
+Extrapolation results
+
+In this section, we test the proposed extrapolation methods with different PDEs. The hyperparameters used in this study can be found in Appendix B. For all experiments, the Python library
+DeepXDE [5] is utilized to implement the algorithms and train the neural networks. The code
+in this study is publicly available from the GitHub repository https://github.com/lu-group/
+deeponet-extrapolation.
+To demonstrate the effectiveness of the extrapolation methods, we consider three different baselines. We use the pre-trained DeepONet as the first baseline to show the Ex.+ error without any
+additional information. Physics-informed DeepONet (PIDeepONet) [62] is taken as another baseline model, which is trained by the PDE loss and initial/boundary conditions. When we know the
+governing physics, we also use PINN as the baseline for the method of fine-tuning with physics.
+The network size and activation function of PINN are the same as those of trunk net of DeepONets.
+When we have extra new observations, we perform a Gaussian process regression (GPR) with the
+observations as a strong single-fidelity baseline for fine-tuning with observations and multifidelity
+learning. The new observations are randomly sampled in the domain unless otherwise stated.
+
+4.1
+
+Antiderivative operator
+
+First, we consider the antiderivative operator in Section 2.2. The goal is to learn the operator
+mapping from v(x) to the solution u(x). For the training dataset, v(x) is sampled from GRF of an
+RBF kernel with the correlation length ltrain = 0.5. To test the Ex.+ , we generate a test dataset of
+100 functions with ltest = 0.2.
+Table 1 summarizes the results of different methods. The pre-trained DeepONet has an average
+L2 relative error of 11.6%, and PIDeepONet has an average L2 relative error of 7.44% for the test
+dataset. When we have information of physics, fine-tuning with physics achieves accuracy of 1.52%,
+which is more accurate than PINN. When we have more than 5 sparse observations, FT-Obs-T,
+MFGPR and MFNN achieve accuracy about 2%, but FT-Obs-A has a relatively large error. In
+this case, multifidelity learning (MFGPR and MFNN) outperforms FT-Obs-A and FT-Obs-T. We
+note that this example is a relatively simple problem and mulifidelity methods work well, but for
+the other examples, fine-tuning with new observations has better accuracy. Moreover, an example
+of prediction result is also provided in Figs. 6A and B to illustrate the enhancement resulted
+from employing proposed methods. While the performance of FT-Obs-A, FT-Obs-T, MFNN, and
+MFGP are similar, only FT-Obs-T and MFNN are plotted. Irrespective of new physical information
+15
+
+(Fig. 6A) or new observations (Fig. 6B), the prediction results confirm that the proposed methods
+ameliorate the effect of Ex.+ to a great extent.
+Table 1: L2 relative error of different methods for the antiderivative operator in Section 4.1. ltrain = 0.5 and ltest = 0.2. Bold font indicates the smallest two errors in each case, and
+the underlined text indicates the smallest error.
+DeepONet
+Error(In.): 0.93 ± 0.20% Error(Ex.+ ): 11.6 ± 5.26%
+PIDeepONet
+Error(In.): 0.81 ± 0.69% Error(Ex.+ ): 17.4 ± 6.01%
+PINN
+FT-Phys
+
+Branch & Trunk
+1.84 ± 1.49%
+
+GPR
+FT-Obs-A
+FT-Obs-T
+MFGPR
+MFNN
+
+4 points
+14.7 ± 16.7%
+10.7 ± 7.70%
+9.05 ± 6.50%
+13.0 ± 11.2%
+8.99 ± 5.83%
+
+1.77 ± 2.14%
+Branch
+Trunk
+5.09 ± 3.66% 1.52 ± 1.00%
+
+Trunk last
+2.29 ± 1.65%
+
+5 points
+8.63 ± 14.1%
+5.98 ± 4.15%
+5.61 ± 4.19%
+5.17 ± 3.74%
+4.79 ± 3.02%
+
+7 points
+3.15 ± 12.4%
+4.22 ± 3.11%
+1.87 ± 1.24%
+1.15 ± 0.99%
+1.35 ± 0.99%
+
+6 points
+4.98 ± 12.8%
+4.45 ± 3.30%
+2.92 ± 2.17%
+2.49 ± 1.71%
+2.10 ± 1.33%
+
+Detailed results of FT-Phys. For fine-tuning with physics, we test three different learning
+rates (i.e., 0.002, 0.001, 0.0002). For both PINN and fine-tuning with physics, we enforce the hard
+constraint for the initial condition. Among all variants of FT-Phys, fine-tuning the trunk net with
+a learning rate of 0.002 performs the best (Fig. 6C). The performance of fine-tuning with physics
+for different learning rates is exhibited in Figs. 6D, E, and F. Fine-tuning the trunk net and the
+entire DeepONet perform similarly well when the learning rate is large, and the full net slightly
+outperforms the trunk net as the learning rate is as small as 0.0002.
+
+4.2
+
+Diffusion-reaction equation
+
+Next, we consider the diffusion-reaction equation in Section 2.2. We aim to train a DeepONet to
+learn the operator mapping from the source term v(x) to the solution u(x, t). The source term v(x)
+is randomly sampled from a GRF with an RBF kernel with the correlation length ltrain = 0.5. To
+test the Ex.+ , we generate a test dataset of 100 functions with ltest = 0.2.
+Table 2 summarizes the L2 relative errors of different methods. The FT-Phys has the lowest
+errors, and the FT-Obs-T works the best among methods that require new observations. The pretrained DeepONet has an average L2 relative error of 10.4%, and PIDeepONet has an average L2
+relative error of 10.2% for the test dataset. As shown in Table 2, when we have physics, fine-tuning
+with trunk net at a learning rate of 0.002 can achieve low L2 relative errors (0.32%) and significantly
+outperform the pre-trained DeepONet and GPR. When we have 20, 50, and 100 new observations,
+FT-Obs-A and FT-Obs-T generally outperform MFGPR and MFNN. However, when we have 200
+new observations, GPR and MFGPR reach low L2 relative errors because the diffusion-reaction
+equation is relatively simple with a smooth solution, and 200 points are sufficient for MFGPR and
+GPR to obtain accurate results.
+Fig. 7 is an example illustrating the predictions and absolute errors of all methods when we
+have 100 observations. We find that the locations of significant errors are similar between GPR
+and MFGPR (Fig. 7C) due to the similarity of these two methods. FT-Obs-A and FT-Obs-T also
+16
+
+Figure 6: Antiderivative operator in Section 4.1. (A) Predictions of the pre-trained DeepONet
+and fine-tuning with physics. (B) Predictions of the pre-trained DeepONet, FT-Obs-T, and MFNN
+with 5 new observations. (C) The best result of each method among different learning rates. (D,
+E, and F) Training trajectories under the learning rate of (D) 0.002, (E) 0.001, and (F) 0.0002.
+The curves and shaded regions represent the mean and one standard deviation of 100 test cases.
+FT-Phys and MFNN obtain the best results. (For clarity, only some standard deviations are
+plotted.)
+
+Table 2: L2 relative error of different methods for the diffusion-reaction equation in
+Section 4.2. ltrain = 0.5 and ltest = 0.2. Bold font indicates the smallest two errors in each case,
+and the underlined text indicates the smallest error.
+DeepONet
+Error(In.): 0.74 ± 0.29% Error(Ex.+ ): 10.4 ± 6.24%
+PIDeepONet
+Error(In.): 0.42 ± 0.20% Error(Ex.+ ): 10.2 ± 6.30%
+PINN
+FT-Phys
+
+Branch & Trunk
+0.37 ± 0.16%
+
+GPR
+FT-Obs-A
+FT-Obs-T
+MFGPR
+MFNN
+
+20 points
+34.5 ± 15.0%
+5.51 ± 3.08%
+4.56 ± 2.66%
+12.2 ± 5.07%
+7.86 ± 5.18%
+
+0.49 ± 0.24%
+Branch
+Trunk
+1.28 ± 0.62% 0.32 ± 0.15%
+
+Trunk last
+0.48 ± 0.21%
+
+50 points
+9.63 ± 4.55%
+3.36 ± 1.72%
+2.69 ± 1.51%
+7.96 ± 3.45%
+4.50 ± 2.20%
+
+200 points
+0.61 ± 0.39%
+1.63 ± 0.69%
+1.32 ± 0.59%
+0.48 ± 0.27%
+1.50 ± 0.68%
+
+17
+
+100 points
+2.59 ± 1.57%
+2.41 ± 1.19%
+1.83 ± 0.86%
+2.26 ± 1.49%
+2.73 ± 1.18%
+
+have a similar profile of errors. It is worth noting that both PINN and FT-Phys have very low
+errors, so we cannot find a similar error between PINN and FT-Phys in this example, but it can
+be found in the advection equation in Section 4.4.
+
+Figure 7: An example of extrapolation for diffusion-reaction equation in Section 4.2.
+(A) A test input function. (B) The corresponding PDE solution. (C) Predictions (first row) and
+errors (second row) of different methods. FT-Phys and FT-Obs-T obtain the best results.
+
+Detailed results of FT-Phys. We consider physics as additional information and the approach
+of fine-tuning with physics. Seven different learning rates (i.e., 0.01, 0.005, 0.002, 0.001, 0.0005,
+0.0002, and 0.0001) are used to fine-tune the pre-trained DeepONet. Appendix Figs. 17A–G display
+the L2 relative errors of 100 test functions for different learning rates. When the number of iterations
+is small, PINNs give larger L2 relative errors (> 100%), while the FT-Phys produces much lower
+errors (∼10%). This is because the parameters of PINNs are randomly initialized. By contrast, the
+initial parameters of the FT-Phys are given by the pre-trained DeepONet. For fine-tuning different
+parts of DeepONet, we select the best accuracy among different learning rates and summarize
+the results in Appendix Fig. 17H. Appendix Fig. 17I shows the L2 relative errors with respect to
+the learning rate for different approaches. The performance of PINN is susceptible to the change
+in learning rates (Appendix Fig. 17I, black line). Fine-tuning with branch net (∼1%) in general
+performs worse than other approaches regardless of learning rates. Fine-tuning with the entire
+DeepONet (branch & trunk) or with the trunk net performs the best and reaches a very low error
+for any learning rate between 0.01 and 0.0001. Fine-tuning with the last layer of the trunk net also
+achieves good accuracy. The best accuracy of different FT-Phys approaches is shown in Table 2.
+Effect of λ on FT-Obs-T. We aim to find an optimal λ to achieve the lowest test errors. Also,
+we determine the effect of λ on test errors when using different numbers of observed points and
+different ltest . The results of 12 cases with different new observation numbers and testing correlation
+lengths are shown in Appendix Fig. 20. We can see that the lowest error is obtained when λ is
+∼0.3, so we choose λ = 0.3 as the default value in our experiments.
+
+18
+
+4.3
+
+Burgers’ equation
+
+Then, we consider the Burgers’ equation
+∂u
+∂u
+∂2u
++u
+= ν 2,
+∂t
+∂x
+∂x
+
+x ∈ [0, 1],
+
+t ∈ [0, 1],
+
+with a periodic boundary condition and an initial condition u0 (x) = v(x). In this study, ν is set at
+0.1. Our goal is to train a DeepONet to learn the operator mapping from initial condition v(x) to
+the solution u(x, t). The periodic function v(x) is sampled from a GRF with an exponential sine
+squared kernel (or periodic kernel) given by
+
+
+2 sin2 (π||x1 − x2 ||/p)
+kl (x1 , x2 ) = exp −
+,
+l2
+where l is the correlation length of the kernel, and p is the periodicity of the kernel, which is chosen
+at 1. The correlation length for training is ltrain = 1.0, and to test the Ex.+ , we generate a test
+dataset of 100 functions with ltest = 0.6.
+Table 3 summarizes the L2 relative errors of different methods. The pre-trained DeepONet has
+an average L2 relative error of 6.53%, and PIDeepONet has an average L2 relative error of 9.27%
+for the test dataset. As shown in Table 3, when we have physics, fine-tuning with the trunk net at
+a learning rate of 0.002, or with the branch & trunk nets at a learning rate of 0.001 can achieve low
+L2 relative errors (1.42%) and significantly outperform the pre-trained DeepONet. When we have
+new observations, unlike the results of the diffusion-reaction equation, FT-Obs-A and FT-Obs-T
+consistently outperform MFGPR and MFNN, while FT-Obs-T works the best among methods
+that use new observations. Fig. 8 is an example of illustrating the prediction and absolute errors of
+all methods when we have 200 observations. In this example, pre-trained DeepONet has relatively
+large errors distributed in the whole domain. In contrast, the large errors of the remaining methods
+are gathered in the initial area of the domain.
+Table 3: L2 relative error of different methods for the Burgers’ equation in Section 4.3.
+ltrain = 1.0 and ltest = 0.6. Bold font indicates the smallest two errors in each case, and the
+underlined text indicates the smallest error.
+DeepONet
+Error(In.): 2.21 ± 1.11% Error(Ex.+ ): 6.53 ± 3.33%
+PIDeepONet
+Error(In.): 4.96 ± 1.80% Error(Ex.+ ): 9.27 ± 3.93%
+PINN
+FT-Phys
+
+Branch & Trunk
+1.42 ± 0.85%
+
+GPR
+FT-Obs-A
+FT-Obs-T
+MFGPR
+MFNN
+
+20 points
+43.0 ± 20.9%
+4.97 ± 2.57%
+4.53 ± 2.32%
+6.28 ± 3.20%
+6.34 ± 3.23%
+
+2.79 ± 1.27%
+Branch
+Trunk
+6.32 ± 3.06% 1.42 ± 0.93%
+
+Trunk last
+1.73 ± 0.94%
+
+50 points
+29.2 ± 15.1%
+4.40 ± 2.27%
+3.89 ± 1.98%
+5.79 ± 3.29%
+5.62 ± 2.84%
+
+200 points
+12.8 ± 7.58%
+3.78 ± 2.02%
+3.07 ± 1.55%
+4.22 ± 2.31%
+4.59 ± 2.33%
+
+100 points
+18.6 ± 10.3%
+4.00 ± 1.99%
+3.44 ± 1.72%
+5.15 ± 2.97%
+5.15 ± 2.56%
+
+Detailed results of FT-Phys. We consider the approach of fine-tuning with physics. Seven
+different learning rates (i.e., 0.01, 0.005, 0.002, 0.001, 0.0005, 0.0002, and 0.0001) are used to
+19
+
+Figure 8: An example of extrapolation for the Burgers’ equation in Section 4.3. (A) A
+test input function. (B) The corresponding PDE solution. (C) Predictions (first row) and errors
+(second row) of different methods. FT-Phys and FT-Obs-T obtain the best results.
+fine-tune the pre-trained DeepONet. Appendix Figs. 18A–G display the L2 relative errors of 100
+test functions for different learning rates. When the number of iterations is small, PINNs give
+larger L2 relative errors (∼ 100%), while the FT-Phys produces much lower errors (∼7%), which
+is consistent with the results of the diffusion-reaction equation. For fine-tuning different parts of
+DeepONet, we select the best accuracy among different learning rates and summarize the results
+in Appendix Fig. 18H. Appendix Fig. 18I shows the L2 relative errors with respect to the learning
+rate for different approaches. The performance of PINN is very sensitive to the change in learning
+rates (Appendix Fig. 18I, black line). When the learning rate is low (∼0.0001), the L2 relative
+error of PINN is large (∼20%), while PINN can achieve a small L2 relative error (∼3%) when
+the learning rate is 0.002. Fine-tuning with the branch net (∼6%) performs worse than other
+approaches regardless of learning rates. Fine-tuning with the entire DeepONet (branch & trunk),
+with the trunk net, or with the last trunk layer performs similarly and reaches low error for any
+learning rate between 0.0001 and 0.002, while their L2 relative errors increase with a large learning
+rate (>0.002).
+
+4.4
+
+Advection equation
+
+Next, we consider the advection equation
+∂u
+∂u
++ v(x)
+= 0, x ∈ [0, 1], t ∈ [0, 1],
+∂t
+∂x
+with the initial condition u(x, 0) = sin(πx) and boundary condition u(0, t) = sin(πt/2). To make
+sure parameter v(x) is larger than 0, we take it in the form of v(x) = V (x) − minx V (x) + 1. We
+train a DeepONet to learn the operator mapping from v(x) to the solution u(x, t). V (x) is sampled
+from a GRF with an RBF kernel with the correlation length ltrain = 0.5. To test the Ex.+ , we
+generate a test dataset of 100 functions with ltest = 0.2.
+Table 4 summarizes the L2 relative errors of different methods. The pre-trained DeepONet
+has an average L2 relative error of 8.75%, and PIDeepONet has an average L2 relative error of
+20
+
+11.3% for the test dataset. When we have physics, fine-tuning with the trunk net achieves low
+L2 relative errors (0.93%). When we have new observations, like the results of Burgers’ equation,
+FT-Obs-A and FT-Obs-T always outperform MFGPR and MFNN, and FT-Obs-T works the best.
+Fig. 9 is an example illustrating the prediction and absolute errors of all methods when we have
+200 observations. In this example, PINN and FT-Phys have similar error profiles, and FT-Phys is
+more accurate than PINN, since the pre-trained DeepONet gives better initial parameters of the
+FT-Phys. Similar error profiles are also observed between FT-Obs-A and FT-Obs-T.
+Table 4: L2 relative error of different methods for the advection equation in Section 4.4.
+ltrain = 0.5 and ltest = 0.2. Bold font indicates the smallest two errors in each case, and the
+underlined text indicates the smallest error.
+DeepONet
+Error(In.): 1.30 ± 0.26% Error(Ex.+ ): 8.75 ± 6.42%
+PIDeepONet
+Error(In.): 3.60 ± 0.70% Error(Ex.+ ): 10.4 ± 4.48%
+
+FT-Phys
+
+Branch & Trunk
+1.05 ± 0.3%
+
+1.67 ± 0.53%
+Branch
+Trunk
+2.65 ± 1.17% 0.93 ± 0.23%
+
+Trunk last
+1.01 ± 0.31%
+
+GPR
+FT-Obs-A
+FT-Obs-T
+MFGPR
+MFNN
+
+20 points
+34.6 ± 9.46%
+6.15 ± 2.91%
+5.07 ± 2.34%
+8.39 ± 5.38%
+8.46 ± 4.72%
+
+50 points
+25.8 ± 7.89%
+5.79 ± 2.43%
+4.08 ± 1.73%
+6.80 ± 4.00%
+6.20 ± 2.81%
+
+200 points
+11.6 ± 3.54%
+2.42 ± 0.79%
+2.00 ± 0.74%
+4.19 ± 2.01%
+4.64 ± 3.55%
+
+PINN
+
+100 points
+16.7 ± 3.99%
+3.91 ± 1.52%
+3.16 ± 1.34%
+5.47 ± 2.87%
+6.90 ± 6.47%
+
+Moreover, we consider different Ex.+ level by using different correlation lengths for testing
+(Table 5). Test datasets of 100 functions are generated from GFR with ltest = 0.2, 0.15, 0.1,
+and 0.05. We use 100 data points for fine-tuning methods. Decreasing the correlation lengths
+represents an increasing trend of extrapolation and results in larger error, which also validates
+the result in Section 2.5.1. All proposed methods outperform the baseline models, DeepONet and
+GPR. When we have physics, FT-Phys outperforms PINN in all scenarios, and even under the
+great extrapolation with ltest = 0.05, it reaches a satisfactory error as low as 3.22%. With 100
+measurements, FT-Obs-T achieves better performance compared with other fine-tune methods.
+For multifidelity methods, MFNN performs better as the level of extrapolation increases, but both
+are slightly worse than FT-Obs methods.
+Detailed results of FT-Phys. We consider the approach of fine-tuning with physics. Seven
+different learning rates (i.e., 0.01, 0.005, 0.002, 0.001, 0.0005, 0.0002, and 0.0001) are used to finetune the pre-trained DeepONet. Appendix Figs. 19A–G display the L2 relative errors of 100 test
+functions for different learning rates. When the number of iterations is small, PINNs give larger
+L2 relative errors (>100%). In comparison, the FT-Phys produces much lower errors (∼10%),
+which is consistent with the results of the diffusion-reaction equation and Burgers’ equation. For
+fine-tuning different parts of DeepONet, we select the best accuracy among different learning rates
+and summarize the results in Appendix Fig. 19H. Appendix Fig. 19I shows the L2 relative errors
+with respect to learning rate for different approaches. The performance of PINN is susceptible
+to the change in learning rates (Appendix Fig. 19I, black line). When the learning rate is low
+(∼0.0001), the L2 relative error of PINN is large (∼10%), while PINN can achieve a small L2
+relative error (∼2%) when the learning rate is 0.005. Fine-tuning with branch net (∼3%) performs
+21
+
+Table 5: L2 relative error of different methods under different testing correlation lengths
+for the advection equation in Section 4.4. Bold font indicates the smallest error in each case.
+W2 is the 2-Wasserstein distance between the training space and testing space.
+ltest
+W2
+
+0.20
+0.4578
+
+0.15
+0.5945
+
+0.10
+0.7606
+
+0.05
+0.9721
+
+DeepONet
+PIDeepONet
+
+8.75 ± 6.42%
+10.4 ± 4.48%
+
+14.5 ± 10.1%
+14.4 ± 6.26%
+
+19.3 ± 12.2%
+20.4 ± 8.53%
+
+25.6 ± 14.9%
+27.8 ± 9.08%
+
+PINN
+FT-Phys
+
+1.67 ± 0.53%
+0.93 ± 0.23%
+
+1.78 ± 0.51%
+1.05 ± 0.28%
+
+2.27 ± 0.71%
+1.53 ± 0.43%
+
+3.57 ± 1.07%
+3.22 ± 1.16%
+
+GPR
+FT-Obs-A
+FT-Obs-T
+MFGPR
+MFNN
+
+16.7 ± 3.99%
+3.91 ± 1.52%
+3.16 ± 1.34%
+5.47 ± 2.87%
+6.90 ± 6.47%
+
+16.8 ± 4.55%
+6.61 ± 2.66%
+4.65 ± 1.89%
+8.61 ± 3.94%
+8.05 ± 5.05%
+
+18.0 ± 4.63%
+6.61 ± 2.34%
+6.07 ± 2.23%
+10.9 ± 3.92%
+8.58 ± 4.22%
+
+18.4 ± 5.37%
+10.8 ± 4.40%
+7.21 ± 2.39%
+13.4 ± 4.14%
+10.6 ± 9.16%
+
+Figure 9: An example of extrapolation for advection equation in Section 4.4. (A) A
+test input function. (B) The corresponding PDE solution. (C) Predictions (first row) and errors
+(second row) of different methods. FT-Phys and FT-Obs-T obtain the best results.
+
+22
+
+worse than other approaches regardless of learning rates. Fine-tuning with the entire DeepONet
+(branch & trunk), with the trunk net, or with the last trunk layer performs similarly and reaches
+a low error(∼1%) at any learning rate between 0.01 and 0.0001.
+
+4.5
+
+Poisson equation in a triangular domain with notch
+
+To evaluate the performance of our methods in an unstructured domain, we consider the Poisson
+equation in a triangular domain with a notch
+∂2u ∂2u
++ 2 + 10 = 0,
+∂x2
+∂y
+
+(x, y) ∈ Ω,
+
+where Ω is a concave heptagon whose vertices are [0, 0], [0.5, 0.866], [1, 0], [0.51, 0], [0.51, 0.4], [0.49,
+0.4], [0.49, 0]. The boundary condition u(x, y)|∂Ω = v(x), is only the function its x coordinate.
+We train a DeepONet to learn the operator mapping from boundary condition v(x) to the solution
+u(x, t). v(x) is sampled from a GRF with an RBF kernel with the correlation length ltrain = 0.5. To
+test the Ex.+ , we generate a test dataset of 100 functions with ltest = 0.2. The reference solution
+is obtained by the PDEtoolbox in Matlab with an unstructured mesh of 5082 nodes.
+Table 6 summarizes the L2 relative errors of different methods. The pre-trained DeepONet has
+an average L2 relative error of 14.8% for the test dataset. In this problem, we only tested the case
+of new observations, as FT-Phys and PINN failed to achieve a good accuracy due to the complex
+domain geometry with singularity points. Like the results of Burgers’ equation and advection
+equation, FT-Obs-A and FT-Obs-T always outperform MFGPR and MFNN. The FT-Obs-T has
+the lowest errors (0.95% with 200 observations) among all the methods.
+Table 6: L2 relative error of different methods for the Poisson equation in Section 4.5.
+ltrain = 0.5 and ltest = 0.2. Bold font indicates the smallest two errors in each case, and the
+underlined text indicates the smallest error.
+DeepONet
+Error(In.): 0.09 ± 0.04% Error(Ex.+ ): 14.8 ± 12.0%
+GPR
+FT-Obs-A
+FT-Obs-T
+MFGPR
+MFNN
+
+20 points
+16.7 ± 9.51%
+7.52 ± 5.57%
+4.97 ± 3.14%
+8.00 ± 5.58%
+11.32 ± 6.96%
+
+50 points
+12.1 ± 6.57%
+4.15 ± 2.89%
+3.01 ± 2.11%
+5.25 ± 3.38%
+7.63 ± 5.16%
+
+100 points
+8.06 ± 4.99%
+2.49 ± 1.64%
+1.55 ± 1.08%
+3.38 ± 1.97%
+4.64 ± 2.75%
+
+200 points
+6.26 ± 4.63%
+1.80 ± 1.06%
+0.95 ± 0.56%
+2.42 ± 1.39%
+3.12 ± 1.51%
+
+Fig. 10 is an example of illustrating the prediction and absolute errors of all methods when we
+have 200 observations. Similar to the results in Section 4.2, GPR and MFGPR have similar error
+patterns, and MFGPR is more accurate than GPR due to the additional low-fidelity dataset. FTObs-T and FT-Obs-A outperform other methods, and FT-Obs-T is slightly better than FT-Obs-A.
+To validate the robustness of proposed fine-tuning methods, we test the performance under
+different levels of noise in the observations (Fig. 11). With other settings remaining unchanged,
+increasing noise levels lead to a corresponding increase in L2 relative error. All fine-tuning methods
+exhibit better performance than GPR. When the noise level is less than 5%, FT-Obs-T reaches the
+best accuracy and as the noise gradually increases to 10%, MFGPR method outperforms all other
+methods. Multifidelity methods are relatively insensitive to noise compared with FT-Obs.
+
+23
+
+L 2 relative error
+
+Figure 10: An example of extrapolation for the Poisson equation in a triangular domain
+with a notch in Section 4.5. (A) A test input function. (B) The corresponding PDE solution.
+(C) Predictions (first row) and errors (second row) of different methods. FT-Obs-T obtains the
+best result.
+
+GPR
+FT-Obs-A
+FT-Obs-T
+MFGPR
+MFNN
+
+10 1
+
+10 2
+
+0%
+
+1%
+
+2%
+
+5%
+
+Noise level of observations
+
+10%
+
+Figure 11: L2 relative error for observations with different noise level for the Poisson
+equation in Section 4.5.
+
+24
+
+4.6
+
+Lid-driven cavity flow in complex geometries
+
+We evaluate the performance in the lid-driven cavity flow problem, which is a benchmark problem
+for viscous incompressible fluid flow. The incompressible flow is described by the Navier-Stokes
+equations,
+∂u
++ (u · ∇)u = ν∇2 u − ∇p,
+∂t
+∇ · u = 0,
+where u(x, t) = (u, v) is the velocity field, ν is the kinematic viscosity, and p(x, t) is the pressure.
+The Reynolds number (Re) is chosen to be 1000. We consider different geometries by starting with
+a square with side length l = 1 and gradually lifting the left bottom point with other three points
+fixed, i.e., the bottom line is described by l(x) = −mx + m with 0 ≤ m ≤ 0.5. The top wall has a
+unit velocity in the x-direction. There is a flow circulation in the cavity, and increasing value of m
+represents more extreme cases, see two examples in Fig. 12.
+
+Figure 12: Lid-driven cavity flows in two geometries in Section 4.6. (A) m = 0. (B)
+m = 0.5. Re = 1000.
+The goal is to learn the operator mapping from the boundary line l(x) to the velocity u(x, t). We
+take m = 0, 0.02, 0.04, . . . , 0.4 for generating the training dataset and select m = 0.41, 0.42, 0.43, . . . , 0.5
+for extrapolation testing. Larger m represents more aggressive extrapolation. The reference solution is obtained by the finite element method with a nonuniform mesh of 10201 nodes. For
+fine-tuning with new observations and multifidelity methods, 100 points are randomly chosen as
+the new information. To avoid the randomness, this process is repeated for 10 times.
+For the prediction of the horizontal velocity u (Fig. 13A), the baseline model GPR has the
+largest L2 relative error. Multifidelity methods outperform the single-fidelity GPR, and MFNN
+has a better accuracy than MFGPR (Fig. 13A), yet both are still far from being satisfactory. We
+25
+
+note that in previous examples, the RBF kernel works well for MFGPR, but in this problem,
+MFGPR with the RBF kernel has a large error, while the Matern kernel with ν = 1.5 performs
+better (Appendix Fig. 21). Fine-tuning with observations provides a considerable improvement
+on the accuracy and reduces the L2 relative error to 10−2 . FT-Obs-T works the best among all
+proposed method. The prediction of the vertical velocity v (Fig. 13B) also has a similar behavior.
+
+u
+
+B100 Interpolation
+
+Extrapolation
+
+L 2 relative error
+
+L 2 relative error
+
+A100 Interpolation
+10 1
+
+10 2
+
+v
+
+DeepONet
+GPR
+FT-Obs-A
+FT-Obs-T
+FT-Obs-T
+(adaptive )
+MFGPR
+MFNN
+
+Extrapolation
+
+10 1
+
+10 2
+0.35
+
+0.40
+
+m
+
+0.45
+
+0.50
+
+0.35
+
+0.40
+
+m
+
+0.45
+
+0.50
+
+Figure 13: L2 relative error of different methods for the lid-driven cavity flow in Section 4.6. (A) The x-component of velocity. (B) The y-component of velocity. The left part
+(m ≤ 0.40) is interpolation, while the right part (m > 0.40) is extrapolation.
+In FT-Obs-T, besides taking the weight λ as constant value, we also consider an approach to
+adaptively update the value of λ during training. Specifically, we use k = 0.1 as the initial value,
+and then after every 100 iterations, λ is updated by gradient descent, i.e.,
+λ ← λ + γλ
+
+∂LT ,obs
+,
+∂λ
+
+where γλ = 0.3 is the learning rate. In this way, we increase the weight of the new information
+gradually during training. Introducing the adaptive adjustment of λ further slightly improves the
+accuracy (Fig. 13).
+We show an example for illustrating the prediction and absolute errors of all methods when
+m = 0.5 in Fig. 14. In this example, most proposed models exhibit better predictions of the velocity
+field than pre-trained DeepONet and GPR. Among these methods, fine-tuning with observations,
+either alone (FT-Obs-A) or together (FT-Obs-T), have particularly accurate prediction of the
+velocity field in both x- and y-component. However, multifidelity methods have larger error at
+the region near central vortex and moving lid in the x-direction. This results from the limitation
+that finite number of data points may perform weakly or even fail in fitting these locations with
+relatively large gradient.
+For the experiments above, the new observations are randomly sampled in the domain, which
+might not be possible in practice, e.g. in experiments (Fig. 15A). Hence, we also consider two more
+realistic cases, where 50 data observations are uniformly sampled in certain lines (Figs. 15B and
+C). For the “Parallel” case (Fig. 15B), the new data points come from two horizontal lines, y = 0.4
+and y = 0.6. For the “Perpendicular” case (Fig. 15C), the new data points come from a horizontal
+line and a vertical line, y = 0.5 and x = 0.5. We use FT-Obs-T method for the three cases, each
+
+26
+
+Figure 14: An example of extrapolation (m = 0.5) for the lid-driven cavity flow in
+Section 4.6. (A) Predictions (first row) and errors (second row) for the x-component of velocity.
+(B) Predictions (first row) and errors (second row) for the y-component of velocity. FT-Obs-T
+with adaptive weight (adaptive λ) obtain the best result.
+
+27
+
+with 100 new observations. Random sampling in the domain leads to the most accurate prediction,
+while the other two sampling methods also achieve errors smaller than < 5% (Figs. 15D and E).
+
+A
+
+Random
+
+B
+
+1
+
+0.5
+
+DeepONet
+Random
+Parallel
+Perpendicular
+
+1
+
+0
+
+0
+
+0.5
+
+u
+
+10 1
+
+10 2
+0.42
+
+0.44
+
+1
+
+E
+L 2 relative error
+
+L 2 relative error
+
+0.5
+
+0.46
+
+m
+
+0.48
+
+Perpendicular
+1
+
+0.5
+
+0
+
+0
+
+10 1
+
+C
+
+0.5
+
+0
+
+D
+
+Parallel
+1
+
+0.50
+
+0
+
+DeepONet
+Random
+Parallel
+Perpendicular
+
+0.5
+
+1
+
+v
+
+10 2
+0.42
+
+0.44
+
+0.46
+
+m
+
+0.48
+
+0.50
+
+Figure 15: FT-Obs-T for different data observations cases. (A) Random sampling in the
+domain. (B) Sampling in two parallel lines. (C) Sampling in two perpendicular lines. (D) Extrapolation error of the x-component of velocity. (E) Extrapolation error of the y-component of
+velocity.
+
+5
+
+Conclusions
+
+Having a new input in the Ex.+ region is inevitable in real-world applications and would lead to large
+errors and failure of NNs. In this study, we first present a systematic study of extrapolation error
+of deep operator networks (DeepONets). We provide a quantitative definition of the extrapolation
+complexity by 2-Wasserstein distance between two function spaces. Similar to interpolation error,
+we found a U-shaped error curve for extrapolation with respect to model capacity, such as network
+sizes and training iterations, but compared with interpolation and Ex.− , the Ex.+ curve has larger
+error and earlier transition point. We also found that a larger training dataset is helpful for both
+interpolation and extrapolation.
+28
+
+To improve the prediction accuracy under Ex.+ scenarios, we consider additional information
+of physics or sparse observations. As the first step of the prediction workflow, we determine if the
+new input is in the region of interpolation or extrapolation. Given the governing partial differential
+equations (PDEs) of the system, we employ the PDE loss to fine-tune a pre-trained DeepONet
+(either the entire DeepONet or a part of the network). When we have extra sparse observations,
+we propose to either fine-tune a pre-trained DeepONet or apply a multifidelity learning framework.
+We demonstrate the excellent extrapolation capability of the proposed methods for diverse PDE
+problems. Furthermore, we validate the robustness of proposed methods by testing with different
+levels of noise.
+We provide a practical guideline in choosing a proper extrapolation method depending on the
+available information, and desired accuracy and inference speed in Table 7. When we have the
+physics as new information, fine-tuning with physics (FT-Phys) can achieve very high accuracy,
+and the computational cost of fine-tuning depends on the complexity of the PDEs. We found that
+only fine-tuning the trunk net usually works the best. When we have sparse observations, finetuning with observations (FT-Obs-A and FT-Obs-T) usually has better accuracy than multifidelity
+learning methods (MFGPR and MFNN). As FT-Obs-A only takes a small number of new observations, FT-Obs-A has a faster inference speed than FT-Obs-T, but FT-Obs-A usually has lower
+accuracy than FT-Obs-T due to overfitting and catastrophic forgetting. As MFGPR and MFNN
+need to train a new model from scratch, they have a relatively slow inference speed.
+Table 7: Comparison of extrapolation accuracy and inference speed for different methods. More stars (?) represent better accuracy and faster speed.
+New information
+
+Methods
+
+Physics
+
+FT-Phys (Trunk)
+FT-Obs-A
+FT-Obs-T
+MFGPR
+MFNN
+
+Sparse observations
+
+Extrapolation accuracy
+
+Inference speed
+
+???
+??
+???
+?
+??
+
+??
+???
+??
+??
+?
+
+This study is the first attempt to understand and address extrapolation of deep neural operators,
+and more work should be done both theoretically and computationally. We observed the U-shaped
+error curve for extrapolation, but there could exist a double-descent behavior when the model
+capacity is further increased, which will be investigated in future work. As we show in FT-Phys,
+fine-tuning the trunk net or the entire DeepONet has better accuracy than fine-tuning the branch
+net. Similar studies for FT-Obs-A and Ft-Obs-T should also be conducted. In this study, we
+consider either the complete physics or sparse observations as the new information, but in practice,
+we may have sparse observations with partial physics simultaneously, and a corresponding efficient
+method should be developed. On the theoretical side, there have been a few efforts to address
+interpolation errors for specific forms of the operator [63, 8, 64, 65, 66, 67, 68]. A theoretical
+understanding of extrapolation error could be even more challenging.
+
+Acknowledgments
+This work was supported by the U.S. Department of Energy [DE-SC0022953] and OSD/AFOSR
+MURI, USA grant FA9550-20-1-0358.
+
+29
+
+A
+
+Abbreviations and notations
+
+We list in Table 8 the main abbreviations and notations that are used throughout this paper.
+
+In.
+Ex.Ex.+
+FT-Phys
+FT-Obs-A
+FT-Obs-T
+MFNN
+MFGPR
+
+Table 8: Abbreviations and notations.
+Interpolation
+Extrapolation when ltrain < ltest
+Extrapolation when ltrain > ltest
+Fine-tune with physics in Section 3.3
+Fine-tune with new observations alone in Section 3.4
+Fine-tune with training data and new observations together in Section 3.4
+Multifidelity neural networks in Section 3.5
+Multifidelity Gaussian process regression in Section 3.5
+
+l
+G
+G̃
+Ω
+{x1 , x2 , · · · , xm }
+[v(x1 ), v(x2 ), · · · , v(xm )]
+[b1 (v), b2 (v), · · · , bp (v)]
+ξ
+[t1 (ξ), t2 (ξ), · · · , tp (ξ)]
+ũ
+W2
+F
+B
+D
+Ephys
+Eobs
+Lphys
+LF
+LB
+Lobs
+LF ,obs
+w F , wB
+λ
+
+correlation length of Gaussian random field
+operator to learn
+pre-trained DeepONet
+domain of the PDE
+scattered sensors
+input of branch network
+output of branch network
+input of trunk network
+outputs of trunk network, where p is the number of neurons
+prediction using pre-trained DeepONet
+2-Wasserstein distance
+governing PDEs and/or physical constraints
+initial and boundary conditions
+sparse observations
+mismatch error of physics
+mismatch error of observations
+loss for FT-Phys
+loss of PDE residuals
+loss of initial and boundary conditions
+loss for FT-Obs-A
+loss for FT-Obs-T
+weights in FT-Phys loss
+weight in FT-Obs-T loss
+
+B
+
+Hyperparameters
+
+Table 9 provides the DeepONet architectures used in all examples and the hyperparameters for
+training.
+For the method of fine-tuning with physics, we use the Adam optimizer and the number of
+iterations is listed in Table 10. For FT-Obs-A, we fine-tune the DeepONet for 500 iterations using
+the L-BFGS optimizer for all the problems, except that for the antiderivative problem, we use the
+Adam optimizer with a learning rate of 0.001 for 1000 iterations. For FT-Obs-T, we choose λ = 0.3
+
+30
+
+Table 9: DeepONet architectures and the hyperparameters used for pre-training. In the
+“Depth” and “Activation” columns, the first and second subcolumns correspond to the trunk and
+branch net, respectively. The branch net and trunk net use the same network width.
+Problems
+
+Depth
+
+Width
+
+Activation
+
+Learning rate
+
+Iterations
+
+Section 4.1 Antiderivative
+Section 4.2 Diffusion-reaction
+Section 4.3 Burgers’
+Section 4.4 Advection
+Section 4.5 Poisson (Notch)
+Section 4.6 Lid-driven cavity
+
+3, 3
+4, 3
+4, 3
+4, 3
+4, 3
+4, 3
+
+40
+100
+100
+100
+100
+100
+
+tanh, ReLU
+GELU, ReLU
+GELU, ReLU
+GELU, ReLU
+GELU, ReLU
+GELU, ReLU
+
+0.005
+0.001
+0.001
+0.001
+0.001
+0.001
+
+5 × 104
+5 × 105
+5 × 105
+5 × 105
+5 × 105
+5 × 105
+
+for all cases, and we fine-tune the DeepONet for 3000 iterations using the Adam optimizer with
+the learning rate of 0.001, except that for the antiderivative problem, we train for 1000 iterations.
+Table 10: Hyperparameters for FT-Phys.
+FT-Phys iterations
+Section 4.1 Antiderivative
+Section 4.2 Diffusion-reaction
+Section 4.3 Burgers’
+Section 4.4 Advection
+
+1000
+2000
+5000
+5000
+
+For multifidelity learning, the size of the low-fidelity dataset S is in Table 11. However, MFGPR
+is not able to handle a large dataset, and thus we use at most 400 low-fidelity data points. For
+MFNN, we use the SiLU activation function, and the network size is in Table 11. We train MFNN
+using the Adam optimizer for 10000 iterations. Also, a L2 regularization is applied, and the strength
+is 10−6 for the antiderivative operator. For other problems, the strength is 10−5 , 10−6 , 10−7 , and
+10−8 for 20, 50, 100, and 200 high-fidelity data points, respectively.
+Table 11: Hyperparameters for MFNN. In the columns of low- and high-fidelity networks, the
+first and second numbers are depth and width, respectively.
+
+Section 4.1 Antiderivative
+Section 4.2 Diffusion-reaction
+Section 4.3 Burgers’
+Section 4.4 Advection
+Section 4.5 Poisson (Notch)
+Section 4.6 Lid-driven cavity
+
+C
+
+|S|
+
+Low-fidelity
+network
+
+High-fidelity
+network
+
+Learning
+rate
+
+100
+10201
+10201
+10201
+5082
+10201
+
+4, 40
+4, 128
+4, 128
+4, 128
+4, 128
+4, 128
+
+3, 30
+3, 15
+3, 15
+3, 15
+3, 15
+3, 15
+
+0.005
+0.001
+0.001
+0.001
+0.001
+0.001
+
+Layer-wise locally adaptive activation function
+
+For L-LAAF in Section 2.5.3, the scaling factor n is a hyperparameter to be tuned. We choose n
+from 1, 2, 5, and 10 for each activation function. The best scaling factors n for tanh, SilU, GELU,
+31
+
+ReLU, and Hat are 2, 10, 10, 5, and 1, respectively (Fig. 16).
+
+D 10
+
+102
+
+103
+
+0
+
+104
+
+No. of Iterations
+
+ReLU
+L-LAAF-ReLU, n=1
+L-LAAF-ReLU, n=2
+L-LAAF-ReLU, n=5
+L-LAAF-ReLU, n=10
+
+102
+
+103
+
+104
+
+No. of Iterations
+
+105
+
+0
+
+SiLU
+L-LAAF-SiLU, n=1
+L-LAAF-SiLU, n=2
+L-LAAF-SiLU, n=5
+L-LAAF-SiLU, n=10
+
+10 1
+
+10 2
+
+105
+
+10 1
+
+10 2
+
+B 10
+
+L 2 relative error
+
+10 1
+
+10 2
+
+L 2 relative error
+
+tanh
+L-LAAF-tanh, n=1
+L-LAAF-tanh, n=2
+L-LAAF-tanh, n=5
+L-LAAF-tanh, n=10
+
+E 10
+
+C 10
+
+L 2 relative error
+
+0
+
+L 2 relative error
+
+L 2 relative error
+
+A 10
+
+102
+
+103
+
+104
+
+No. of Iterations
+
+0
+
+105
+
+0
+
+GELU
+L-LAAF-GELU, n=1
+L-LAAF-GELU, n=2
+L-LAAF-GELU, n=5
+L-LAAF-GELU, n=10
+
+10 1
+
+10 2
+
+102
+
+103
+
+104
+
+No. of Iterations
+
+105
+
+Hat
+L-LAAF-Hat, n=1
+L-LAAF-Hat, n=2
+L-LAAF-Hat, n=5
+L-LAAF-Hat, n=10
+
+10 1
+
+10 2
+
+102
+
+103
+
+104
+
+No. of Iterations
+
+105
+
+Figure 16: Section 2.5.3: L-LAAF with different scaling factors n. (A) tanh. (B) SiLU.
+(C) GELU. (D) ReLU. (E) Hat.
+
+D
+
+Fine-tune with physics
+
+With physics as additional information, fine-tuning with physics is considered and different learning
+rates (i.e., 0.01, 0.005, 0.002, 0.001, 0.0005, 0.0002, and 0.0001) are used to fine-tune the pre-trained
+DeepONet. Below are detailed results of diffusion reaction equation (Fig. 17), Burgers’ equation
+(Fig. 18), and advection equation (Fig. 19).
+
+E
+
+Comparisons of different values of λ for FT-Obs-T methods
+
+For diffusion-reaction equation in Section 4.2, we further determine the effect of λ on test errors
+when using different numbers of observed points and different ltest . Results of 12 cases are shown
+in Fig. 20.
+
+F
+
+MFGPR for the Lid-driven cavity flow
+
+In most examples, the RBF kernel works well for MFGPR. However, in the cavity flow problem,
+MFGPR with the RBF kernel has a large error (Fig. 21A), while the Matern kernel with ν = 1.5
+32
+
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+10 1
+
+G
+L 2 relative error
+
+100
+
+500 1000 1500
+No. of iterations
+
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+100
+
+3
+2000 10 0
+
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+H
+100
+
+3
+2000 10 0
+
+100
+
+2000
+
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+10 2
+
+500 1000 1500
+No. of iterations
+
+3
+2000 10 0
+
+Branch & Trunk, lr=0.001
+Branch, lr=0.0002
+Trunk, lr=0.002
+Trunk last, lr=0.002
+PINN, lr=0.002
+
+I
+10 1
+
+500 1000 1500
+No. of iterations
+
+2000
+
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+10 2
+
+10 2
+
+500 1000 1500
+No. of iterations
+
+F
+
+500 1000 1500
+No. of iterations
+
+10 1
+
+10 1
+
+10 2
+
+L 2 relative error
+
+3
+2000 10 0
+
+10 2
+
+10 1
+
+10 3 0
+
+500 1000 1500
+No. of iterations
+
+10 1
+
+10 2
+10 3 0
+
+E
+
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+10 2
+
+L 2 relative error
+
+L 2 relative error
+
+100
+
+3
+2000 10 0
+
+100
+10 1
+
+10 2
+
+500 1000 1500
+No. of iterations
+
+C
+
+L 2 relative error
+
+D
+
+100
+10 1
+
+10 2
+10 3 0
+
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+L 2 relative error
+
+10 1
+
+B
+
+L 2 relative error
+
+L 2 relative error
+
+100
+
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+L 2 relative error
+
+A
+
+500 1000 1500
+No. of iterations
+
+2000
+
+10 4
+
+10 3
+Learning rate
+
+10 2
+
+Figure 17: Section 4.2: Fine-tuning with physics for the diffusion-reaction equation.
+(A–G) Training trajectories under different learning rate of (A) 0.01, (B) 0.005, (C) 0.002, (D)
+0.001, (E) 0.0005, (F) 0.0002, and (G) 0.0001. (H) The best result of each method among different
+learning rates. (I) L2 relative errors with respect to learning rate for fine-tuning different parts of
+DeepONet. The curves and shaded regions represent the mean and one standard deviation of 100
+runs. For clarity, only standard deviations of trunk mode and PINN mode are plotted.
+
+33
+
+L 2 relative error
+
+10 1
+
+B
+
+10 1
+
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+L 2 relative error
+
+100
+
+10 1
+
+10 2
+0
+
+E
+
+1000 2000 3000 4000 5000
+No. of iterations
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+100
+
+L 2 relative error
+
+1000 2000 3000 4000 5000
+No. of iterations
+
+10 1
+
+0
+
+F
+
+10 1
+
+10 2
+1000 2000 3000 4000 5000
+No. of iterations
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+L 2 relative error
+
+100
+
+10 1
+
+10 2
+0
+
+H
+
+1000 2000 3000 4000 5000
+No. of iterations
+Branch & Trunk, lr=0.001
+Branch, lr=0.005
+Trunk, lr=0.002
+Trunk last, lr=0.002
+PINN, lr=0.002
+
+100
+
+L 2 relative error
+
+0
+
+10 1
+
+10 2
+1000 2000 3000 4000 5000
+No. of iterations
+
+0
+
+I
+10 1
+
+1000 2000 3000 4000 5000
+No. of iterations
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+10 2
+
+10 2
+0
+
+1000 2000 3000 4000 5000
+No. of iterations
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+100
+
+L 2 relative error
+
+10 2
+
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+100
+
+10 1
+
+10 2
+0
+
+G
+
+C
+
+L 2 relative error
+
+10 2
+
+D
+
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+100
+
+L 2 relative error
+
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+100
+
+L 2 relative error
+
+A
+
+0
+
+1000 2000 3000 4000 5000
+No. of iterations
+
+10 4
+
+10 3
+Learning rate
+
+10 2
+
+Figure 18: Section 4.3: Fine-tuning with physics for the Burgers’ equation. (A–G)
+Training trajectories under different learning rate of (A) 0.01, (B) 0.005, (C) 0.002, (D) 0.001, (E)
+0.0005, (F) 0.0002, and (G) 0.0001. (H) The best result of each method among different learning
+rates. (I) L2 relative errors with respect to learning rate for fine-tuning different parts of DeepONet.
+The curves and shaded regions represent the mean and one standard deviation of 100 runs. For
+clarity, only standard deviations of trunk mode and PINN mode are plotted.
+
+34
+
+D
+L 2 relative error
+
+100
+
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+10 1
+
+10 2
+0
+
+G
+L 2 relative error
+
+100
+
+10 1
+
+10 2
+0
+
+10 2
+0
+
+1000 2000 3000 4000 5000
+No. of iterations
+
+E
+
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+H
+
+100
+
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+1000 2000 3000 4000 5000
+No. of iterations
+
+F
+
+100
+
+1000 2000 3000 4000 5000
+No. of iterations
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+10 1
+
+10 2
+0
+
+1000 2000 3000 4000 5000
+No. of iterations
+Branch & Trunk, lr=0.0002
+Branch, lr=0.0005
+Trunk, lr=0.002
+Trunk last, lr=0.005
+PINN, lr=0.005
+
+10 1
+
+10 2
+0
+
+10 2
+0
+
+1000 2000 3000 4000 5000
+No. of iterations
+
+100
+
+10 2
+0
+
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+10 1
+
+10 1
+
+1000 2000 3000 4000 5000
+No. of iterations
+
+100
+
+L 2 relative error
+
+10 1
+
+C
+
+L 2 relative error
+
+10 2
+0
+
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+100
+
+I
+
+10 1
+
+L 2 relative error
+
+10 1
+
+B
+L 2 relative error
+
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+L 2 relative error
+
+L 2 relative error
+
+100
+
+L 2 relative error
+
+A
+
+1000 2000 3000 4000 5000
+No. of iterations
+Branch & Trunk
+Branch
+Trunk
+Trunk last
+PINN
+
+10 2
+1000 2000 3000 4000 5000
+No. of iterations
+
+10 4
+
+10 3
+Learning rate
+
+10 2
+
+Figure 19: Section 4.4: Fine-tuning with physics for the advection equation. (A–G)
+Training trajectories under different learning rate of (A) 0.01, (B) 0.005, (C) 0.002, (D) 0.001, (E)
+0.0005, (F) 0.0002, and (G) 0.0001. (H) The best result of each method among different learning
+rates. (I) L2 relative errors with respect to learning rate for fine-tuning different parts of DeepONet.
+The curves and shaded regions represent the mean and one standard deviation of 100 runs. For
+clarity, only standard deviations of trunk mode and PINN mode are plotted.
+
+35
+
+100
+
+0.044
+
+FT-Obs-T
+FT-Obs-A
+
+0.048
+0.046
+10 2
+
+10 1
+
+100
+
+100
+
+0.032
+100
+
+10 1
+
+100
+
+0.0046
+0.0044
+0.0042
+10 2
+
+10 1
+
+100
+
+L 2 relative error
+
+0.010
+
+101
+
+10 1
+
+100
+
+101
+FT-Obs-T
+FT-Obs-A
+
+0.03
+
+10 2
+
+10 1
+
+100
+
+101
+FT-Obs-T
+FT-Obs-A
+
+0.014
+0.012
+0.010
+
+FT-Obs-T
+FT-Obs-A
+
+0.0040
+10 2
+
+10 1
+
+100
+
+10 2
+
+101
+
+50 observed points, ltest = 0.4
+
+0.0042
+
+0.0038
+
+100
+
+0.008
+10 2
+
+0.0044
+L 2 relative error
+
+FT-Obs-T
+FT-Obs-A
+
+10 1
+
+100 observed points, ltest = 0.3
+
+0.012
+
+101
+
+20 observed points, ltest = 0.4
+
+0.0048
+
+0.014
+
+10 2
+
+0.04
+
+0.02
+
+101
+FT-Obs-T
+FT-Obs-A
+
+10 2
+
+L 2 relative error
+
+0.036
+
+50 observed points, ltest = 0.3
+
+0.013
+
+0.08
+
+100 observed points, ltest = 0.2
+
+FT-Obs-T
+FT-Obs-A
+
+10 1
+
+FT-Obs-T
+FT-Obs-A
+
+0.10
+
+50 observed points, ltest = 0.2
+
+10 2
+
+100 observed points, ltest = 0.1
+
+0.12
+
+0.06
+
+101
+
+FT-Obs-T
+FT-Obs-A
+
+0.014
+
+0.0040
+
+10 1
+
+0.040
+
+0.028
+
+101
+
+10 2
+
+20 observed points, ltest = 0.3
+0.015
+
+0.0050
+
+0.12
+0.11
+
+101
+
+20 observed points, ltest = 0.2
+
+0.050
+
+0.13
+
+L 2 relative error
+
+10 1
+
+0.14
+
+FT-Obs-T
+FT-Obs-A
+
+L 2 relative error
+
+10 2
+
+50 observed points, ltest = 0.1
+
+0.0042
+L 2 relative error
+
+0.20
+
+0.044
+
+L 2 relative error
+
+L 2 relative error
+
+0.21
+
+0.052
+
+L 2 relative error
+
+0.14
+
+FT-Obs-T
+FT-Obs-A
+
+0.22
+
+0.19
+
+L 2 relative error
+
+20 observed points, ltest = 0.1
+
+L 2 relative error
+
+L 2 relative error
+
+0.23
+
+101
+
+10 1
+
+100
+
+101
+
+100 observed points, ltest = 0.4
+FT-Obs-T
+FT-Obs-A
+
+0.0040
+0.0038
+0.0036
+10 2
+
+10 1
+
+100
+
+101
+
+Figure 20: Section 4.2: Comparisons of different values of λ for FT-Obs-T method
+under different number of observed points and testing correlation lengths for the
+diffusion-reaction equation. Different rows represent different testing correlation lengths. Different columns represent different numbers of new observations.
+
+36
+
+performs better (Fig. 21B). The Matern kernel is given by
+!ν
+√
+1
+2ν
+k(x1 , x2 ) =
+kx1 − x2 k Kν
+Γ(ν)2ν−1
+l
+
+√
+
+!
+2ν
+kx1 − x2 k ,
+l
+
+where l is the correlation length, Kν (·) is a modified Bessel function, and Γ(·) is the gamma function.
+
+Figure 21: Section 4.6: Prediction and error of MFGPR with the RBF and Matern
+kernels for the lid-driven cavity flow. (A) The RBF kernel. (B) The Matern kernel with
+ν = 1.5.
+
+References
+[1] Kurt Hornik, Maxwell Stinchcombe, and Halbert White. Multilayer feedforward networks are
+universal approximators. Neural Networks, 2(5):359–366, 1989.
+[2] Nathan Baker, Frank Alexander, Timo Bremer, Aric Hagberg, Yannis Kevrekidis, Habib Najm,
+Manish Parashar, Abani Patra, James Sethian, Stefan Wild, et al. Workshop report on basic research needs for scientific machine learning: Core technologies for artificial intelligence.
+Technical report, USDOE Office of Science (SC), Washington, DC (United States), 2019.
+[3] George Em Karniadakis, Ioannis G Kevrekidis, Lu Lu, Paris Perdikaris, Sifan Wang, and Liu
+Yang. Physics-informed machine learning. Nature Reviews Physics, 3(6):422–440, 2021.
+
+37
+
+[4] Maziar Raissi, Paris Perdikaris, and George Em Karniadakis. Physics-informed neural networks: A deep learning framework for solving forward and inverse problems involving nonlinear
+partial differential equations. Journal of Computational Physics, 378:686–707, 2019.
+[5] Lu Lu, Xuhui Meng, Zhiping Mao, and George Em Karniadakis. DeepXDE: A deep learning
+library for solving differential equations. SIAM Review, 63(1):208–228, 2021.
+[6] Tianping Chen and Hong Chen. Universal approximation to nonlinear operators by neural
+networks with arbitrary activation functions and its application to dynamical systems. IEEE
+Transactions on Neural Networks, 6(4):911–917, 1995.
+[7] Lu Lu, Pengzhan Jin, Guofei Pang, Handy Zang, and George Karniadakis. Learning nonlinear
+operators via DeepONet based on the universal approximation theorem of operators. Nature
+Machine Intelligence, 3:218–229, 03 2021.
+[8] Beichuan Deng, Yeonjong Shin, Lu Lu, Zhongqiang Zhang, and George Em Karniadakis.
+Approximation rates of DeepONets for learning operators arising from advection–diffusion
+equations. Neural Networks, 153:411–426, 2022.
+[9] Chensen Lin, Zhen Li, Lu Lu, Shengze Cai, Martin Maxey, and George Em Karniadakis.
+Operator learning for predicting multiscale bubble growth dynamics. The Journal of Chemical
+Physics, 154(10):104118, 2021.
+[10] Chensen Lin, Martin Maxey, Zhen Li, and George Em Karniadakis. A seamless multiscale
+operator neural network for inferring bubble dynamics. Journal of Fluid Mechanics, 929:A18,
+2021.
+[11] Somdatta Goswami, Minglang Yin, Yue Yu, and George Em Karniadakis. A physics-informed
+variational DeepONet for predicting crack path in quasi-brittle materials. Computer Methods
+in Applied Mechanics and Engineering, 391:114587, 2022.
+[12] P Clark Di Leoni, Lu Lu, Charles Meneveau, George Karniadakis, and Tamer A Zaki. Deeponet prediction of linear instability waves in high-speed boundary layers. arXiv preprint
+arXiv:2105.08697, 2021.
+[13] Julian D. Osorio, Zhicheng Wang, George Karniadakis, Shengze Cai, Chrys Chryssostomidis,
+Mayank Panwar, and Rob Hovsapian. Forecasting solar-thermal systems performance under
+transient operation using a data-driven machine learning approach based on the deep operator
+network architecture. Energy Conversion and Management, 252, 12 2021.
+[14] Shengze Cai, Zhicheng Wang, Lu Lu, Tamer A Zaki, and George Em Karniadakis.
+DeepM&Mnet: Inferring the electroconvection multiphysics fields based on operator approximation by neural networks. Journal of Computational Physics, 436:110296, 2021.
+[15] Zhiping Mao, Lu Lu, Olaf Marxen, Tamer A. Zaki, and George Em Karniadakis. DeepM&Mnet
+for hypersonics: Predicting the coupled flow and finite-rate chemistry behind a normal
+shock using neural-network approximation of operators. Journal of Computational Physics,
+447:110698, 2021.
+[16] Minglang Yin, Enrui Zhang, Yue Yu, and George Em Karniadakis. Interfacing finite elements
+with deep neural operators for fast multiscale modeling of mechanics problems. Computer
+Methods in Applied Mechanics and Engineering, page 115027, 2022.
+38
+
+[17] Pengzhan Jin, Shuai Meng, and Lu Lu. MIONet: Learning multiple-input operators via tensor
+product. arXiv preprint arXiv:2202.06137, 2022.
+[18] Lu Lu, Xuhui Meng, Shengze Cai, Zhiping Mao, Somdatta Goswami, Zhongqiang Zhang,
+and George Em Karniadakis. A comprehensive and fair comparison of two neural operators
+(with practical extensions) based on FAIR data. Computer Methods in Applied Mechanics and
+Engineering, 393:114778, 2022.
+[19] Sifan Wang, Hanwen Wang, and Paris Perdikaris. Learning the solution operator of parametric partial differential equations with physics-informed DeepONets. Science Advances,
+7(40):eabi8605, 2021.
+[20] Lu Lu, Raphaël Pestourie, Steven G Johnson, and Giuseppe Romano. Multifidelity deep neural
+operators for efficient learning of partial differential equations with application to fast inverse
+design of nanoscale heat transport. arXiv preprint arXiv:2204.06684, 2022.
+[21] Amanda A Howard, Mauro Perego, George E Karniadakis, and Panos Stinis. Multifidelity
+deep operator networks. arXiv preprint arXiv:2204.09157, 2022.
+[22] Subhayan De, Malik Hassanaly, Matthew Reynolds, Ryan N King, and Alireza Doostan. Bifidelity modeling of uncertain and partially unknown systems using DeepONets. arXiv preprint
+arXiv:2204.00997, 2022.
+[23] Lizuo Liu and Wei Cai. Multiscale DeepONet for nonlinear operators in oscillatory function
+spaces for building seismic wave responses. arXiv preprint arXiv:2111.04860, 2021.
+[24] Guang Lin, Christian Moya, and Zecheng Zhang. Accelerated replica exchange stochastic
+gradient langevin diffusion enhanced Bayesian DeepONet for solving noisy parametric PDEs.
+arXiv preprint arXiv:2111.02484, 2021.
+[25] Apostolos F Psaros, Xuhui Meng, Zongren Zou, Ling Guo, and George Em Karniadakis.
+Uncertainty quantification in scientific machine learning: Methods, metrics, and comparisons.
+arXiv preprint arXiv:2201.07766, 2022.
+[26] Yibo Yang, Georgios Kissas, and Paris Perdikaris. Scalable uncertainty quantification for deep
+operator networks using randomized priors. arXiv e-prints, page arXiv:2203.03048, March
+2022.
+[27] Christian Moya, Shiqi Zhang, Meng Yue, and Guang Lin. DeepONet-Grid-UQ: A trustworthy
+deep operator framework for predicting the power grid’s post-fault trajectories. arXiv preprint
+arXiv:2202.07176, 2022.
+[28] E. Barnard and L.F.A. Wessels. Extrapolation and interpolation in neural network classifiers.
+IEEE Control Systems Magazine, 12(5):50–53, 1992.
+[29] Keyulu Xu, Mozhi Zhang, Jingling Li, Simon S Du, Ken-ichi Kawarabayashi, and Stefanie
+Jegelka. How neural networks extrapolate: From feedforward to graph neural networks. arXiv
+preprint arXiv:2009.11848, 2020.
+[30] Georgios Kissas, Jacob Seidman, Leonardo Ferreira Guilhoto, Victor M Preciado, George J
+Pappas, and Paris Perdikaris. Learning operators with coupled attention. arXiv preprint
+arXiv:2201.01032, 2022.
+39
+
+[31] Xin-Yang Liu, Hao Sun, Min Zhu, Lu Lu, and Jian-Xun Wang. Predicting parametric
+spatiotemporal dynamics by multi-resolution PDE structure-preserved deep learning. arXiv
+preprint arXiv:2205.03990, 2022.
+[32] Marc C Kennedy and Anthony O’Hagan. Predicting the output from a complex computer
+code when fast approximations are available. Biometrika, 87(1):1–13, 2000.
+[33] András Sobester, Alexander Forrester, and Andy Keane. Engineering design via surrogate
+modelling: a practical guide. John Wiley & Sons, 2008.
+[34] Xuhui Meng and George Em Karniadakis. A composite neural network that learns from multifidelity data: Application to function approximation and inverse PDE problems. Journal of
+Computational Physics, 401:109020, 2020.
+[35] Lu Lu, Ming Dao, Punit Kumar, Upadrasta Ramamurty, George Em Karniadakis, and Subra
+Suresh. Extraction of mechanical properties of materials through deep learning from instrumented indentation. Proceedings of the National Academy of Sciences, 117(13):7052–7062,
+2020.
+[36] Lu Lu, Ming Dao, Subra Suresh, and George Karniadakis. Machine learning techniques for
+estimating mechanical properties of materials, June 30 2022. US Patent App. 17/620,219.
+[37] Sinno Jialin Pan and Qiang Yang. A survey on transfer learning. IEEE Transactions on
+Knowledge and Data Engineering, 22(10):1345–1359, 2009.
+[38] Fuzhen Zhuang, Zhiyuan Qi, Keyu Duan, Dongbo Xi, Yongchun Zhu, Hengshu Zhu, Hui
+Xiong, and Qing He. A comprehensive survey on transfer learning. Proceedings of the IEEE,
+109(1):43–76, 2020.
+[39] Yixiang Deng, Lu Lu, Laura Aponte, Angeliki M Angelidi, Vera Novak, George Em Karniadakis, and Christos S Mantzoros. Deep transfer learning and data augmentation improve
+glucose levels prediction in type 2 diabetes patients. NPJ Digital Medicine, 4(1):1–13, 2021.
+[40] Jiang Lu, Pinghua Gong, Jieping Ye, and Changshui Zhang. Learning from very few samples:
+A survey. arXiv preprint arXiv:2009.02653, 2020.
+[41] Yaqing Wang, Quanming Yao, James T Kwok, and Lionel M Ni. Generalizing from a few
+examples: A survey on few-shot learning. ACM Computing Surveys, 53(3):1–34, 2020.
+[42] Somdatta Goswami, Katiana Kontolati, Michael D Shields, and George Em Karniadakis. Deep
+transfer learning for partial differential equations under conditional shift with DeepONet. arXiv
+preprint arXiv:2204.09810, 2022.
+[43] Zongyi Li, Nikola Kovachki, Kamyar Azizzadenesheli, Burigede Liu, Kaushik Bhattacharya,
+Andrew Stuart, and Anima Anandkumar. Fourier neural operator for parametric partial
+differential equations. arXiv preprint arXiv:2010.08895, 2020.
+[44] Zongyi Li, Nikola Kovachki, Kamyar Azizzadenesheli, Burigede Liu, Kaushik Bhattacharya,
+Andrew Stuart, and Anima Anandkumar. Neural operator: Graph kernel network for partial
+differential equations. arXiv preprint arXiv:2003.03485, 2020.
+[45] Huaiqian You, Yue Yu, Marta D’Elia, Tian Gao, and Stewart Silling. Nonlocal kernel
+network (NKN): a stable and resolution-independent deep neural network. arXiv preprint
+arXiv:2201.02217, 2022.
+40
+
+[46] Nathaniel Trask, Ravi G Patel, Ben J Gross, and Paul J Atzberger. GMLS-Nets: A framework
+for learning from unstructured data. arXiv preprint arXiv:1909.05371, 2019.
+[47] Ravi G Patel, Nathaniel A Trask, Mitchell A Wood, and Eric C Cyr. A physics-informed operator regression framework for extracting data-driven continuum models. Computer Methods
+in Applied Mechanics and Engineering, 373:113500, 2021.
+[48] Matthias Gelbrich. On a formula for the L2 Wasserstein metric between measures on Euclidean
+and Hilbert spaces. Mathematische Nachrichten, 147(1):185–203, 1990.
+[49] Ameya D Jagtap, Kenji Kawaguchi, and George Em Karniadakis. Locally adaptive activation
+functions with slope recovery for deep and physics-informed neural networks. Proceedings of
+the Royal Society A, 476(2239):20200334, 2020.
+[50] Ameya D Jagtap, Yeonjong Shin, Kenji Kawaguchi, and George Em Karniadakis. Deep kronecker neural networks: A general framework for neural networks with adaptive activation
+functions. Neurocomputing, 468:165–180, 2022.
+[51] Stuart Geman, Elie Bienenstock, and René Doursat. Neural networks and the bias/variance
+dilemma. Neural Computation, 4(1):1–58, 1992.
+[52] Trevor Hastie, Robert Tibshirani, Jerome H Friedman, and Jerome H Friedman. The elements
+of statistical learning: data mining, inference, and prediction, volume 2. Springer, 2009.
+[53] Mikhail Belkin, Daniel Hsu, Siyuan Ma, and Soumik Mandal. Reconciling modern machinelearning practice and the classical bias–variance trade-off. Proceedings of the National Academy
+of Sciences, 116(32):15849–15854, 2019.
+[54] Preetum Nakkiran, Gal Kaplun, Yamini Bansal, Tristan Yang, Boaz Barak, and Ilya Sutskever.
+Deep double descent: Where bigger models and more data hurt. Journal of Statistical Mechanics: Theory and Experiment, 2021(12):124003, 2021.
+[55] Vinod Nair and Geoffrey E Hinton. Rectified linear units improve restricted Boltzmann machines. In ICML, 2010.
+[56] Stefan Elfwing, Eiji Uchibe, and Kenji Doya. Sigmoid-weighted linear units for neural network
+function approximation in reinforcement learning. Neural Networks, 107:3–11, 2018.
+[57] Dan Hendrycks and Kevin Gimpel. Gaussian error linear units (GeLUs). arXiv preprint
+arXiv:1606.08415, 2016.
+[58] Qingguo Hong, Qinyang Tan, Jonathan W Siegel, and Jinchao Xu. On the activation function
+dependence of the spectral bias of neural networks. arXiv preprint arXiv:2208.04924, 2022.
+[59] Pengzhan Jin, Lu Lu, Yifa Tang, and George Em Karniadakis. Quantifying the generalization
+error in deep learning in terms of data distribution and neural network smoothness. Neural
+Networks, 130:85–99, 2020.
+[60] Ian J Goodfellow, Mehdi Mirza, Da Xiao, Aaron Courville, and Yoshua Bengio. An empirical
+investigation of catastrophic forgetting in gradient-based neural networks. arXiv preprint
+arXiv:1312.6211, 2013.
+
+41
+
+[61] James Kirkpatrick, Razvan Pascanu, Neil Rabinowitz, Joel Veness, Guillaume Desjardins,
+Andrei A Rusu, Kieran Milan, John Quan, Tiago Ramalho, Agnieszka Grabska-Barwinska,
+et al. Overcoming catastrophic forgetting in neural networks. Proceedings of the National
+Academy of Sciences, 114(13):3521–3526, 2017.
+[62] Sifan Wang, Hanwen Wang, and Paris Perdikaris. Learning the solution operator of parametric partial differential equations with physics-informed deeponets. Science Advances,
+7(40):eabi8605, 2021.
+[63] Samuel Lanthaler, Siddhartha Mishra, and George E Karniadakis. Error estimates for DeepONets: A deep learning framework in infinite dimensions. Transactions of Mathematics and
+Its Applications, 6(1):tnac001, 2022.
+[64] Tim De Ryck and Siddhartha Mishra. Generic bounds on the approximation error for physicsinformed (and) operator learning. arXiv preprint arXiv:2205.11393, 2022.
+[65] Nikola Kovachki, Samuel Lanthaler, and Siddhartha Mishra. On universal approximation and
+error bounds for Fourier neural operators. Journal of Machine Learning Research, 22:Art–No,
+2021.
+[66] Carlo Marcati and Christoph Schwab. Exponential convergence of deep operator networks for
+elliptic partial differential equations. arXiv preprint arXiv:2112.08125, 2021.
+[67] Lukas Herrmann, Christoph Schwab, and Jakob Zech. Neural and gpc operator surrogates:
+construction and expression rate bounds. arXiv preprint arXiv:2207.04950, 2022.
+[68] Christoph Schwab and Andreas Stein. Deep solution operators for variational inequalities via
+proximal neural networks. Research in the Mathematical Sciences, 9(3):1–35, 2022.
+
+42
+
+

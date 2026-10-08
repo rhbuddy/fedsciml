@@ -1,0 +1,3932 @@
+PHYSICS-INFORMED NEURAL NETWORKS WITH HARD
+CONSTRAINTS FOR INVERSE DESIGN∗
+
+arXiv:2102.04626v1 [physics.comp-ph] 9 Feb 2021
+
+LU LU† , RAPHAËL PESTOURIE† , WENJIE YAO† , ZHICHENG WANG‡ , FRANCESC
+VERDUGO§ , AND STEVEN G. JOHNSON†
+Abstract. Inverse design arises in a variety of areas in engineering such as acoustic, mechanics,
+thermal/electronic transport, electromagnetism, and optics. Topology optimization is a major form
+of inverse design, where we optimize a designed geometry to achieve targeted properties and the
+geometry is parameterized by a density function. This optimization is challenging, because it has
+a very high dimensionality and is usually constrained by partial differential equations (PDEs) and
+additional inequalities. Here, we propose a new deep learning method—physics-informed neural
+networks with hard constraints (hPINNs)—for solving topology optimization. hPINN leverages the
+recent development of PINNs for solving PDEs, and thus does not rely on any numerical PDE solver.
+However, all the constraints in PINNs are soft constraints, and hence we impose hard constraints by
+using the penalty method and the augmented Lagrangian method. We demonstrate the effectiveness
+of hPINN for a holography problem in optics and a fluid problem of Stokes flow. We achieve the
+same objective as conventional PDE-constrained optimization methods based on adjoint methods
+and numerical PDE solvers, but find that the design obtained from hPINN is often simpler and
+smoother for problems whose solution is not unique. Moreover, the implementation of inverse design
+with hPINN can be easier than that of conventional methods.
+Key words. inverse design, topology optimization, partial differential equations, physicsinformed neural networks, penalty method, augmented Lagrangian method
+AMS subject classifications. 35R30, 65K10, 68T20
+
+1. Introduction. Metamaterials are artificial materials that achieve targeted
+properties through designed fine-scale geometry rather than via material properties. They arise in a variety of areas in engineering, e.g., acoustics, mechanics,
+thermal/electronic transport, and electromagnetism/optics [21]. Designing a metamaterial’s geometry for a particular functionality is a challenging task, because the
+design space has a very high dimensionality (millions to billions of parameters). In
+contrast to intuition-based approaches using heuristics and handful of hand-tweaked
+geometric parameters, inverse design starts with the targeted functionality and sets it
+as an objective function to be optimized via partial-differential-equation-constrained
+(PDE-constrained) large-scale optimization [34]. When the parameterization of the
+geometry is via the parameters of discrete geometric components, inverse design is
+called shape optimization [41, 2]. When the parameterization of the geometry is via a
+density function or level set so that the connectivity/topology is arbitrary, inverse design is called topology optimization [34]; this is the variant of inverse design considered
+in this study.
+PDE-constrained inverse design, especially PDE-constrained topology optimization, is important for various subjects in computational science and engineering, e.g.,
+∗ Submitted to the editors DATE.
+
+Funding: This work was supported by the MIT-IBM Watson AI Laboratory (challenge 2415).
+F.V. acknowledges support from the Spanish Ministry of Economy and Competitiveness through the
+“Severo Ochoa Programme for Centers of Excellence in R&D (CEX2018-000797-S)”.
+† Department of Mathematics, Massachusetts Institute of Technology, Cambridge, MA 02139,
+USA (lu lu@mit.edu, stevenj@math.mit.edu).
+‡ Laboratory of Ocean Energy Utilization of Ministry of Education, Dalian University of Technology, Dalian, 116024, China
+§ Centre Internacional de Mètodes Numèrics en Enginyeria, Esteve Terradas 5, 08860 Castelldefels,
+Spain
+1
+
+2
+
+L. LU, R. PESTOURIE, W. YAO, Z. WANG, F. VERDUGO, AND S. G. JOHNSON
+
+optics and photonics [34, 41, 2], fluid dynamics [5, 14, 11, 48], and solid mechanics [33, 3]. Different numerical methods have been developed to solve PDE-constrained
+inverse design, and these traditional methods are commonly based on a numerical PDE
+solver (either approximate [41] or brute force [34]). The large-scale optimization is
+performed via gradient-based optimization algorithms, where the gradient is obtained
+using an adjoint method, which computes the gradient of the objective function with
+respect to all parameters at the cost of at most a single additional simulation.
+Recently, deep learning in the form of deep neural networks has been used in
+many areas of inverse design, including nanophotonics [52, 17], mechanical materials [15], aerodynamics [49], and electromagnetism [47]. As the dominant approach
+nowadays for data-driven problems, deep neural networks are usually employed in the
+supervised-learning paradigm to learn the nonlinear mapping from arbitrary designs
+to their associated functional properties [25, 42, 29, 59, 47, 54, 39, 40, 15] or vice
+versa [29, 49, 54], i.e., neural networks are used as surrogate models of PDE solvers
+to accelerate the optimization. However, it may require a vast quantity of data to
+train a neural network for complex problems, and the generation of such datasets
+via “brute-force” PDE solvers could be very expensive (although many strategies are
+being investigated reduce the amount of training data, e.g., active learning [40]). Alternatively, in unsupervised learning and reinforcement learning, neural networks are
+employed as generators to generate candidate designs [30, 18, 17, 52], which are then
+evaluated by numerical solvers. Hence, all these approaches still rely on traditional
+numerical PDE solvers.
+Physics-informed neural networks (PINNs) have been developed as an alternative
+method to traditional numerical PDE solvers [44, 31]. PINNs solve PDEs by minimizing a loss function constructed from the PDEs, and the PDEs are solved when
+the loss is close to zero. Compared to traditional numerical solvers, a PINN is meshfree and thus can easily handle irregular-domain problems. Moreover, PINNs have
+been successfully employed to solve diverse inverse problems, including in optics [8],
+fluid mechanics [45, 55], systems biology [60], biomedicine [46, 24], and even inverse
+problems of stochastic PDEs [62] and fractional PDEs [38]. Here, the inverse problems were to infer unknown data (such as PDE coefficients/geometries) from partial
+observations of the PDE solutions in some regions, and a major concern is often regularizing the problem in order to ensure a unique “correct” solution. In contrast, for
+inverse design, one may not have any data of the PDE solution, and any realizable
+design that approximately maximizes the objective functional is acceptable (even if
+it is not unique).
+For conventional numerical methods, inverse problems and inverse design might be
+solved by similar methods, because the PDE is directly solved via a numerical solver,
+and we only need to find the best PDE solution to minimize the objective function
+or match the observed data. However, in PINN, inverse design poses new challenges.
+The inverse problems are solved with PINNs by using the mismatch between the
+PDE solution and the data as a loss function (data-based loss), so that the network
+is trained to minimize the sum of the data-based loss and the PDE-based loss [8, 31].
+Such an optimization problem can be solved relatively easily, because these two losses
+are consistent and can be minimized to zero simultaneously. In contrast, for inverse
+design, the PDE-based loss and the objective function are usually not consistent—it
+is not generally possible to both exactly solve the PDE and make the design objective
+arbitrarily good with the same solution—and so they compete with each other during
+optimization. Hence, a PINN that merely optimizes the sum of the objective and
+the PDE loss will usually end up in an optimum that is not a solution to the PDE.
+
+HARD-CONSTRAINED PHYSICS-INFORMED NEURAL NETWORK
+
+3
+
+Moreover, inverse design problems often have additional inequality constraints, such
+from manufacturing constraints, that must be satisfied for the design to be acceptable.
+To overcome these difficulties, we develop a new PINN method with hard constraints (hPINN) to solve PDE-constrained inverse design. We also consider inequality
+constraints in hPINN. We propose two approaches to impose the equality and inequality constraints as hard constraints, including the penalty method and the augmented
+Lagrangian method. We also use the approach of soft constraints for comparison. Imposing hard constraints to neural networks has been considered very recently [36, 9]
+for data-driven problems in the supervised learning paradigm.
+The paper is organized as follows. In Section 2, after introducing the setup of
+inverse design and the algorithm of PINN, we present the method to exactly impose
+Dirichlet and periodic boundary conditions by directly modifying the neural network
+architecture. We then propose a soft-constraint approach and two hard-constraint approaches to impose PDEs and inequality constraints in hPINN, including the penalty
+method and the augmented Lagrangian method. In Section 3, we demonstrate the
+effectiveness and convergence of hPINN for a holography problem in optics and a fluid
+problem of Stokes flow. By comparing with traditional PDE-constrained optimization methods based on adjoint methods with the finite-difference frequency-domain
+(FDFD) method and finite element method (FEM) as the numerical PDE solvers, we
+find that hPINN achieves the same objective-function performance but often seems
+to obtain a simpler and smoother design (without imposing additional constraints on
+the design lengthscales or smoothness, as is typically done in topology optimization).
+Finally, we conclude the paper in Section 4.
+2. Methods. We first introduce the problem setup of inverse design considered in this paper and then present the method of physics-informed neural networks
+(PINNs) with hard constraints (hPINNs) for solving inverse design.
+2.1. Inverse design. We consider a physical system governed by partial differential equations (PDEs) defined on a domain Ω ⊂ Rd :
+(2.1)
+
+F [u(x); γ(x)] = 0,
+
+x = (x1 , x2 , · · · , xd ) ∈ Ω
+
+with suitable boundary conditions (BCs):
+(2.2)
+
+B [u(x)] = 0,
+
+x ∈ ∂Ω,
+
+where F includes N PDE operators {F1 , F2 , · · · , FN }, B is a general from of a
+boundary-condition operator, and ∂Ω is the boundary of the domain Ω. u(x) =
+(u1 (x), u2 (x), · · · , un (x)) ∈ Rn is the solution of the PDEs and is determined by the
+parameter γ(x), which is our quantity of interest (QoI) for the inverse design problem. (γ generally describes some structure to be manufactured in order to realize an
+optimized device.)
+In an inverse-design problem, we search for the best γ by minimizing an objective
+function J that depends on u and γ. The pair (u, γ) must to satisfy the equality
+constraints enforced by the PDEs in Eq. (2.1) and the BCs in Eq. (2.2); in certain
+situations, we may also have additional equality or inequality constraints for u and γ
+(e.g., stemming from manufacturing constraints or multi-objective problems). In this
+paper, we only consider inequality constraints, as equality constraints can be tackled
+in the same way as the PDE and BC constraints. Then the inverse design problem is
+formulated as a constrained optimization problem:
+min J (u; γ)
+u,γ
+
+4
+
+L. LU, R. PESTOURIE, W. YAO, Z. WANG, F. VERDUGO, AND S. G. JOHNSON
+
+subject to
+
+ F [u; γ] = 0,
+B [u] = 0,
+
+h(u, γ) ≤ 0,
+
+(2.3)
+
+where the last equation is the inequality constraint(s). We note that the optimal
+solution γ of this optimization problem may not be unique, and moreover there may
+be many acceptable local optima with similar performance. (An inverse problem
+could be viewed a special case of inverse design, where the objective function J is
+the error between the PDE solution u and the observed measurements, but in this
+context there is typically a unique “ground-truth” solution that is desired, and hence
+special attention must be paid to conditioning and regularization.)
+2.2. Physics-informed neural networks. One difficulty of the constrained
+optimization problem is that u and γ must satisfy the PDEs, and a common strategy
+is for u to be obtained from solving the PDEs for a γ by using numerical methods
+such as finite differences or finite elements. In this paper, we will instead use PINNs.
+In a PINN, we employ n fully connected deep neural networks û(x; θu ) to approximate the solution u(x) (Fig. 1A), where θu is the set of trainable parameters
+in the network. The network takes the coordinates x as the input and outputs the
+approximate solution û(x). Similarly, we also employ another, independent, fully connected network γ̂(x; θγ ) for the unknown parameters γ (Fig. 1A). We then restrict the
+two networks of û and γ̂ to satisfy the PDEs by using a PDE-informed loss function
+(Fig. 1A):
+M
+
+(2.4)
+
+LF (θu , θγ ) =
+
+N
+
+1 XX
+2
+|Fi [û(xj ); γ̂(xj )]| ,
+M N j=1 i=1
+
+where {x1 , x2 , · · · , xM } are a set of M residual points in the domain Ω, and |Fi [û(xj ); γ̂(xj )]|
+measures the discrepancy of the i-th PDE Fi [u; γ] = 0 at the residual point xj .
+There are multiple ways to sample the residual points, e.g., uniformly distributed
+random points or grid points, and in this study, we use a Sobol sequence to sample
+the residual points [38]. Fi requires the derivatives of the network output û with
+respect to the input x (e.g., ∇û), which are evaluated exactly and efficiently via automatic differentiation (AD; also called “backpropagation” in deep learning) without
+generating a mesh. In order to compute arbitrary-order derivatives, we need to use
+a smooth activation function; in this study, we choose the hyperbolic tangent (tanh).
+For more details of PINNs, we refer the reader to our review article [31].
+2.3. Hard-constraint boundary conditions. We can also enforce the BCs
+in Eq. (2.2) via loss functions in the same way as the PDE loss in Eq. (2.4). This
+approach can be used for all types of BCs, including Dirichlet, Neumann, Robin,
+or periodic BCs. In the examples of this study, we mainly consider Dirichlet and
+periodic BCs, and here we introduce another way to strictly impose the Dirichlet
+BCs and periodic BCs by modifying the network architecture. Compared to the
+approach of loss functions, this approach satisfies the BCs exactly and thus reduce
+the computational cost, and is also easier to be implemented.
+Dirichlet BCs. Let us consider a Dirichlet BC for the solution ui (1 ≤ i ≤ n):
+ui (x) = g(x),
+
+x ∈ ΓD ,
+
+5
+
+HARD-CONSTRAINED PHYSICS-INFORMED NEURAL NETWORK
+
+A NN û(x; θu )
+σ
+σ
+..
+..
+.
+.
+x1
+σ
+σ
+..
+..
+.
+.
+xd
+σ
+σ
+..
+..
+.
+.
+σ
+σ
+NN γ̂(x; θγ )
+x1
+σ
+..
+..
+.
+.
+σ
+xd
+
+B
+x1
+..
+.
+xd
+
+û1
+..
+.
+ûn
+
+PDE loss LF (θu , θγ )
+F1
+
+F1 [û(x); γ̂(x)]
+
+..
+.
+
+..
+.
+
+σ
+
+γ̂
+
+FN
+
+FN [û(x); γ̂(x)]
+
+σ
+..
+.
+
+σ
+
+σ
+
+C
+x1
+
+x1
+..
+.
+
+..
+.
+cos
+
+xj
+σ
+..
+.
+
+σ
+..
+.
+
+sin
+
+..
+.
+xd
+
+
+
+
+
+
+
+2πxj
+P
+
+2πxj
+P
+
+···
+
+g(x)
+ûi
+
+N
+`(x)
+
+σ
+..
+.
+
+σ
+..
+.
+
+σ
+
+σ
+
+ûi
+
+..
+.
+xd
+
+Fig. 1. Physics-informed neural networks with hard-constraint Dirichlet and periodic
+boundary conditions. (A) Two independent neural networks û(x; θu ) and γ̂(x; θγ ) are conostructed
+to approximate u(x) and γ(x). The gradients in the PDE-informed loss is computed via AD. (B)
+Dirichlet BCs are strictly imposed into the network architecture by modifying the network output.
+(C) Periodic BCs are strictly imposed into the network architecture by modifying the network input.
+
+where ΓD ⊂ ∂Ω is a subset of the boundary. To make the approximate solution
+ûi (x; θu ) satisfy this BC, we construct the solution as (Fig. 1B)
+ûi (x; θu ) = g(x) + `(x)N (x; θu ),
+where N (x; θu ) is the network output, and ` is a function satisfying the following two
+conditions:
+
+`(x) = 0, x ∈ ΓD ,
+`(x) > 0, x ∈ Ω − ΓD .
+If ΓD is a simple geometry, then it is possible to choose `(x) analytically [27, 38, 26].
+For example, when ΓD is the boundary of an interval Ω = [a, b], i.e., ΓD = {a, b}, we
+can choose `(x) as (x − a)(b − x) or (1 − ea−x )(1 − ex−b ). For complex domains, it
+is difficult to obtain an analytical formula of `(x), and we can use spline functions to
+approximate `(x) [50].
+Periodic BCs. If ui (x) is a periodic function with respect to xj of the period P ,
+then in the xj direction, ui (x) can be decomposed into a weighted summation of the
+2πx
+2πx
+4πx
+4πx
+basis functions of the Fourier series {1, cos( P j ), sin( P j ), cos( P j ), sin( P j ), · · · }.
+Hence, we can replace the network input xj with the Fourier basis functions to impose
+the periodicity in the xj direction (Fig. 1C):
+
+
+
+
+2πxj
+2πxj
+4πxj
+4πxj
+ui (x) = N x1 , · · · , xj−1 , cos(
+), sin(
+), cos(
+), sin(
+), · · · , xj+1 , · · · , xd .
+P
+P
+P
+P
+In classical Fourier analysis, many basis functions may be required approximate an
+arbitrary periodic function with a good accuracy, but as demonstrated in [61], we
+2πx
+2πx
+can use as few as two terms {cos( P j ), sin( P j )} without loss of accuracy, because
+4πxj
+4πxj
+all the other basis functions {cos( P ), sin( P ), · · · } can be written as a nonlinear
+
+6
+
+L. LU, R. PESTOURIE, W. YAO, Z. WANG, F. VERDUGO, AND S. G. JOHNSON
+2πx
+
+2πx
+
+continuous function of cos( P j ) and sin( P j ) and neural networks are universal
+approximators of nonlinear continuous functions. Here, we consider the case where
+ui and all its derivatives are periodic; this approach can also be extended to the case
+where its derivatives up to a finite order is periodic [10].
+2.4. Soft constraints. While the BCs in Eq. (2.3) can be imposed directly
+during constrained optimization, it is difficult to satisfy the PDEs and inequality
+constraint exactly. The simplest way to deal with these constraints is to consider them
+as soft constraints via loss functions. Specifically, using the PDE loss in Eq. (2.4),
+we convert the original constrained optimization to an unconstrained optimization
+problem:
+(2.5)
+
+min L(θu , θγ ) = J + µF LF + µh Lh ,
+
+θu ,θγ
+
+where Lh is a quadratic penalty to measure the violation of the hard constraint
+h(u, γ) ≤ 0:
+(2.6)
+
+Lh (θu , θγ ) = 1{h(û,γ̂)>0} h2 (û, γ̂),
+
+and µF and µh are the fixed penalty coefficients of the soft constraints. Then the
+final solution is obtained by minimizing the total loss via gradient-based optimizers:
+θu∗ , θγ∗ = arg min L(θu , θγ ).
+θu ,θγ
+
+If µF and µh are larger, we penalize the constraint violations more severely,
+thereby forcing the solution satisfying the constraints better. However, when the
+penalty coefficients are too large, the optimization problem becomes ill-conditioned
+and hence makes it difficult to converge to a minimum [4, 37]. On the other hand,
+if the penalty coefficients are too small, then the obtained solution will not satisfy
+the constraints and thus is not a valid solution. Therefore, although this approach
+is simple, it cannot be used in general. In contrast, the soft-constraint approach has
+worked well for inverse problems to match observed measurements [8, 45, 60], as we
+discussed in Section 1.
+2.5. Penalty method. To overcome the optimization difficulty of the soft constraints with large penalty coefficients, we consider the penalty method. Unlike the
+approach of soft constraints, which converts a constrained optimization problem to an
+unconstrained optimization problem with fixed coefficients, a penalty method replaces
+the constrained optimization problem by a sequence of unconstrained problems with
+varying coefficients. The unconstrained problem in the k-th “outer” iteration is
+min Lk (θu , θγ ) = J + µkF LF + µkh Lh ,
+
+θu ,θγ
+
+where µkF and µkh are the penalty coefficients in the k-th iteration. In each iteration,
+we increase the penalty coefficients by constant factors βF > 1 and βh > 1:
+µk+1
+= βF µkF ,
+F
+
+µk+1
+= βh µkh .
+h
+
+Here, we need to choose the initial coefficients µ0F and µ0h and the factors βF and βh .
+The choice of these hyperparameters are problem dependent [4]. Similar to the softconstraint approach, we would have an ill-conditioned optimization problem when
+
+HARD-CONSTRAINED PHYSICS-INFORMED NEURAL NETWORK
+
+7
+
+their values are large, leading to slow convergence. However, if their values are small,
+we may need many outer iterations, and gradient-descent optimization may get stuck
+at poor local minima, as we will show in our numerical experiments. Algorithm 2.1
+presents the pseudocode for the penalty method.
+Algorithm 2.1 hPINNs via the penalty method.
+Hyperparameters: initial penalty coefficients µ0F and µ0h , factors βF and βh
+k ←− 0
+θu0 , θγ0 ←− arg minθu ,θγ L0 (θu , θγ ): Train the networks û(x; θu ) and γ̂(x; θγ ) from
+random initialization, until the training loss is converged
+repeat
+k ←− k + 1
+µkF ←− βF µk−1
+F
+µkh ←− βh µk−1
+h
+θuk , θγk ←− arg minθu ,θγ Lk (θu , θγ ): Train the networks û(x; θu ) and γ̂(x; θγ )
+from the initialization of θuk−1 and θγk−1 , until the training loss is converged
+until LF (θuk , θγk ) and Lh (θuk , θγk ) are smaller than a tolerance
+As k → ∞, given that the networks are well trained, the solutions of the successive
+unconstrained optimization problems will converge to the solution of the original
+constrained optimization problem [4, 37]. In the first iteration (k = 0), the neural
+networks are trained from a random initialization, while the neural networks in the
+(k + 1)-th iteration are trained by using the solution of the k-th iteration as the
+initialization—this good starting point helps to counteract the slow convergence that
+would otherwise arise when µkF and µkh are large.
+2.6. Augmented Lagrangian method. The third method we considered in
+this study is the method of multipliers or the augmented Lagrangian method [56].
+Similar to penalty methods, the augmented Lagrangian method also uses penalty
+terms, but it adds new terms designed to mimic Lagrange multipliers. The unconstrained problem in the k-th iteration is
+
+(2.7)
+
+minθu ,θγ Lk (θu , θγ ) = J
++ µkF LF
++ µkh 1{h>0 ∨ λkh >0} h2
+PM PN
++ M1N j=1 i=1 λki,j Fi [û(xj ); γ̂(xj )]
++ λkh h,
+
+where the symbol “∨” in the third term is the logical OR, and λki,j and λkh are multipliers. We note that the second penalty term LF is the same as the term in Eq. (2.4)
+in the soft constraints and penalty method, but the third penalty term of h depends
+on the multiplier λkh , and is slightly different from the penalty term Lh in Eq. (2.6).
+The last two terms in Eq. (2.7) are Lagrangian terms, and we take the term
+Fi [û(xj ); γ̂(xj )] as an example to demonstrate its effect and how to choose λki,j . It
+is clear that the gradient ∇Fi [û(xj ); γ̂(xj )] is always orthogonal to the constraint
+of Fi [û(xj ); γ̂(xj )]. In the k-th iteration, we choose λki,j to generate exactly the
+gradient that was previously generated in the (k − 1)-th iteration by the penalty term
+
+8
+
+L. LU, R. PESTOURIE, W. YAO, Z. WANG, F. VERDUGO, AND S. G. JOHNSON
+2
+
+|Fi [û(xj ); γ̂(xj )]| in LF [4, 37, 56], i.e., we require that
+
+
+λki,j ∇Fi û(xj ; θuk−1 ); γ̂(xj ; θγk−1 ) =
+
+2
+
+
+k−1
+k−1
+µk−1
+); γ̂(xj ; θγk−1 ) + λk−1
+); γ̂(xj ; θγk−1 ) ,
+i,j ∇Fi û(xj ; θu
+F ∇ Fi û(xj ; θu
+and thus we have
+
+
+k−1
+k−1
+λki,j = λk−1
+); γ̂(xj ; θγk−1 ) .
+i,j + 2µF Fi û(xj ; θu
+Similarly, for λkh , we have [56]
+ 
+k−1
+λkh = max λk−1
++ 2µk−1
+), γ̂(x; θγk−1 ) , 0 .
+h
+h h û(x; θu
+The initial values of all the multipliers are chosen as 0. We will show in our numerical
+examples that λki,j /µkF and λkh /µkh converge after several iterations. The pseudocode
+is presented in Algorithm 2.2. Compared to the penalty method, the augmented
+Lagrangian method has two main advantages: (1) it is not necessary to increase µF
+and µh to infinity in order to induce convergence to a feasible solution, which further
+avoids the ill-conditioning; (2) the convergence rate is considerably better than that
+of the penalty method.
+Algorithm 2.2 hPINNs via the augmented Lagrangian method.
+Hyperparameters: initial penalty coefficients µ0F and µ0h , factors βF and βh
+k ←− 0
+λ0i,j ←− 0 for 1 ≤ i ≤ N, 1 ≤ j ≤ M
+λ0h ←− 0
+θu0 , θγ0 ←− arg minθu ,θγ L0 (θu , θγ ): Train the networks û(x; θu ) and γ̂(x; θγ ) from
+random initialization, until the training loss is converged
+repeat
+k ←− k + 1
+µkF ←− βF µk−1
+F
+µkh ←− βh µk−1
+h
+
+
+k−1
+k−1
+); γ̂(xj ; θγk−1 ) for 1 ≤ i ≤ N, 1 ≤ j ≤ M
+λki,j ←− λk−1
+i,j + 2µF Fi û(xj ; θu
+ 
+k−1
+), γ̂(x; θγk−1 ) , 0
+λkh ←− max λk−1
++ 2µk−1
+h
+h h û(x; θu
+θuk , θγk ←− arg minθu ,θγ Lk (θu , θγ ): Train the networks û(x; θu ) and γ̂(x; θγ )
+from the initialization of θuk−1 and θγk−1 , until the training loss is converged
+until LF (θuk , θγk ) and Lh (θuk , θγk ) are smaller than a tolerance
+3. Results. We will apply our proposed hPINNs to solve two different problems
+of inverse design in optics and fluids. We compare hPINNs with a few traditional PDEconstrained optimization methods based on the adjoint method and a numerical PDE
+solver, and demonstrate the capacity and effectiveness of hPINNs. All the hPINN
+codes in this study are implemented by using the library DeepXDE [31], and will be
+deposited in GitHub at https://github.com/lululxvi/hpinn.
+3.1. Holography. We first consider the challenging problem of holography for
+an image in depth (in the direction of propagation). In contrast to holograms of
+images that are parallel to the scattering surface, and which can be designed via
+
+HARD-CONSTRAINED PHYSICS-INFORMED NEURAL NETWORK
+
+9
+
+algorithms relying on Fourier optics [13], in-depth holograms require us to use inverse
+design on the full Maxwell’s equations. We propose to design the permittivity map of
+a scattering slab, that scatters light so that the transmitted intensity has a targeted
+shape.
+3.1.1. Problem setup. We consider a holography problem defined on a rectangle domain Ω = [−2, −2] × [2, 3] (Fig. 2A). In the lower part of Ω (i.e., Ω1 ), we have a
+time-harmonic current J to generate an electromagnetic wave E(x, y) = <[E] + i=[E]
+in the whole space. There is a lens in the region Ω2 (the blue region), whose permittivity function ε(x, y) (the square of the refractive index) is to be designed to produce
+our target transmitted-wave pattern f (x, y) in the top region Ω3 = [−2, 0] × [2, 3],
+while the permittivity in other region is one. Specifically, our objective function in
+this problem is
+(3.1)
+Z
+2
+1
+1
+k|E(x, y)|2 −f (x, y)k22,Ω3 =
+|E(x, y)|2 − f (x, y) dxdy,
+J (E) =
+Area(Ω3 )
+Area(Ω3 ) Ω3
+where |E|2 = (<[E])2 + (=[E])2 is the square of the magnitude of the electric field.
+In this study, we choose the target function as
+
+1, (x, y) ∈ [−0.5, 0.5] × [1, 2]
+f (x, y) =
+,
+0, otherwise
+i.e., f is equal to 1 inside the black square in Fig. 2A and 0 otherwise. We can think
+of the target as an input defined by a user, who does not need to know Helmholtz’s
+equation. Still in that case, our inverse design tool should find the geometry that
+scatters the transmitted intensity in a shape as close to the user input as possible. In
+the case of our example, the target function is not a solution of Helmholtz’s equation
+(equivalent to Maxwell’s equations in two dimensions). So, we expect the neural
+network to have to make a trade-off between reaching the target shape and making
+sure that Helmholtz’s equations are accurately solved.
+The holography problem can be described by the following PDEs:
+∇2 E + εω 2 E = −iωJ,
+
+(3.2)
+
+where the frequency ω is chosen as 2π (corresponding to a wavelength 1 in the ε = 1
+region), and the electric current source J is chosen as a Gaussian profile in y (Fig. 2B)
+and a constant in x, which generates an incident planewave propagating in the y
+direction:
+y+1.5 2
+1
+J(x, y) = √ e−( h ) 1[−1,−2] (y),
+h π
+
+where h = 0.2 and 1[−1,−2] is the indicator function that truncates J to be supported
+in a finite-width strip y ∈ [−1, −2] (centered on the dashed-red line in Fig. 2A). This
+problem is formally defined in an infinitely large domain with outgoing (radiation)
+boundary conditions. To reduce the problem to a finite domain for computation, we
+apply the technique of perfectly matched layers (PMLs) [20], which works as an artificial absorbing layer (the black-dotted region in Fig. 2A) to truncate the computational
+domain. After applying the PML, the PDE in Eq. (3.2) becomes
+(3.3)
+!
+!
+∂
+1
+∂E
+1
+∂
+1
+∂E
+1
++
++ εω 2 E = −iωJ,
+σ (y)
+σ (y) ∂y
+1 + i σx (x) ∂x 1 + i σx (x) ∂x
+1 + i y ∂y 1 + i y
+ω
+
+ω
+
+ω
+
+ω
+
+10
+
+L. LU, R. PESTOURIE, W. YAO, Z. WANG, F. VERDUGO, AND S. G. JOHNSON
+
+y
+
+A
+
+B 3
+
+3
+
+2
+J(x,y)
+
+Ω3
+
+1
+
+1
+-2
+Ω2
+
+2
+x
+-1
+
+Ω1
+
+0
+
+-3
+
+-2
+
+-1
+
+0
+
+y
+
+1
+
+2
+
+3
+
+4
+
+-2
+
+C
+
+σ
+..
+.
+
+σ
+..
+.
+
+
+cos 2πx
+P 
+2πx
+sin P
+···
+
+σ
+
+σ
+
+y
+cos (ωy)
+sin (ωy)
+
+σ
+..
+.
+
+σ
+..
+.
+
+σ
+
+σ
+
+σ
+..
+.
+
+σ
+..
+.
+
+σ
+
+σ
+
+Periodic BC in x
+
+x
+y
+
+N1
+
+<[E] = (1 − e−3−y )(1 − ey−4 )N1
+
+Zero Dirichlet BC in y
+N2
+
+=[E] = (1 − e−3−y )(1 − ey−4 )N2
+
+N3
+
+ε = 1 + 11 sigmoid(N3 )
+
+Fig. 2. Holography problem setup and the neural network architecture. (A) The whole
+computational domain includes the main domain Ω = [−2, −2] × [2, 3] and a PML of depth one in
+the shaded region. The design region for the permittivity ε is in blue, and the center of the current
+J is the dashed red line in the domain Ω1 . The target electrical field is defined in Ω3 . (B) The
+time-harmonic current J. (C) The architecture of the hPINN with the Dirichlet and periodic BCs
+embedded directly in the network. The network inputs are x and y, and the outputs are <[E], =[E]
+and ε.
+
+where
+
+σx (x) = σ0 (−2 − x)2 1(−∞,−2) (x) + σ0 (x − 2)2 1(2,∞) (x),
+σy (y) = σ0 (−2 − y)2 1(−∞,−2) (y) + σ0 (y − 3)2 1(3,∞) (y),
+
+with σ0 = − ln 10−20 /(4d3 /3)  1 and d = 1 is the depth of the PML layer. For BCs
+of the PML, we use a periodic BC for the x direction (x = −3 and x = 3) and a zero
+Dirichlet BC for the y direction (y = −3 and y = 4). Corresponding to semiconductor
+dielectric materials commonly used infrared optics, we require ε ∈ [1, 12] in the design
+region.
+3.1.2. hPINN. We will apply hPINN to solve this inverse design problem of
+holography. The objective function is defined in Eq. (3.1) and is approximated by
+
+HARD-CONSTRAINED PHYSICS-INFORMED NEURAL NETWORK
+
+11
+
+Monte-Carlo integration. The PDEs are the real and imaginary parts of Eq. (3.3)
+(see Section A), i.e., N = 2, and the PDE-informed loss function is
+M
+
+(3.4)
+
+LF =
+
+1 X
+2
+2
+(<[F [xj ]]) + (=[F [xj ]]) ,
+2M j=1
+
+where
+1
+∂
+F[xj ] =
+ω + iσx (x) ∂x
+
+!
+1
+∂E
+∂
++
+σx (x) ∂x
+ω + iσy (y) ∂y
+1+i
+1
+
+ω
+
+!
+∂E
++εωE+iJ
+σ (y) ∂y
+1+i y
+1
+
+ω
+
+Here, we scaled the PDE in Eq. (3.3) by ω1 to make F of order one. In this problem,
+we do not have any inequality constraint.
+We construct three networks to approximate <[E], =[E], and ε (Fig. 2C), respectively. The periodic and Dirichlet BCs are imposed directly into the network.
+The restriction of ε ∈ [1, 12] is satisfied by using the transformation ε(x, y) = 1 +
+11 sigmoid(N3 (x, y)), where sigmoid(x) = 1+e1−x and N3 (x, y) is a network output. In
+addition, as demonstrated in [60], it is usually beneficial to the network training by
+adding extra features, which may have a similar pattern of the solution (even if they
+are not accurate), to the network input. In our study, we use the two extra features
+cos(ωy) and sin(ωy), because we expect the current J to generate an incident plane
+wave with the frequency ω in the y direction (in addition to scattered waves from
+ε 6= 1 regions).
+3.1.3. Hyperparameters and verification on a forward problem. To verify that hPINN is capable of solving the holography problem, we first solve a forward
+problem, where ε = 1 is given and we only optimize the network to minimize the loss
+LF in Eq. (3.4). We choose M = 17000 such that the average spacing between two adjacent random points is ∼ 0.05. Each network in Fig. 2C has
+neurons
+ 5 layers
+with 32
+
+2πx
+4πx
+4πx
+per layer, and we use 4 Fourier basis {cos 2πx
+,
+sin
+,
+cos
+,
+sin
+}. To
+P
+P
+P
+P
+train the networks, we first use Adam optimizer [23] with the learning rate 1 × 10−3
+for 2 × 104 steps, and then switch to L-BFGS [6] until the loss is converged.
+After the network training, the solution of hPINN (Figs. 3A and B) is consistent with the reference solution obtained from the finite-difference frequency-domain
+(FDFD) method [7] with the spatial resolutions ∆x = 0.01 (Figs. 3C and D). We also
+show that the pointwise PDE-informed loss F[x] is very small (between −5 × 10−3
+and 5 × 10−3 ; Figs. 3E and F). During the training process, the loss function decreases (Fig. 3G), while the L2 relative error computed using the reference solution is
+also decreases (Fig. 3H). There is a clear correlation between the training loss and the
+L2 relative error (Fig. 3I), and when the training loss is . 10−4 , the L2 relative error
+is < 1%. This criterion is useful for the following reverse design problem, because we
+can easily check the accuracy of the hPINN solution during the training process by
+monitoring the loss LF directly without comparing to the FDFD reference.
+3.1.4. Soft constraints. We first use the approach of soft constraints to solve
+the holography inverse-design problem by minimizing
+L = J + µF LF .
+The permittivity function ε is randomly initialized, and three random examples are
+shown in Fig. 4A. The objective value for a random permittivity function is ∼ 0.1.
+
+.
+xj
+
+12
+
+L. LU, R. PESTOURIE, W. YAO, Z. WANG, F. VERDUGO, AND S. G. JOHNSON
+
+0.1
+
+1
+0
+
+-0.3
+
+-3-3
+
+-2
+
+-1
+
+B4
+
+0
+x
+
+1
+
+2
+
+3 -0.4
+
+-3-3
+
+0.4 D 4
+0.3
+
+3
+
+0
+
+-0.2
+
+-2
+
+-0.3
+-2
+
+-1
+
+0
+x
+
+1
+
+2
+
+3 -0.4
+
+G 101
+
+2
+
+3 -0.4
+0.5
+0.4
+
+0.2
+0.1
+0
+
+0
+
+-0.1
+-0.2
+
+-1
+
+-0.3
+-2
+
+3 -0.4
+
+Re[E]
+Im[E]
+
+2
+
+1
+
+-0.3
+1
+
+1
+
+0.3
+
+-0.2
+
+0
+x
+
+0
+x
+
+2
+
+-0.1
+
+-1
+
+-1
+
+-3-3
+
+I
+
+100
+
+10-1
+
+-0.4
+-2
+
+-1
+
+0
+x
+
+1
+
+2
+
+3 -0.5
+
+Re[E]
+Im[E]
+
+10-3
+10-4
+
+nin
+
+10-1
+
+Tra
+i
+
+L2 relative error
+
+10-2
+
+g
+
+100
+
+10-1
+Loss
+
+0
+
+-2
+
+-0.3
+-2
+
+3
+
+0.1
+
+-2
+
+H 101
+
+-3-3
+
+0.2
+
+-1
+
+100
+
+3 -0.4
+
+0.3
+
+0
+
+-3-3
+
+-0.2
+
+-2
+
+0.4 F 4
+
+1
+
+-0.1
+
+-1
+
+2
+
+y
+
+y
+
+0
+
+1
+
+2
+
+0.1
+
+1
+
+0
+x
+
+3
+
+0.2
+
+2
+
+-3-3
+
+-1
+
+-0.1
+
+-1
+
+-0.3
+-2
+
+0
+
+0
+
+-0.2
+
+-2
+
+0.1
+
+1
+
+-0.1
+
+-1
+
+-0.2
+
+-2
+
+Im
+
+0
+
+-0.1
+
+-1
+
+0
+
+0.2
+
+2
+
+0.1
+
+1
+y
+
+y
+
+0
+
+0.3
+
+3
+
+0.2
+
+2
+
+0.4
+
+y
+
+2
+
+0.3
+
+3
+
+0.2
+
+PDE-informed loss (10-2)
+
+0.4 E 4
+
+y
+
+0.3
+
+3
+
+Re
+
+FDFD
+
+0.4 C 4
+
+L2 relative error
+
+hPINN
+
+A4
+
+10-2
+
+10-2
+
+10-5
+10-6
+
+0 0.5 1 1.5 2 2.5 3 3.5 4 4.5
+# Iterations (104)
+
+10-3
+
+0 0.5 1 1.5 2 2.5 3 3.5 4 4.5
+# Iterations (104)
+
+10-3
+10-6
+
+10-5
+
+10-4
+Loss
+
+10-3
+
+10-2
+
+Fig. 3. hPINN for solving a forward problem. (A and B) The (A) real part <[E] and (B)
+imaginary part =[E] of the hPINN solution. (C and D) The (C) real part <[E] and (D) imaginary
+part =[E] of the FDFD solution. (E and F) The (E) real part <[F [x]] and (F) imaginary part
+=[F [x]] of the PDE-informed loss in Eq. (3.4). (G and H) The (G) training loss LF and (H) L2
+relative error versus the number of optimization iterations. (I) The correlation between the training
+loss and the L2 relative error during the training process.
+
+As we discussed in Section 2.4, the choice of µF plays an important role in the final
+design, and we will compare the performance of different values of µF using the first
+case in Fig. 4A as the initial permittivity.
+We use the same hyperparameters and training procedure as we used in the
+forward problem. After the network training, the third network is the permittivity
+function, but we do not use the electric field (the first and second networks) to validate
+the result and determine the actual performance, because we will show that the electric
+field of the network is not accurate. Instead, we use FDFD to simulate the correct
+electric field from the permittivity function, and then compute the objective J . We
+show that when µF is too large or too small, the final objective is relatively large,
+
+13
+
+A0
+
+8
+
+y
+
+HARD-CONSTRAINED PHYSICS-INFORMED NEURAL NETWORK
+
+6
+-1
+
+0
+
+1
+
+2
+
+3
+
+-2
+
+-1
+
+0
+
+1
+
+2
+
+3
+
+y
+-1
+-3
+
+-2
+
+-1
+
+0
+x
+
+1
+
+2
+
+3
+
+C
+
+0.07
+0.06
+0.05
+
+0.1
+
+1
+µF
+
+12 4
+3
+1
+Total loss
+Objective loss
+PDE loss
+
+Loss
+
+100
+
+0.6
+0.4
+
+-1
+
+0
+
+0.5
+
+1
+1.5
+2
+2.5
+# Iterations (104)
+
+3
+
+-3-3
+
+-2
+
+-1
+
+12 4
+
+0
+x
+
+1
+
+2
+
+1
+
+1
+1.5
+2
+# Iterations (104)
+
+2.5
+
+0.3
+
+0
+
+0.2
+
+-3-3
+
+1
+
+10-1
+
+0.1
+
+-2
+
+-1
+
+0
+x
+
+1
+
+2
+
+0.5
+
+1 1.5 2 2.5
+# Iterations (104)
+
+3
+
+3.5
+
+-1
+
+0
+x
+
+1
+
+2
+
+3 0
+0.5
+
+3
+
+0.4
+
+1
+
+0.3
+
+0
+
+0.2
+0.1
+
+-2
+-3-3
+
+1
+
+4
+
+-2
+
+-1
+
+0
+x
+
+1
+
+2
+
+0.8
+
+3 0
+0.5
+
+3
+
+2
+
+0.4
+
+2
+0.6
+
+0
+
+0.4
+
+1
+
+0.3
+
+0
+
+0.2
+
+y
+
+1
+
+-1
+0.2
+
+-2
+0
+
+-2
+
+4
+
+3 0
+
+-1
+
+10-2
+
+0.1
+
+-1
+
+y
+
+100
+
+0.2
+
+y
+
+1
+
+3
+Total loss
+Objective loss
+PDE loss
+
+0
+
+2
+
+12 4
+
+101
+
+0.3
+
+-3-3
+
+0.4
+
+y
+
+Loss
+
+0.5
+
+1
+
+-1
+
+2
+
+-2
+
+E
+
+Loss
+
+3 0
+
+-1
+
+0
+
+0.4
+
+2
+
+0.5
+
+3
+Total loss
+Objective loss
+PDE loss
+
+0.5
+
+0.2 -2
+
+-2
+
+D
+
+10-3
+
+3
+
+0
+
+10-2
+
+102
+101
+100
+10-1
+10-2
+10-3
+10-4
+10-5
+
+4
+
+1
+
+1
+
+10-1
+
+10-3
+
+1.2
+
+0.8
+
+y
+
+101
+
+2
+
+10
+
+y
+
+-1
+-3
+0
+
+0.08
+
+4
+10
+8
+6
+4
+10
+8
+6
+4
+
+Objective
+
+-2
+
+y
+
+-1
+-3
+0
+
+B 0.09
+
+-3-3
+
+-2
+
+-1
+
+0
+x
+
+1
+
+2
+
+3 0
+
+0.1
+
+-2
+-3-3
+
+-2
+
+-1
+
+0
+x
+
+1
+
+2
+
+3 0
+
+Fig. 4. hPINN for the inverse design of holography via the approach of soft constraints.
+(A) Three examples of random initialization of ε. (B) The objective J of different designs obtained
+from hPINNs with different µF . (C, D, and E) The (left top) permittivity ε, (left bottom) training
+trajectory, (center) hPINN solution |E|2 , and (right) the reference |E|2 obtained from FDFD for
+(C) µF = 0.1, (D) µF = 10, and (E) µF = 2.
+
+and the smallest objective is obtained when µF ≈ 2 (Fig. 4B).
+When µF is small, e.g., 0.1, the PDE loss cannot be optimized well (LF ∼ 10−1 ;
+Fig. 4C left bottom), and thus the PDEs are not satisfied well. If we use the obtained
+permittivity function (Fig. 4C left top) to simulate the corresponding electric field
+|E|2 via FDFD (Fig. 4C right), this is very different from the |E|2 obtained from
+
+14
+
+L. LU, R. PESTOURIE, W. YAO, Z. WANG, F. VERDUGO, AND S. G. JOHNSON
+
+hPINN (Fig. 4C center). On the other hand, when µF is large, e.g., 10, the final
+PDE loss is ∼ 10−5 , and the field of |E|2 from hPINN and FDFD are almost identical
+(Fig. 4D), i.e., the PDE constraints are satisfied very well. However, the permittivity
+function is not meaningful and the objective is very large (Fig. 4D), because of the
+ill-conditioning of the optimization. The case of the smallest objective (≈ 0.0547)
+with µF = 2 is shown in Fig. 4E, but the prediction of |E|2 is still of low accuracy.
+Therefore, the soft constraint approach cannot satisfy the PDE constraints for small
+µF , and thus a large µF is required. However, for large µF , the optimization failed
+to make progress on the design objective due to the ill-conditioning.
+3.1.5. Penalty method. To address the issue in the soft constraint approach,
+we gradually increase the value of µF by using the penalty method in Algorithm 2.1.
+The initial value of µF is µ0F and the increasing factor is βF , i.e., µkF = (βF )k µ0F .
+We need to tune µ0F and βF in the penalty method. As an example, we first
+show the results of the case µ0F = 2 and βF = 2 (Figs. 5A–D). When we increase
+the value of µF , the PDE loss decreases (Fig. 5A), and we find that in order to make
+LF < 10−4 , we need to increase µF until µF > 100. After we train the network with
+µkF , the objective first decreases and then increases (Fig. 5B). In the soft-constraint
+approach, when µF = 10, the network would get stuck at a poor local minimum due
+to the ill-conditioning, but here, even if µF > 100, we still obtain a meaningful result
+and objective. However, the objective still becomes worse when µkF > 10, and thus the
+ill-conditioning problem still exists, albeit weaker than before. The smallest objective
+∼ 0.0537 is obtained at k = 1, which is ∼ 2% better than the approach of soft
+constraints. The design for k = 1 is in Fig. 5C, and the corresponding |E|2 obtained
+from FDFD is in Fig. 5D. In terms of the computational cost, although the penalty
+method requires 7 rounds of training, the total number of optimization iterations is
+∼5.6 × 104 , which is only 70% more than that of the soft-constraint approach with
+µF = 2 (∼3.3 × 104 ), because as shown in Algorithm 2.1, for the k-th training, we
+use the (k − 1)-th solution as the initial guess and thus the network can be trained
+much faster than the first round of training which is initialized randomly.
+Next, we investigate the effects of µ0F and βF . We choose µ0F = 1 and compare
+different values of βF . For different βF , we increase µF until µF > 100, and the
+objective has a similar behavior, i.e., decreasing first and then increasing (Fig. 5E).
+Among these βF , the smallest objective is obtained from βF = 2. When βF increases,
+we need less rounds of training and thus the computational cost decreases, but if
+βF is very large, the computational cost increases again because in each round of
+training we need more iterations (Fig. 5F). We also investigate the effects of µ0F by
+fixing βF = 2, and the smallest objective is obtained by using µ0F = 2. Therefore,
+the combination of µ0F = 2 and βF = 2 we presented is almost the best case in the
+problem.
+3.1.6. Augmented Lagrangian method. In the penalty method, the objective eventually worsens when µkF is large due to the ill-conditioning. To overcome
+this difficulty of convergence, we employ the augmented Lagrangian method in Algorithm 2.2. The Eq. (2.7) in this case becomes
+Lk = J + µkF LF +
+
+M
+
+1 X k
+λ<,j < [F[xj ]] + λk=,j = [F[xj ]] ,
+2M j=1
+
+15
+
+HARD-CONSTRAINED PHYSICS-INFORMED NEURAL NETWORK
+
+A
+
+B
+
+Total Loss
+Objective loss
+PDE loss
+
+101
+100
+
+µkF
+16
+
+2
+
+4
+
+8
+
+6
+
+0.0535 0
+
+1
+
+2
+
+12
+
+D4
+
+0.6
+
+1
+
+3
+
+0.5
+
+0.055
+
+Objective
+
+Loss
+
+10-1
+10-2
+10-3
+
+32
+
+64
+
+128
+
+4
+
+5
+
+6
+
+0.0545
+
+0.054
+
+10-4
+10-5
+
+0
+
+1
+
+2
+3
+4
+# Iterations (104)
+
+5
+
+y
+
+C 0
+
+3
+k
+
+-2
+
+-1
+
+E 0.062
+
+1
+
+2
+
+3
+
+2
+
+βF = 1.2
+1.5
+2
+4
+8
+
+0.06
+Objective
+
+0
+x
+
+0.4
+
+1
+0.3
+
+y
+
+-1-3
+
+0
+0.2
+
+-1
+0.058
+
+0.1
+
+-2
+-3
+-3
+
+-2
+
+0.056
+
+-1
+
+0
+x
+
+1
+
+2
+
+G
+
+7
+
+# Iterations (104)
+
+6.5
+
+100
+
+µkF
+
+0.073
+Objective
+
+F
+
+10
+
+0.068
+
+0.063
+
+6
+
+0.058
+
+5.5
+5 1
+
+0
+
+µ0F = 0.1
+0.2
+0.5
+1
+2
+4
+
+0.078
+0.054 1
+
+3
+
+2
+
+3
+
+4
+
+βF
+
+5
+
+6
+
+7
+
+8
+
+0.0530.1
+
+1
+
+µkF
+
+10
+
+100
+
+Fig. 5. hPINN for the inverse design of holography via the penalty method. (A to D)
+The results of µ0F = 2 and βF = 2. (A) The losses versus the number of optimization iterations,
+(B) the objective value after the network is trained with µkF , (C) the optimized permittivity function
+ε at k = 1, and (D) the corresponding electric field |E|2 . (E) The objective value versus µkF when
+using different values of βF . (F) The total number of optimization iterations (which is proportional
+to the computational cost) for different βF . (G) The objective value versus µkF for different values
+of µ0F ..
+
+16
+
+L. LU, R. PESTOURIE, W. YAO, Z. WANG, F. VERDUGO, AND S. G. JOHNSON
+
+and
+(3.5)
+
+k−1
+λk<,j = λk−1
+<,j + 2µF < [F[xj ]] ,
+
+k−1
+λk=,j = λk−1
+=,j + 2µF = [F[xj ]] .
+
+We use the same hyperparameters as the penalty method, i.e., µ0F = 2 and βF = 2.
+After the training, the PDE loss is below 10−4 (Fig. 6A), and the L2 relative error
+of |E|2 between hPINN and FDFD for the final ε is 1.2%, so the solution of hPINN
+satisfies the PDEs very well. The final value of the objective function from hPINN
+also . The objective does not worsen even if when µkF > 103 (Fig. 6B), and thus the
+augmented Lagrangian method solves the convergence issue in the penalty method.
+We next investigate the distribution and evolution of the multipliers. Because
+we choose λ0<,j = λ0=,j = 0 in Eq. (3.5), then λ1<,j and λ1=,j are proportional to the
+pointwise PDE loss F[xj ]. After the first round of training, the points around the
+region [−0.5, 0.5] × [1, 2] (i.e., the black square in Fig. 2A) have the largest values
+of λ1<,j and λ1=,j (Fig. 6C left) and thus largest PDE error. Hence, the points with
+larger PDE errors would have larger weights for the next round of training, i.e., the
+multipliers automatically tune the relative weights of different training points. The
+distribution of λk<,j and λk=,j become more uniform for a larger k (Fig. 6C). Moreover,
+for each single point, λk<,j and λk=,j increase with k, but the normalized multipliers
+λk<,j /µkF and λk=,j /µkF converges with respect to k, see the three examples in Fig. 6D.
+Also, the histogram of λ1<,j /µ1F for all xj is shown in the black curve in (Fig. 6E), which
+is symmetric and concentrates around zero. The distributions of λk<,j /µkF converges
+with respect to k, and becomes almost converged when k ≥ 6 (Fig. 6E). Similarly,
+λk=,j /µkF also converges in a similar way (Fig. 6F).
+We have demonstrated the effectiveness of the augmented Lagrangian method,
+and to further improve our design, we tune two hyperparameters: the network width
+and the number of Fourier basis used in the periodic BC. We need to choose an
+optimal network size to avoid the problems of underfitting and overfitting, and the
+optimal network width is around 60 when we choose the depth to be 5 (Fig. 7A). As we
+discussed in Section 2.3, two Fourier basis is sufficient in the network to implement
+the periodic BC, but by using more basis terms, we can achieve smaller objective
+(Fig. 7B). Hence, we choose the width as 48 and use 12 Fourier basis terms. This
+problem has many local optima with similar performance, and the exact solution
+found depends on the initialization of ε: when we trained the network from three
+random initializations, the objective values were 0.0517, 0.0525, and 0.0528.
+As a comparison, we also solve this problem by using the method for PDEconstrained inverse design discussed in [34], and here we have considered two numerical PDE solvers: FDFD [7] and FEM [1, 3, 16] (details in Appendices B and C,
+respectively). The objective values obtained from FDFD and FEM are 0.0523 and
+0.0528, respectively, which is almost the same as that of hPINN, even though the
+designs are very different (because of the many local optima discussed above). In
+addition to the good performance, an apparent advantage of hPINN is that the design obtained from hPINN (Fig. 7C top) is smoother and simpler than the designs of
+FDFD (Fig. 7D top) and FEM (Fig. 7E top). This could be explained by the analysis
+that neural networks trained with gradient descent have an implicit regularization
+and tend to converge to smooth solutions [35, 43, 19]. The electrical fields |E|2 in the
+target domain Ω3 for these three methods are similar (Figs. 7C, D and E bottom).
+3.2. Fluids in Stokes flow. Optimal design has wide and valuable applications
+in many fluid mechanics problems. Next, we use the proposed hPINN to solve the
+
+17
+
+HARD-CONSTRAINED PHYSICS-INFORMED NEURAL NETWORK
+B
+
+Total loss
+Objective loss
+PDE loss
+
+101
+100
+
+4
+
+8
+
+16
+
+µkF
+32 64
+
+128 256 512 1024
+
+0.054 0
+
+1
+
+2
+
+3
+
+4
+
+6
+
+0.061
+0.06
+Objective
+
+Loss
+
+10-1
+10-2
+10-3
+
+0.059
+0.058
+0.057
+0.056
+
+10-4
+
+0.055
+0
+
+1
+
+2
+
+3 4 5 6 7
+# Iterations (104)
+λ1Re
+
+C4
+3
+2
+
+8
+
+3
+
+4
+
+2
+1
+
+1
+y
+
+0
+
+0
+
+-1
+
+10
+λ4Re
+
+4
+
+4
+
+3
+
+3
+
+3
+
+2
+
+2
+
+2
+
+1
+
+1
+
+0
+
+0
+
+-2
+
+-2
+
+-3
+
+-2
+
+-3
+-3
+
+-3
+
+-3
+-3
+
+-4
+
+-3
+-3
+
+3
+
+4
+
+2
+
+3
+
+1
+
+2
+
+0
+
+1
+
+4
+
+1
+
+2
+
+3
+
+2
+
+2.5 4
+2
+3
+1.5
+1
+2
+0.5
+1
+0
+-0.5 0
+-1
+-1.5 -1
+-2
+-2
+-2.5
+-3 -3
+3
+-3
+
+3
+2
+
+-1
+
+0
+λ4Im
+
+1
+
+2
+
+3
+
+y
+
+0
+-1
+-2
+-2
+
+-1
+
+0
+x
+
+1
+
+D 0.06
+
+λk/µkF
+
+0.02
+
+0
+x
+
+1
+
+2
+
+3
+
+0
+
+-2
+
+-1
+
+-3
+
+-2
+
+-4
+
+-3
+-3
+
+2
+
+3
+
+4
+
+k
+
+5
+
+6
+
+7
+
+8
+
+9
+
+1
+
+0
+x
+
+1
+
+2
+
+3
+
+0
+-0.1
+
+-2
+
+-1
+
+2
+
+3
+
+80
+60
+40
+20
+0
+-20
+-40
+-60
+-80
+-100
+
+k=1
+k=4
+k=6
+k=9
+
+20
+
+10
+1
+
+0
+λ9Im
+
+80
+60
+40
+20
+0
+-20
+-40
+-60
+-80
+-100
+
+30
+
+20
+
+-0.04
+
+-1
+
+40
+
+30
+
+-0.02
+
+-2
+
+F 50
+
+k=1
+k=4
+k=6
+k=9
+
+40
+
+0
+
+-0.06 0
+
+-1
+
+E 50
+
+(Re, 1)
+(Re, 2)
+(Re, 3)
+(Im, 1)
+(Im, 2)
+(Im, 3)
+
+0.04
+
+-2
+
+-1
+
+Frequency
+
+-3
+-3
+
+9
+
+Frequency
+
+y
+
+1
+
+-2
+
+8
+
+0
+
+-1
+
+-2
+0
+λ1Im
+
+7
+
+1
+
+-2
+-1
+
+5
+
+λ9Re
+
+-1
+
+-2
+
+-1
+
+k
+
+y
+
+-1
+
+9
+
+y
+
+10-5
+
+2
+
+y
+
+A
+
+10
+-0.05
+
+0
+λkRe/µkF
+
+0.05
+
+0.1
+
+0
+-0.1
+
+-0.05
+
+0
+λkIm/µkF
+
+0.05
+
+0.1
+
+Fig. 6. hPINN for the inverse design of holography via the augmented Lagrangian
+method. (A and B) The results of µ0F = 2 and βF = 2. (A) The losses versus the number of
+optimization iterations, and (B) the objective value after the network is trained with µkF . (C) The
+values of λk<,j and λk=,j at all xj locations for k = 1, 4 and 9. (D) The convergence of λk<,j /µkF
+and λk=,j /µkF in three examples. (E and F) The distributions of (E) λk<,j /µkF and (F) λk=,j /µkF
+converge.
+
+problem of topology optimization of fluids in Stokes flow, which was introduced by [5]
+and has been considered as a benchmark example in many works since then [14, 11, 48].
+3.2.1. Problem setup. In this problem, we consider a design domain Ω =
+[0, 1] × [0, 1] composed of solid material and fluids (Fig. 8A). The goal is to determine
+at what places of Ω there should be fluid and where there should be solid, in order
+
+18
+A
+
+L. LU, R. PESTOURIE, W. YAO, Z. WANG, F. VERDUGO, AND S. G. JOHNSON
+B 0.055
+
+0.065
+
+0.054
+Objective
+
+Objective
+
+0.062
+0.059
+0.056
+
+0.052
+
+0.053
+30
+
+50
+70
+100
+Network width
+D
+hPINN
+12 0
+
+C
+
+-1-3
+
+4
+
+6
+
+FDFD
+
+8
+
+10 12 14 16 18
+# Fourier basis
+E
+FEM
+12 0
+
+y
+
+y
+
+0
+
+0.051
+
+150
+
+-2
+
+-1
+
+0
+x
+
+1
+
+2
+
+3 1
+
+-1-3
+
+20
+12
+
+y
+
+0.05
+
+0.053
+
+-2
+
+-1
+
+0
+x
+
+1
+
+3 1
+
+2
+
+-1-3
+
+-2
+
+-1
+
+0
+x
+
+1
+
+2
+
+3 1
+0.7
+
+3
+
+0.6 3
+
+0.6 3
+
+0.6
+
+2
+
+0.5 2
+
+0.5 2
+
+0.5
+
+1
+
+0.4 1
+
+0.4 1
+
+0.4
+
+y
+
+0.7 4
+
+y
+
+0.7 4
+
+y
+
+4
+
+0
+
+0.3 0
+
+0.3 0
+
+0.3
+
+-1
+
+0.2 -1
+
+0.2 -1
+
+0.2
+
+-2
+
+0.1 -2
+
+0.1 -2
+
+0.1
+
+-3-3
+
+-2
+
+-1
+
+0
+x
+
+1
+
+2
+
+3 0
+
+-3-3
+
+-2
+
+-1
+
+0
+x
+
+1
+
+3 0
+
+2
+
+-3-3
+
+-2
+
+-1
+
+0
+x
+
+1
+
+2
+
+3 0
+
+Fig. 7. Effect of hyperparameters and comparison between hPINN, FDFD, and FEM.
+(A) Effect of the network width on the objective. (B) Effect of the number of Fourier basis used in
+the periodic BC on the objective. (C to E) The design ε and the field of |E|2 of (C) hPINN, (D)
+FDFD, and (E) FEM.
+
+to minimize an objective function of dissipated power. We use ρ = 0 to represent
+the solid places, and ρ = 1 as the fluid. Then this problem is a discrete topology
+optimization for ρ, and solving a large-scale discrete topology optimization is generally
+computationally prohibitive [14]. To circumvented this issue, the common procedure
+is to allow the intermediate media values of ρ between 0 and 1.
+We consider the flow is a Stokes flow, and the fluid and the solid satisfy a generalized Stokes equation by treating the solid phase as a porous medium with flow
+governed by the Darcy’s law [5, 14, 11]:
+(3.6)
+(3.7)
+
+−ν∆u + ∇p = f ,
+∇ · u = 0,
+
+where u = (u, v) is the velocity, and p is the pressure. ν = 1 is the viscosity, and
+f = αu is the Brinkman term from the Darcy’s law. α is the inverted permeability
+depending on ρ, and we use the following interpolation function proposed in [5]
+α(ρ) = α + (α − α)ρ
+
+1+q
+,
+ρ+q
+
+2.5ν
+where α = 0.01
+2 and α = 0 are the inverted permeability of solid and fluid phases,
+respectively. The parameter q > 0 is used to control the transition between solid
+
+HARD-CONSTRAINED PHYSICS-INFORMED NEURAL NETWORK
+
+A
+
+B
+Ω
+
+u
+x
+y
+
+σ
+..
+.
+
+σ
+..
+.
+
+σ
+σ
+..
+.
+
+σ
+σ
+..
+.
+
+σ
+σ
+..
+.
+
+σ
+σ
+..
+.
+
+σ
+σ
+..
+.
+
+σ
+σ
+..
+.
+
+σ
+
+σ
+
+19
+
+Dirichlet BCs
+N1
+
+u = `b (x, y)N1 + 1
+
+N2
+
+v = `b (x, y)N2
+
+N3
+
+p = `r (x, y)N3
+
+N4
+
+ρ = max (0, min (1, `b `c N4 + g))
+
+Fig. 8. Problem setup of fluids in Stokes flow and the neural network architecture.
+(A) The design domain with the boundary condition. (B) The architecture of the hPINN with the
+Dirichlet BCs embedded directly in the network. The network inputs are x and y, and the outputs
+are u, v, p, and ρ.
+
+and fluid phases. When q is large, the interpolation has a sharper transition, and
+the optimization becomes more ill-conditioned. Here, we choose q = 0.1 as suggested
+in [5]. At the boundary, the velocity is constant u = (1, 0), and the pressure at the
+right boundary is zero (Fig. 8A).
+The objective function of dissipated power is defined as
+
+Z 
+1
+1
+(3.8)
+J =
+∇u : ∇u + αu2 dxdy.
+2
+2
+Ω
+To make the problem meaningful, we also need to consider a fluid volume constraint:
+Z
+ρ dxdy ≤ γ,
+Ω
+
+and the volume fraction γ is chosen as 0.9. Without this volume constraint, the
+optimal solution is ρ = 1 everywhere.
+3.2.2. hPINN. The PDE-informed loss function for this problem is
+M
+
+LF =
+
+1 X
+(F1 [xj ])2 + (F2 [xj ])2 + (F3 [xj ])2 ,
+3M j=1
+
+where F1 and F2 correspond to the x and y components of Eq. (3.6), respectively,
+and F3 corresponds to Eq. (3.7). Similar to the holography problem, we scale F1 and
+F2 by 0.01 and F3 by 100. In this problem, we also have an inequality constraint for
+the fluid volume:
+Z
+h(ρ) =
+ρ dxdy − γ ≤ 0,
+Ω
+
+which is used to compute the loss in Eqs. (2.6) and (2.7).
+
+20
+
+L. LU, R. PESTOURIE, W. YAO, Z. WANG, F. VERDUGO, AND S. G. JOHNSON
+
+We construct four networks to approximate u, v, p, and ρ (Fig. 8B), and each
+network has 5 layers with 64 neurons per layer. To impose the Dirichlet BCs of u and
+v into the network, we choose
+`b (x, y) = 16xy(1 − x)(1 − y),
+which is equal to zero at the boundary, and the coefficient “16” is used to scale the
+function to be of order one inside Ω. Similarly, for the BC of p at the right boundary,
+we use
+`r (x, y) = 1 − x.
+To restrict ρ between 0 and 1, we use the function max(0, min(1, ·)). We do not
+use the sigmoid function as in the holography problem, because the sigmoid function
+cannot be equal to 0 and 1 exactly. To prevent the optimization getting stuck at a
+local minimum, in [5, 11], a small portion of Ω close to the boundary is prescribed as
+fluid, and the initial guess of ρ should be chosen properly. Here, we also add similar
+restrictions: the boundary is prescribed as fluid, and the center is prescribed as solid,
+i.e., ρ(x, y) = 1 when (x, y) is at the boundary, and ρ(x, y) = 0 when x = y = 0.5.
+This is imposed by constructing ρ as
+(3.9)
+
+ρ(x, y) = max (0, min (1, `b (x, y)`c (x, y)N4 (x, y) + g(x, y))) ,
+
+where
+`c (x, y) = (x − 0.5)2 + (y − 0.5)2 ,
+
+
+`c (x, y)
+
+(1 − `b (x, y))
+.
+g(x, y) = 1 +
+min(x,y) `c (x, y)
+`c (x, y) + 
+By choosing a small number  > 0 (e.g.,  = 10−6 ), it is easy to check that ρ(0.5, 0.5) =
+0 and ρ(x, y) = 1 when (x, y) is at the boundary.
+3.2.3. Soft constraints. We first solve this problem using the approach of soft
+constraints by minimizing Eq. (2.5) with µF = 0.1 and µh = 104 . We use 10000
+points for training, i.e., M = 10000. The same training procedure in the holography
+problem is used, but with a smaller learning rate 1 × 10−4 .
+One random initialization of ρ using Eq. (3.9) is shown in Fig. 9A, which satisfies
+our requirements for ρ at the boundary and center. Using this initial guess, the
+loss trajectory during the training is shown in Fig. 9B. Initially,
+R ρ satisfies the volume
+constraint, and after about 2000 iterations, the fluid volume Ω ρ dxdy is always larger
+than γ, because more fluid makes the objective smaller. At the end of the training,
+the fluid volume is about 0.906, which is 0.7% large than γ. The final fields of ρ
+(Fig. 9C) and α (Fig. 9D) have rugby ball-like shapes, which is consistent with the
+designs optimized by other methods [5, 14, 11, 48]. We use the smoothed profile
+method (SPM) [58, 32] in the context of the spectral element method [22] to compute
+the velocity from the design (see the details in Section D), and the velocity magnitude
+|u| and the streamline are in Figs. 9E and F. We note that although the PDE loss
+only decreases by two orders of magnitudes from ∼1.5 × 103 to ∼7 (Fig. 9B), the L2
+relative error of |u| between hPINN and SPM is 4.3%, i.e., the PDEs are satisfied
+well.
+The objective value in Eq. (3.8) of our design is 13.73. For comparison, in [5],
+the same setup and parameters are used as ours, and their objective value obtained
+
+HARD-CONSTRAINED PHYSICS-INFORMED NEURAL NETWORK
+
+21
+
+from the method of moving asymptotes with FEM is 14.07, which is 2.4% worse than
+ours. However, this does not mean that the soft-constraints approach is a better
+method: our objective is smaller only because the design slightly violates the volume
+constraint, permitting a reduced objective value.
+3.2.4. Augmented Lagrangian method. To make the design satisfy the constraints better, we use the augmented Lagrangian method with µ0F = 0.1, µ0h = 104 ,
+βF = βh = 2, and k ≤ 9. As we discussed in the previous section, in the soft constraint
+approach, the network solution has already satisfied the PDE and volume constraints
+well, and thus when using the augmented Lagrangian method, we only need ∼ 400
+more iterations (Fig. 9B and Fig. 10A), i.e., ∼ 2% more computational cost.
+After training with the augmented Lagrangian method, compared to the soft constraint approach, the loss of the fluid volume decreases from 10−5 to 10−8 (Fig. 10A).
+The final design (Fig. 10B) has the fluid volume of 0.901, which is almost identical to
+our restriction γ. On the other hand, the PDE loss only becomes a little bit smaller,
+and the L2 relative error of |u| between hPINN and SPM is improved to 2.0%. The
+corresponding objective value is 14.12, which is consistent with the result in [5].
+Similar to the holography problem, here the normalized multipliers also converge. The normalized multiplier for the volume constraint λkh /µkh converges to 0.001
+(Fig. 10C). The values of λki,j for i = 1, 2, and 3 at k = 9 are shown in Figs. 10D, E,
+and F, respectively. λ93,j is almost uniform, but λ91,j and λ92,j have the largest values
+near the interface between the solid and fluid phases. The distributions of normalized
+λk1,j and λk2,j do not change too much from k = 1 to k = 9 (Figs. 10G and H). However, the distribution of normalized λk3,j changes a lot and converges to a Gaussian
+distribution (Fig. 10I), because λk3,j corresponds to Eq. (3.7), i.e., the mass continuity
+equation for incompressible fluid. This is consistent with our analysis that during the
+training, the fluid volume is the main variable to be improved.
+4. Conclusion. In an inverse design problem, we aim to find the best design by
+minimizing an objective function, which is subject to various constraints, including
+partial differential equations (PDEs), boundary conditions (BCs), and inequalities.
+We have developed in this study a new method of physics-informed neural networks
+(PINNs) with hard constraints (hPINNs) for solving inverse design. In hPINN, we
+enforce the PDE and inequality constraints by using loss functions, while we impose
+exactly Dirichlet and periodic BCs into the neural network architecture. We proposed
+the two approaches of the penalty method and the augmented Lagrangian method to
+enforce the loss function as hard constraints.
+We demonstrated the effectiveness of hPINN for two examples: the holography
+problem in optics and fluids of Stokes flow. Our numerical results of both examples show that although the approach of soft constraints cannot satisfy the PDE or
+inequality constraints to a good accuracy during the network training, we may still
+obtain a relatively good design, if the penalty coefficients are chosen properly. The
+penalty method are able to impose hard constraints, but it has the issue of convergence when the penalty coefficients are too large. By using the augmented Lagrangian
+method, we can impose hard constraints and also achieve a better design. Compared
+to traditional PDE-constrained optimization methods based on adjoint methods and
+numerical PDE solvers, the results obtained from hPINN have the same objective
+value, but the design is simpler and smoother for the problem of non-unique solutions. In addition, the objective function and the multipliers converge quickly after
+only several rounds of training. We also show that the computational cost of aug-
+
+22
+
+L. LU, R. PESTOURIE, W. YAO, Z. WANG, F. VERDUGO, AND S. G. JOHNSON
+
+mented Lagrangian method is comparable to the soft constraint approach, because
+we use the network solution of the previous round as the network initialization for
+the next round of training. Moreover, we note that hPINN is a purely deep learning
+approach, and does not rely on any numerical solver. Hence, the implementation of
+hPINN is “one-size-fit-all” for inverse design.
+In our numerical results, we show that hPINN with the augmented Lagrangian
+converges to a good solution, but we do not have a theoretical understanding yet. We
+note that the convergence of stochastic optimization with the augmented Lagrangian
+method has been analyzed in [57], and the convergence of PINN for certain linear
+PDEs has been proved in [51]. In future work, we will analyze theoretically the convergence of hPINN based on these results. In addition, in the augmented Lagrangian
+method, we used one multiplier for each residual location x, and thus many multipliers are required, which could be expensive and inefficient for large-scale problems. In
+fact, the profile of multipliers is smooth with respect to x, and thus it may be possible
+to use one single multiplier function λ(x) (e.g., represented by a neural network) for
+the entire computational domain. This approach also leverages the continuity of the
+multiplier, and may induce a faster convergence.
+REFERENCES
+[1] S. Badia and F. Verdugo, Gridap: An extensible finite element toolbox in Julia, Journal of
+Open Source Software, 5 (2020), p. 2520.
+[2] E. Bayati, R. Pestourie, S. Colburn, Z. Lin, S. G. Johnson, and A. Majumdar, Inverse
+designed metalenses with extended depth of focus, ACS Photonics, 7 (2020), pp. 873–878.
+[3] M. P. Bendsoe and O. Sigmund, Topology optimization: theory, methods, and applications,
+Springer Science & Business Media, 2013.
+[4] D. P. Bertsekas, Constrained optimization and Lagrange multiplier methods, Academic press,
+2014.
+[5] T. Borrvall and J. Petersson, Topology optimization of fluids in Stokes flow, International
+Journal for Numerical Methods in Fluids, 41 (2003), pp. 77–107.
+[6] R. H. Byrd, P. Lu, J. Nocedal, and C. Zhu, A limited memory algorithm for bound constrained optimization, SIAM Journal on Scientific Computing, 16 (1995), pp. 1190–1208.
+[7] N. J. Champagne II, J. G. Berryman, and H. M. Buettner, FDFD: A 3D finite-difference
+frequency-domain code for electromagnetic induction tomography, Journal of Computational Physics, 170 (2001), pp. 830–848.
+[8] Y. Chen, L. Lu, G. E. Karniadakis, and L. Dal Negro, Physics-informed neural networks for inverse problems in nano-optics and metamaterials, Optics Express, 28 (2020),
+pp. 11618–11633.
+[9] A. Dener, M. A. Miller, R. M. Churchill, T. Munson, and C.-S. Chang, Training neural
+networks under physical constraints using a stochastic augmented Lagrangian approach,
+arXiv preprint arXiv:2009.07330, (2020).
+[10] S. Dong and N. Ni, A method for representing periodic functions and enforcing exactly periodic
+boundary conditions with deep neural networks, arXiv preprint arXiv:2007.07442, (2020).
+[11] X. Duan, X. Qin, and F. Li, Topology optimization of Stokes flow using an implicit coupled
+level set method, Applied Mathematical Modelling, 40 (2016), pp. 5431–5441.
+[12] C. Geuzaine and J.-F. Remacle, Gmsh: A 3-D finite element mesh generator with built-in
+pre- and post-processing facilities, International Journal for Numerical Methods in Engineering, 79 (2009), pp. 1309–1331.
+[13] J. W. Goodman, Introduction to Fourier optics, Roberts and Company Publishers, 2005.
+[14] J. K. Guest and J. H. Prévost, Topology optimization of creeping fluid flows using a Darcy–
+Stokes finite element, International Journal for Numerical Methods in Engineering, 66
+(2006), pp. 461–484.
+[15] K. Guo, Z. Yang, C. Yu, and M. J. Buehler, Artificial intelligence and machine learning in
+design of mechanical materials, Materials Horizons, (2020).
+[16] J. S. Jensen and O. Sigmund, Topology optimization for nano-photonics, Laser & Photonics
+Reviews, 5 (2011), pp. 308–321.
+[17] J. Jiang, M. Chen, and J. A. Fan, Deep neural networks for the evaluation and design of
+
+HARD-CONSTRAINED PHYSICS-INFORMED NEURAL NETWORK
+
+23
+
+photonic devices, Nature Reviews Materials, (2020), pp. 1–22.
+[18] J. Jiang and J. A. Fan, Simulator-based training of generative neural networks for the inverse
+design of metasurfaces, Nanophotonics, 1 (2019).
+[19] P. Jin, L. Lu, Y. Tang, and G. E. Karniadakis, Quantifying the generalization error in deep
+learning in terms of data distribution and neural network smoothness, Neural Networks,
+130 (2020), pp. 85–99.
+[20] S. G. Johnson, Notes on perfectly matched layers (PMLs), Lecture notes, Massachusetts Institute of Technology, Massachusetts, 29 (2008), p. 23.
+[21] M. Kadic, G. W. Milton, M. van Hecke, and M. Wegener, 3D metamaterials, Nature
+Reviews Physics, 1 (2019), pp. 198–210.
+[22] G. Karniadakis and S. J. Sherwin, Spectral/hp Element Methods for Computational Fluid
+Dynamics, Numerical Mathematics and Scientific Computation, Oxford University Press,
+2005.
+[23] D. P. Kingma and J. Ba, Adam: A method for stochastic optimization, arXiv preprint
+arXiv:1412.6980, (2014).
+[24] G. Kissas, Y. Yang, E. Hwuang, W. R. Witschey, J. A. Detre, and P. Perdikaris, Machine learning in cardiovascular flows modeling: Predicting arterial blood pressure from
+non-invasive 4D flow MRI data using physics-informed neural networks, Computer Methods in Applied Mechanics and Engineering, 358 (2020), p. 112623.
+[25] K. Kojima, B. Wang, U. Kamilov, T. Koike-Akino, and K. Parsons, Acceleration of FDTDbased inverse design using a neural network approach, in Integrated Photonics Research,
+Silicon and Nanophotonics, Optical Society of America, 2017, pp. ITu1A–4.
+[26] P. L. Lagari, L. H. Tsoukalas, S. Safarkhani, and I. E. Lagaris, Systematic construction
+of neural forms for solving partial differential equations inside rectangular domains, subject
+to initial, boundary and interface conditions, International Journal on Artificial Intelligence
+Tools, 29 (2020).
+[27] I. E. Lagaris, A. Likas, and D. I. Fotiadis, Artificial neural networks for solving ordinary and
+partial differential equations, IEEE Transactions on Neural Networks, 9 (1998), pp. 987–
+1000.
+[28] B. S. Lazarov and O. Sigmund, Filters in topology optimization based on Helmholtz-type
+differential equations, International Journal for Numerical Methods in Engineering, 86
+(2011), pp. 765–781.
+[29] D. Liu, Y. Tan, E. Khoram, and Z. Yu, Training deep neural networks for the inverse design
+of nanophotonic structures, ACS Photonics, 5 (2018), pp. 1365–1369.
+[30] Z. Liu, D. Zhu, S. P. Rodrigues, K. Lee, and W. Cai, Generative model for the inverse
+design of metasurfaces, Nano Letters, 18 (2018), pp. 6570–6576.
+[31] L. Lu, X. Meng, Z. Mao, and G. E. Karniadakis, DeepXDE: A deep learning library for
+solving differential equations, SIAM Review, 63 (2021), pp. 208–228.
+[32] X. Luo, M. R. Maxey, and G. E. Karniadakis, Smoothed profile method for particulate
+flows: Error analysis and simulations, Journal of Computational Physics, 228 (2009),
+pp. 1750–1769.
+[33] K. Maute and O. Sigmund, Topology optimization approaches: A comparative review, Structural and Multidisciplinary Optimization, 6 (2013).
+[34] S. Molesky, Z. Lin, A. Y. Piggott, W. Jin, J. Vucković, and A. W. Rodriguez, Inverse
+design in nanophotonics, Nature Photonics, 12 (2018), pp. 659–670.
+[35] V. Nagarajan and J. Z. Kolter, Generalization in deep networks: The role of distance from
+initialization, arXiv preprint arXiv:1901.01672, (2019).
+[36] Y. Nandwani, A. Pathak, P. Singla, et al., A primal dual formulation for deep learning with
+constraints, in Advances in Neural Information Processing Systems, 2019, pp. 12157–12168.
+[37] J. Nocedal and S. Wright, Numerical optimization, Springer Science & Business Media,
+2006.
+[38] G. Pang, L. Lu, and G. E. Karniadakis, fPINNs: Fractional physics-informed neural networks, SIAM Journal on Scientific Computing, 41 (2019), pp. A2603–A2626.
+[39] R. Pestourie, Assume Your Neighbor is Your Equal: Inverse Design in Nanophotonics, PhD
+thesis, Harvard University, 2020.
+[40] R. Pestourie, Y. Mroueh, T. V. Nguyen, P. Das, and S. G. Johnson, Active learning of
+deep surrogates for PDEs: Application to metasurface design, npj Computational Materials, 6 (2020), pp. 1–7.
+[41] R. Pestourie, C. Pérez-Arancibia, Z. Lin, W. Shin, F. Capasso, and S. G. Johnson,
+Inverse design of large-area metasurfaces, Optics Express, 26 (2018), pp. 33732–33747.
+[42] J. Peurifoy, Y. Shen, L. Jing, Y. Yang, F. Cano-Renteria, B. G. DeLacy, J. D.
+Joannopoulos, M. Tegmark, and M. Soljačić, Nanophotonic particle simulation and
+
+24
+
+L. LU, R. PESTOURIE, W. YAO, Z. WANG, F. VERDUGO, AND S. G. JOHNSON
+
+inverse design using artificial neural networks, Science advances, 4 (2018), p. eaar4206.
+[43] T. Poggio, K. Kawaguchi, Q. Liao, B. Miranda, L. Rosasco, X. Boix, J. Hidary, and
+H. Mhaskar, Theory of deep learning iii: explaining the non-overfitting puzzle, arXiv
+preprint arXiv:1801.00173, (2017).
+[44] M. Raissi, P. Perdikaris, and G. E. Karniadakis, Physics-informed neural networks: A deep
+learning framework for solving forward and inverse problems involving nonlinear partial
+differential equations, Journal of Computational Physics, 378 (2019), pp. 686–707.
+[45] M. Raissi, A. Yazdani, and G. E. Karniadakis, Hidden fluid mechanics: Learning velocity
+and pressure fields from flow visualizations, Science, 367 (2020), pp. 1026–1030.
+[46] F. Sahli Costabal, Y. Yang, P. Perdikaris, D. E. Hurtado, and E. Kuhl, Physicsinformed neural networks for cardiac activation mapping, Frontiers in Physics, 8 (2020),
+p. 42.
+[47] H. Sasaki and H. Igarashi, Topology optimization accelerated by deep learning, IEEE Transactions on Magnetics, 55 (2019), pp. 1–5.
+[48] V. Schulz and M. Siebenborn, Computational comparison of surface metrics for PDE constrained shape optimization, Computational Methods in Applied Mathematics, 16 (2016),
+pp. 485–496.
+[49] V. Sekar, M. Zhang, C. Shu, and B. C. Khoo, Inverse design of airfoil using a deep convolutional neural network, AIAA Journal, 57 (2019), pp. 993–1003.
+[50] H. Sheng and C. Yang, PFNN: A penalty-free neural network method for solving a
+class of second-order boundary-value problems on complex geometries, arXiv preprint
+arXiv:2004.06490, (2020).
+[51] Y. Shin, J. Darbon, and G. E. Karniadakis, On the convergence of physics informed neural networks for linear second-order elliptic and parabolic type PDEs, arXiv preprint
+arXiv:2004.01806, (2020).
+[52] S. So, T. Badloe, J. Noh, J. Rho, and J. Bravo-Abad, Deep learning enabled inverse design
+in nanophotonics, Nanophotonics, 9 (2020), pp. 1041–1057.
+[53] K. Svanberg, A class of globally convergent optimization methods based on conservative convex
+separable approximations, SIAM Journal on Optimization, 12 (2002), pp. 555–573.
+[54] M. H. Tahersima, K. Kojima, T. Koike-Akino, D. Jha, B. Wang, C. Lin, and K. Parsons, Deep neural network inverse design of integrated photonic power splitters, Scientific
+reports, 9 (2019), pp. 1–9.
+[55] A. M. Tartakovsky, C. O. Marrero, P. Perdikaris, G. D. Tartakovsky, and D. BarajasSolano, Physics-informed deep neural networks for learning parameters and constitutive relationships in subsurface flow problems, Water Resources Research, 56 (2020),
+p. e2019WR026731.
+[56] M. Toussaint, Introduction to optimization — constrained optimization, 2014.
+[57] I. Wang and J. C. Spall, Stochastic optimisation with inequality constraints using simultaneous perturbations and penalty functions, International Journal of Control, 81 (2008),
+pp. 1232–1238.
+[58] Z. Wang, M. S. Triantafyllou, Y. Constantinides, and G. E. Karniadakis, A spectralelement/Fourier smoothed profile method for large-eddy simulations of complex VIV problems, Computers & Fluids, 172 (2018), pp. 84–96.
+[59] D. A. White, W. J. Arrighi, J. Kudo, and S. E. Watts, Multiscale topology optimization
+using neural network surrogate models, Computer Methods in Applied Mechanics and
+Engineering, 346 (2019), pp. 1118–1135.
+[60] A. Yazdani, L. Lu, M. Raissi, and G. E. Karniadakis, Systems biology informed deep
+learning for inferring parameters and hidden dynamics, PLoS Computational Biology,
+16 (2020), p. e1007575.
+[61] D. Zhang, L. Guo, and G. E. Karniadakis, Learning in modal space: Solving time-dependent
+stochastic PDEs using physics-informed neural networks, SIAM Journal on Scientific Computing, 42 (2020), pp. A639–A665.
+[62] D. Zhang, L. Lu, L. Guo, and G. E. Karniadakis, Quantifying total uncertainty in physicsinformed neural networks for solving forward and inverse stochastic problems, Journal of
+Computational Physics, 397 (2019), p. 108850.
+
+25
+
+HARD-CONSTRAINED PHYSICS-INFORMED NEURAL NETWORK
+
+A 1
+
+1
+
+'rho_init.dat' u 1:2:6
+
+0.8
+
+B
+
+103
+102
+
+0.8
+
+101
+0.6
+
+y
+
+Loss
+
+0.6
+
+100
+
+Total loss
+Objective loss
+PDE loss
+Volume loss
+
+10-1
+
+0.4
+
+0.4
+
+0.2
+
+0.2
+
+10-2
+10-3
+10-4
+
+0
+
+0
+
+C 1
+
+0.2
+
+0.4
+
+x
+
+0.6
+
+0.8
+
+1
+
+10-5
+
+0
+
+0
+
+0.5
+
+1
+1.5
+# Iterations (104)
+
+2
+
+1
+
+D 1
+
+0.8
+
+0.8
+
+0.8
+
+20000
+
+0.6
+
+0.6
+
+0.6
+
+15000
+
+25000
+
+'solution0_fine.dat' u 1:2:7
+
+y
+
+y
+
+'solution0_fine.dat' u 1:2:6
+
+0.4
+
+0.4
+
+0.4
+
+10000
+
+0.2
+
+0.2
+
+0.2
+
+5000
+
+0
+
+0
+
+0
+
+0
+
+E 1
+
+0.2
+
+0.4
+
+x
+
+0.6
+
+0.8
+
+1
+
+1.6
+
+'SPM/SPM.txt' u 1:2:7
+
+0
+
+0.2
+
+0.4
+
+x
+
+0.6
+
+0.8
+
+1
+
+0
+
+F
+
+0.8
+1.2
+
+y
+
+0.6
+0.8
+
+0.4
+0.4
+
+0.2
+
+0
+
+0
+
+0.2
+
+0.4
+
+x
+
+0.6
+
+0.8
+
+1
+
+0
+
+Fig. 9. hPIN for the topology optimization of fluids in Stokes flow via the soft constraint
+approach. (A) The initialization of ρ. (B) The training losses versus the number of optimization
+iterations. (C to F) The optimization result: (C) ρ, (D) inverted permeability α, (E) velocity
+magnitude |u|, and (F) the velocity streamline.
+
+26
+
+L. LU, R. PESTOURIE, W. YAO, Z. WANG, F. VERDUGO, AND S. G. JOHNSON
+
+A
+
+B
+
+C
+
+1
+
+1
+
+0.8
+
+0.8
+
+0.6
+
+0.6
+
+0.006
+
+102
+
+0.005
+
+100
+
+0.4
+
+0.4
+
+10-6
+
+0.2
+
+0.2
+
+10-8
+
+0
+
+0
+
+D
+
+0
+
+0.5
+1
+1.5
+# Iterations (104)
+
+2
+
+λ91
+
+1
+
+300
+0
+
+0.8
+
+E
+
+0
+
+0.2
+
+0.4
+
+x
+
+0.6
+
+0.8
+
+1
+
+λ92
+
+1
+
+900
+
+0.8
+0.6
+
+y
+
+-600
+
+0.4
+
+300
+
+0.4
+
+0
+
+G 0.6
+
+0.4
+
+x
+
+0.6
+
+0.8
+
+1
+
+0.2
+
+-5
+
+λk1/µkF
+
+0
+
+5
+
+k
+
+5
+
+6
+
+7
+
+λ93
+
+1
+
+8
+
+9
+
+2000
+1000
+
+-1000
+-2000
+
+-300
+0
+
+0.2
+
+1
+
+0.4
+
+x
+
+0.6
+
+0.8
+
+1
+
+0.2
+
+-600
+
+0
+
+0
+
+0.2
+
+0.4
+
+x
+
+0.6
+
+0.8
+
+1
+
+0
+10
+λk3/µkF
+
+20
+
+-4000
+
+k=1
+k=9
+
+0.12
+
+0.6
+0.4
+
+0-10
+
+-3000
+
+I 0.16
+
+k=1
+k=9
+
+0.08
+
+0.04
+
+0.2
+
+0.1
+
+4
+
+0
+
+0.8
+
+0.3
+
+0-10
+
+0
+
+H
+
+0.4
+
+3
+
+0.4
+
+0.2
+
+-1500
+
+k=1
+k=9
+
+2
+
+0
+
+Frequency
+
+Frequency
+
+0.5
+
+0.2
+
+1
+
+0.8
+
+Frequency
+
+0
+
+-1200
+
+F
+
+0
+
+0.6
+
+-900
+0.2
+
+0.001
+
+600
+y
+
+0.6
+
+0.002
+
+0
+
+1200
+
+-300
+
+0.003
+
+y
+
+10-4
+
+0.004
+λkh/µkh
+
+y
+
+Loss
+
+Objective loss
+PDE loss
+Volume loss
+
+10-2
+
+-5
+
+0
+λk2/µkF
+
+5
+
+10
+
+0-30
+
+-20
+
+-10
+
+30
+
+Fig. 10. hPIN for the topology optimization of fluids in Stokes flow via the augmented
+Lagrangian method. (A) The training losses versus the number of optimization iterations. (B)
+The design of ρ. (C) λkh /µkh converges with respect to k. (D to F) The values of (D) λ91,j , (E) λ92,j ,
+and (F) λ93,j at all xj . (G to I) The distributions of (G) λk1,j /µkF , (H) λk2,j /µkF , and (I) λk3,j /µkF
+for k = 1 and k = 9.
+
+HARD-CONSTRAINED PHYSICS-INFORMED NEURAL NETWORK
+
+27
+
+Appendix A. PDEs of the holography problem.
+The real and imaginary parts of Eq. (3.3) are:
+
+
+
+
+∂
+∂
+∂
+∂
+∂2
+∂2
+∂2
+∂2
+A1 2 + A2
++ A3 2 + A4
+<[E]− B1 2 + B2
++ B3 2 + B4
+=[E]+εω 2 <[E] = 0,
+∂x
+∂x
+∂y
+∂y
+∂x
+∂x
+∂y
+∂y
+
+
+
+
+∂
+∂
+∂
+∂
+∂2
+∂2
+∂2
+∂2
++ A3 2 + A4
+=[E]+ B1 2 + B2
++ B3 2 + B4
+<[E]+εω 2 =[E] = −ωJ,
+A1 2 + A2
+∂x
+∂x
+∂y
+∂y
+∂x
+∂x
+∂y
+∂y
+where
+
+1
+= A1 (x) + iB1 (x),
+(1 + i σωx )2
+σ0
+
+−
+
+i ωx
+= A2 (x) + iB2 (x),
+(1 + i σωx )3
+
+1
+= A3 (y) + iB3 (y),
+σ
+(1 + i ωy )2
+σ0
+
+i ωy
+= A4 (y) + iB4 (y),
+−
+σ
+(1 + i ωy )3
+and
+
+σx0 (x) = −2σ0 (−2 − x)1(−∞,−2) (x) + 2σ0 (x − 2)1(2,∞) (x),
+σy0 (y) = −2σ0 (−2 − y)1(−∞,−2) (y) + 2σ0 (y − 3)1(3,∞) (y).
+
+Appendix B. Solving holography problem via the finite-difference frequencydomain method.
+We optimized the permittivity in the design volume to best match the targeted
+pattern. The PDE constraints and the adjoint method were computed via a finitedifference frequency solver as in [34]. We used a resolution of 40 pixel per wavelength
+in vacuum for the computational domain, which corresponds to about 10 pixels per
+wavelength in the worst case scenario (when the permittivity is 12). We optimized
+the permittivity region by minimizing the objective function using the method of
+moving asymptotes (MMA) based on conservative convex separable approximations
+(CCSA) [53].
+For each pixel in the design region, the minimum feasible permittivity is 1 (permittivity of the vacuum) and the maximum feasible permittivity is 12. The initial
+guess for the permittivity region was uniform of unit permittivity. We noticed the
+lower the starting permittivity was, the smoother the end design. Setting the relative tolerance in the input of the optimization algorithm to 10−8 , the opitmization
+converged in about 5000 steps. Notice that a more judicious choice of optimization
+algorithm parameters might has led to less optimization steps. However, since the
+optimization converged, the optimum is representative of the method performance.
+Appendix C. Solving holography problem via the finite element method.
+In the finite element method, we use different mesh resolutions in different regions.
+The resolution is 20 pixel per wavelength in the  = 1 domain, while the resolution
+doubles in the design domain and half in the PML. The computation domain is meshed
+by GMSH [12] and then the PDEs are solved via Gridap.jl [1].
+The optimization is done via the traditional topology optimization techniques [3,
+16]. For each pixel in the design region, the permittivity is characterized by  =
+
+28
+
+L. LU, R. PESTOURIE, W. YAO, Z. WANG, F. VERDUGO, AND S. G. JOHNSON
+
+1 + 11p, where p ∈ [0, 1] is the design parameter. These design parameters are
+further smoothed by a Helmholtz-type filter [28] with a filter radius about double the
+minimum mesh length scale. The derivative to these design parameters are obtained
+by the adjoint method, and then we use the method of moving asymptotes (MMA)
+based on conservative convex separable approximations (CCSA) [53] to optimize these
+parameters. For initial guess, p is chosen to be 0.5 for all pixels. The stopping criteria
+is set to be a 10−6 relative difference in the loss function, it took about 500 iterations
+for the optimization to converge. We note that with a different initial guess, the
+optimization might converge to different shapes, indicating that there are multiple
+local optima in this optimization problem.
+Appendix D. Smoothed profile method for Stokes flow.
+In general, in the smoothed profile method [58], the immersed solid body is represented by the following hyperbolic tangent function,
+
+
+
+
+−d(x)
+1
+tanh
++1 ,
+φ(x) =
+2
+ξ
+where d(x) is the signed distance to surface of the immersed body, ξ is the interface
+thickness parameter, and φ(x) is a function of spatial coordinates x; it is equal to
+1 inside the riser, 0 in the fluid domain, and varies smoothly between 1 and 0 in
+the solid-fluid interfacial layer. However, in current study, φ(x) is obtained from the
+inverse permeability parameter α, which is re-scaled to the range [0, 1].
+The fluid flow is governed by the Stokes equations:
+(D.1)
+
+∇ · u = 0,
+
+(D.2)
+
+∂u
+= −∇p + ν∇2 u.
+∂t
+
+Given (un , pn , φ), we first obtain û as follows,
+(D.3)
+
+û = ∆t
+
+J−1
+X
+
+αq un−q ,
+
+q=0
+
+where αq is the coefficient of the stiffly-stable integration scheme we employ with
+J = 2 the integration order. In the next stage we solve the intermediate pressure
+field,
+ 
+û
+(D.4)
+∇2 p ∗ = ∇ ·
+,
+∆t
+with the following pressure boundary condition at all the velocity Dirichlet boundaries,
+(D.5)
+
+J−1
+X
+∂p∗
+=
+[−ν∇ × (∇ × u)]n−q · n,
+∂n
+q=0
+
+where n is the unit outward normal vector at the boundaries.
+In the third stage of the method we compute the intermediate velocity u∗ ,
+(D.6)
+
+
+
+∇2 −
+
+γ0  ∗
+û
+u =−
+,
+ν∆t
+ν∆t
+
+HARD-CONSTRAINED PHYSICS-INFORMED NEURAL NETWORK
+
+29
+
+where γ0 is the scaled coefficient of the stiffly-stabled scheme [22].
+If this is the first iteration, then the fourth stage to obtain the immersed body
+velocity is as follows,
+(D.7)
+
+up = φVs ,
+
+where Vs is the velocity of the immersed bluff-body, here we have used Vs = 0.
+Next, we solve the extra pressure field pp due to the immersed solid body,
+
+
+γ0 φ(up − u∗ )
+.
+(D.8)
+∇2 pp = ∇ ·
+∆t
+Here the following is used as the boundary conditions for pp at any velocity Dirichlet
+boundary,
+(D.9)
+
+γ0 φ(up − u∗ )
+∂pp
+=
+· n.
+∂n
+∆t
+
+Finally, the total velocity field and pressure are updated as follows,
+(D.10)
+
+γ0 un+1 − γ0 u∗
+γ0 φ(up − u∗ )
+=
+− ∇pp ,
+∆t
+∆t
+
+(D.11)
+
+pn+1 = p∗ + pp .
+
+Note that through Eqs. (D.3)–(D.11), the no-slip and no-penetration boundary conditions are fulfilled automatically [32].
+In all the SPM simulations of this paper, a computational domain of size [0, 1] ×
+[0, 1] that consists of 50 × 50 uniform quadrilateral elements is used. The spectral
+element method [22] with 2nd order polynomials and a time step of ∆t = 10−4 are
+employed to integrate the governing equations (D.1) and (D.2) until steady state.
+
+

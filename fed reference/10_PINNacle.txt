@@ -1,0 +1,6791 @@
+Preprint, under review
+
+PINNACLE : A C OMPREHENSIVE B ENCHMARK OF
+P HYSICS -I NFORMED N EURAL N ETWORKS FOR S OLVING PDE S
+Zhongkai Hao1∗, Jiachen Yao1∗ , Chang Su1∗ , Hang Su1 , Ziao Wang1 ,
+Fanzhi Lu1 , Zeyu Xia1 , Yichi Zhang1 , Songming Liu1 , Lu Lu2 , Jun Zhu1
+
+arXiv:2306.08827v2 [cs.LG] 5 Oct 2023
+
+1
+
+Dept. of Comp. Sci. and Tech., Institute for AI, BNRist Center, THBI Lab,
+Tsinghua-Bosch Joint ML Center, Tsinghua University
+2
+Department of Chemical and Biomolecular Engineering, University of Pennsylvania
+hzj21@mails.tsinghua.edu.cn
+
+A BSTRACT
+While significant progress has been made on Physics-Informed Neural Networks
+(PINNs), a comprehensive comparison of these methods across a wide range of
+Partial Differential Equations (PDEs) is still lacking. This study introduces PINNacle, a benchmarking tool designed to fill this gap. PINNacle provides a diverse
+dataset, comprising over 20 distinct PDEs from various domains, including heat
+conduction, fluid dynamics, biology, and electromagnetics. These PDEs encapsulate key challenges inherent to real-world problems, such as complex geometry,
+multi-scale phenomena, nonlinearity, and high dimensionality. PINNacle also offers a user-friendly toolbox, incorporating about 10 state-of-the-art PINN methods
+for systematic evaluation and comparison. We have conducted extensive experiments with these methods, offering insights into their strengths and weaknesses. In
+addition to providing a standardized means of assessing performance, PINNacle
+also offers an in-depth analysis to guide future research, particularly in areas such
+as domain decomposition methods and loss reweighting for handling multi-scale
+problems and complex geometry. To the best of our knowledge, it is the largest
+benchmark with a diverse and comprehensive evaluation that will undoubtedly
+foster further research in PINNs.
+
+1
+
+I NTRODUCTION
+
+Partial Differential Equations (PDEs) are of paramount importance in science and engineering, as
+they often underpin our understanding of intricate physical systems such as fluid flow, heat transfer,
+and stress distribution (Morton & Mayers, 2005). The computational simulation of PDE systems
+has been a focal point of research for an extensive period, leading to the development of numerical
+methods such as finite difference (Causon & Mingham, 2010), finite element (Reddy, 2019), and
+finite volume methods (Eymard et al., 2000).
+Recent advancements have led to the use of deep neural networks to solve forward and inverse
+problems involving PDEs (Raissi et al., 2019; Yu et al., 2018; Daw et al., 2017; Wang et al.,
+2020). Among these, Physics-Informed Neural Networks (PINNs) have emerged as a promising
+alternative to traditional numerical methods in solving such problems (Raissi et al., 2019; Karniadakis
+et al., 2021). PINNs leverage the underlying physical laws and available data to effectively handle
+various scientific and engineering applications. The growing interest in this field has spurred the
+development of numerous PINN variants, each tailored to overcome specific challenges or to enhance
+the performance of the original framework.
+While PINN methods have achieved remarkable progress, a comprehensive comparison of these
+methods across diverse types of PDEs is currently lacking. Establishing such a benchmark is crucial
+as it could enable researchers to more thoroughly understand existing methods and pinpoint potential
+∗
+
+Equal contribution
+
+1
+
+Preprint, under review
+
+Applications
+
+Fluid Mechanics
+
+Electromagnetism
+
+Heat Conduction
+
+Geophysics
+
+Benchmark of PINNs on 20+ PDEs with 10+ SOTA methods
+
+Datasets/PDEs
+Benchmark
+
+Backend
+
+-Linear:
+Poisson, Heat, Wave
+-Nonlinear:
+Burgers, NS, GS, KS
+-High Dimensional:
+Poisson, Diffusion
+-Numerical solutions
+FEM, Spectral Methods
+
+Toolbox
+-Reweighting:
+PINN-LRA, PINN-NTK
+-Resampling: RAR
+-Optimizer: Multi-Adam
+-Loss functions:
+gPINN, vPINN
+-Network Architecture:
+LAAF, GAAF
+-Domain decomposition: FBPINN
+
+DeepXDE
+
+Evaluation
+-Metrics:
+L1, L2 relative error
+MSE
+-Visualization:
+Temporal error analysis
+2D/3D plots
+
+PyTorch
+
+Figure 1: Architecture of PINNacle. It contains a dataset covering more than 20 PDEs, a toolbox that
+implements about 10 SOTA methods, and an evaluation module. These methods have a wide range of
+application scenarios like fluid mechanics, electromagnetism, heat conduction, geophysics, and so on.
+challenges. Despite the availability of several studies comparing sampling methods (Wu et al., 2023)
+and reweighting methods (Bischof & Kraus, 2021), there has been no concerted effort to develop
+a rigorous benchmark using challenging datasets from real-world problems. The sheer variety and
+inherent complexity of PDEs make it difficult to conduct a comprehensive analysis. Moreover,
+different mathematical properties and application scenarios further complicate the task, requiring the
+benchmark to be adaptable and exhaustive.
+To resolve these challenges, we propose PINNacle, a comprehensive benchmark for evaluating and
+understanding the performance of PINNs. As shown in Fig. 1, PINNacle consists of three major
+components — a diverse dataset, a toolbox, and evaluation modules. The dataset comprises tasks
+from over 20 different PDEs from various domains, including heat conduction, fluid dynamics,
+biology, and electromagnetics. Each task brings its own set of challenges, such as complex geometry,
+multi-scale phenomena, nonlinearity, and high dimensionality, thus providing a rich testing ground
+for PINNs. The toolbox incorporates more than 10 state-of-the-art (SOTA) PINN methods, enabling
+a systematic comparison of different strategies, including loss reweighting, variational formulation,
+adaptive activations, and domain decomposition. These methods can be flexibly applied to the tasks
+in the dataset, offering researchers a convenient way to evaluate the performance of PINNs which is
+also user-friendly for secondary development. The evaluation modules provide a standardized means
+of assessing the performance of different PINN methods across all tasks, ensuring consistency in
+comparison and facilitating the identification of strengths and weaknesses in various methods.
+PINNacle provides a robust, diverse, and comprehensive benchmark suite for PINNs, contributing
+significantly to the field’s understanding and application. It represents a major step forward in the
+evolution of PINNs which could foster more innovative research and development in this exciting
+field. In a nutshell, our contributions can be summarized as follows:
+• We design a dataset encompassing over 20 challenging PDE problems. These problems
+encapsulate several critical challenges faced by PINNs, including handling complex geometries, multi-scale phenomena, nonlinearity, and high-dimensional problems.
+• We systematically evaluate more than 10 carefully selected representative variants of PINNs.
+We conducted thorough experiments and ablation studies to evaluate their performance. To
+the best of our knowledge, this is the largest benchmark comparing different PINN variants.
+• We provide an in-depth analysis to guide future research. We show using loss reweighting
+and domain decomposition methods could improve the performance on multi-scale and
+complex geometry problems. Variational formulation achieves better performance on inverse
+problems. However, few methods can adequately address nonlinear problems, indicating a
+future direction for exploration and advancement.
+2
+
+Preprint, under review
+
+2
+
+R ELATED W ORK
+
+2.1
+
+B ENCHMARKS AND DATASETS IN SCIENTIFIC MACHINE LEARNING
+
+The growing trend of AI applications in scientific research has stimulated the development of various
+benchmarks and datasets, which differ greatly in data formats, sizes, and governing principles. For
+instance, (Lu et al., 2022) presents a benchmark for comparing neural operators, while (Botev
+et al., 2021; Otness et al., 2021) benchmarks methods for learning latent Newtonian mechanics.
+Furthermore, domain-specific datasets and benchmarks exist in fluid mechanics (Huang et al., 2021),
+climate science (Racah et al., 2017; Cachay et al., 2021), quantum chemistry (Axelrod & GomezBombarelli, 2022), and biology (Boutet et al., 2016).
+Beyond these domain-specific datasets and benchmarks, physics-informed machine learning has
+received considerable attention (Hao et al., 2022; Cuomo et al., 2022) since the advent of PhysicsInformed Neural Networks (PINNs) (Raissi et al., 2019). These methods successfully incorporate
+physical laws into model training, demonstrating immense potential across a variety of scientific
+and engineering domains. Various papers have compared different components within the PINN
+framework; for instance, (Das & Tesfamariam, 2022) and (Wu et al., 2023) investigate the sampling
+methods of collocation points in PINNs, and (Bischof & Kraus, 2021) compare reweighting techniques for different loss components. PDEBench (Takamoto et al., 2022) and PDEArena (Gupta
+& Brandstetter, 2022) design multiple tasks to compare different methods in scientific machine
+learning such as PINNs, FNO, and U-Net. Nevertheless, a comprehensive comparison of various
+PINN approaches remains absent in the literature.
+2.2
+
+S OFTWARES AND T OOLBOXES
+
+A plethora of software solutions have been developed for solving PDEs with neural networks. These
+include SimNet (Hennigh et al., 2021), NeuralPDE (Rackauckas & Nie, 2017), TorchDiffEq (Chen
+et al., 2020), and PyDEns (Khudorozhkov et al., 2019). More recently, DeepXDE (Lu et al., 2021)
+has been introduced as a fundamental library for implementing PINNs across different backends.
+However, there remains a void for a toolbox that provides a unified implementation for advanced PINN
+variants. Our PINNacle fills this gap by offering a flexible interface that facilitates the implementation
+and evaluation of diverse PINN variants. We furnish clear and concise code for researchers to execute
+benchmarks across all problems and methods.
+2.3
+
+VARIANTS OF P HYSICS - INFORMED NEURAL NETWORKS
+
+The PINNs have received much attention due to their remarkable performance in solving both
+forward and inverse PDE problems. However, vanilla PINNs have many limitations. Researchers
+have proposed numerous PINN variants to address challenges associated with high-dimensionality,
+non-linearity, multi-scale issues, and complex geometries (Hao et al., 2022; Cuomo et al., 2022;
+Karniadakis et al., 2021; Krishnapriyan et al., 2021). Broadly speaking, these variants can be
+categorized into: loss reweighting/resampling (Wang et al., 2021a;b; Tang et al., 2021; Wu et al.,
+2023; Nabian et al., 2021), innovative optimizers (Yao et al., 2023), novel loss functions such as
+variational formulations (Yu et al., 2018; Kharazmi et al., 2019; 2021; Khodayi-Mehr & Zavlanos,
+2020) or regularization terms (Yu et al., 2022; Son et al., 2021), and novel architectures like domain
+decomposition (Jagtap & Karniadakis, 2021; Li et al., 2019; Moseley et al., 2021; Jagtap et al., 2020c)
+and adaptive activations (Jagtap et al., 2020b;a). These variants have enhanced PINN’s performance
+across various problems. Here we select representative methods from each category and conduct a
+comprehensive analysis using our benchmark dataset to evaluate these variants.
+
+3
+
+PINNACLE : A H IERARCHICAL B ENCHMARK FOR PINN S
+
+In this section, we first introduce the preliminaries of PINNs. Then we introduce the details of
+datasets (tasks), PINN methods, the toolbox framework, and the evaluation metrics.
+3
+
+Preprint, under review
+
+3.1
+
+P RELIMINARIES OF P HYSICS - INFORMED N EURAL N ETWORKS
+
+Physics-informed neural networks are neural network-based methods for solving PDEs as well as
+inverse problems of PDEs, which have received much attention recently. Specifically, let’s consider a
+general Partial Differential Equation (PDE) system defined on Ω, which can be represented as:
+F(u(x); x) = 0,
+B(u(x); x) = 0,
+
+x ∈ Ω,
+x ∈ ∂Ω.
+
+(1)
+(2)
+
+where F is a differential operator and B is the boundary/initial condition. PINN uses a neural network
+uθ (x) with parameters θ to approximate u(x). The objective of PINN is to minimize the following
+loss function:
+L(θ) =
+
+Nb
+Nd
+Nc
+wb X
+wd X
+wc X
+||F(uθ (xic ); xic )||2 +
+||B(uθ (xib ); xib )||2 +
+||uθ (xid ) − u(xid )||2 . (3)
+Nc i=1
+Nb i=1
+Nd i=1
+
+where wc , wb , wd are weights. The first two terms enforce the PDE constraints on {xic }1...Nc and
+boundary conditions on {xib }1...Nb . The last term is data loss, which is optional when there is data
+available. However, PINNs have several inherent drawbacks. First, PINNs optimize a mixture of
+imbalance loss terms which might hinder its convergence as illustrated in (Wang et al., 2021a).
+Second, nonlinear or stiff PDEs might lead to unstable optimization (Wang et al., 2021b). Third, the
+vanilla MLPs might have difficulty in representing multi-scale or high-dimensional functions. For
+example, (Krishnapriyan et al., 2021) shows that vanilla PINNs only work for a small parameter
+range, even in a simple convection problem. To resolve these challenges, numerous variants of PINNs
+are proposed. However, a comprehensive comparison of these methods is lacking, and thus it is
+imperative to develop a benchmark.
+3.2
+
+DATASETS
+
+To effectively compare PINN variants, we’ve curated a set of PDE problems (datasets) representing
+a wide range of challenges. We chose PDEs from diverse domains, reflecting their importance in
+science and engineering. Our dataset includes 22 unique cases, with further details in Appendix B.
+• The Burgers’ Equation, fundamental to fluid mechanics, considering both one and twodimensional problems.
+• The Poisson’s Equation, widely used in math and physics, with four different cases.
+• The Heat Equation, a time-dependent PDE that describes diffusion or heat conduction,
+demonstrated in four unique cases.
+• The Navier-Stokes Equation, describing the motion of viscous fluid substances, showcased
+in three scenarios: a lid-driven flow (NS2d-C), a geometrically complex backward step flow
+(NS2d-CG), and a time-dependent problem (NS2d-LT).
+• The Wave Equation, modeling wave behavior, exhibited in three cases.
+• Chaotic PDEs, featuring two popular examples: the Gray-Scott (GS) and KuramotoSivashinsky (KS) equations.
+• High Dimensional PDEs, including the high-dimensional Poisson equation (PNd) and the
+high-dimensional diffusion or heat equation (HNd).
+• Inverse Problems, focusing on the reconstruction of the coefficient field from noisy data
+for the Poisson equation (PInv) and the diffusion equation (HInv).
+It is important to note that we have chosen PDEs encompassing a wide range of mathematical
+properties. This ensures that the benchmarks do not favor a specific type of PDE. The selected PDE
+problems introduce several core challenges, which include:
+• Complex Geometry: Many PDE problems involve complex or irregular geometry, such as
+heat conduction or wave propagation around obstacles. These complexities pose significant
+challenges for PINNs in terms of accurate boundary behavior representation.
+4
+
+Preprint, under review
+
+• Multi-Scale Phenomena: Multi-scale phenomena, where the solution varies significantly
+over different scales, are prevalent in situations such as turbulent fluid flow. Achieving a
+balanced representation across all scales is a challenge for PINNs in multi-scale scenarios.
+• Nonlinear Behavior: Many PDEs exhibit nonlinear or even chaotic behavior, where minor variations in initial conditions can lead to substantial divergence in outcomes. The
+optimization of PINNs becomes intriguing on nonlinear PDEs.
+• High Dimensionality: High-dimensional PDE problems, frequently encountered in quantum
+mechanics, present significant challenges for PINNs due to the “curse of dimensionality”.
+This term refers to the increase in computational complexity with the addition of each
+dimension, accompanied by statistical issues like data sparsity in high-dimensional space.
+These challenges are selected due to their frequent occurrence in numerous real-world applications.
+As such, a method’s performance in addressing these challenges serves as a reliable indicator of
+its overall practical utility. Table 1 presents a detailed overview of the dataset, the PDEs, and the
+challenges associated with these problems. We generate data using FEM solver provided by COMSOL
+6.0 (Multiphysics, 1998) for problems with complex geometry and spectral method provided by
+Chebfun (Driscoll et al., 2014) for chaotic problems. More details can be found in Appendix B.
+
+A. Complex Geometry
+
+C. Nonlinear and Chaotic
+
+B. Multi-scale
+
+Dataset
+Burgers1∼2
+Poisson3∼6
+Heat7∼10
+NS11∼13
+Wave14∼16
+Chaotic17∼18
+High dim19∼20
+Inverse 21∼22
+
+Complex geometry
+×
+√
+×/
+√
+×/
+√
+×/
+√
+×/
+×
+×
+×
+
+Multi-scale
+×
+√
+×/
+√
+×/
+√
+×/
+√
+×/
+√
+
+Nonlinearity
+√
+
+×
+×
+
+×
+√
+
+×
+×
+√
+×
+√
+
+High dim
+×
+×
+×
+×
+×
+×
+√
+×
+
+D. High dimension
+
+Table 1: Overview of our datasets along with their challenges. We chose 22 cases in total to evaluate
+the methods of PINNs. The left picture shows the visualization of cases with these four challenges,
+i.e., complex geometry, multi-scale, nonlinearity, and high dimension.
+3.3
+
+M ETHODS AND T OOLBOX
+
+After conducting an extensive literature review, we present an overview of diverse PINNs approaches
+for comparison. Then we present the high-level structure of our PINNacle.
+3.3.1
+
+M ETHODS
+
+As mentioned above, variants of PINNs are mainly based on loss functions, architecture, and optimizer
+(Hao et al., 2022). The modifications to loss functions can be divided into reweighting existing
+losses and developing novel loss functions like regularization and variational formulation. Variants of
+architectures include using domain decomposition and adaptive activations.
+The methods discussed are directly correlated with the challenges highlighted in Table 1. For example,
+domain decomposition methods are particularly effective for problems involving complex geometries
+and multi-scale phenomena. Meanwhile, loss reweighting strategies are adept at addressing imbalances in problems with multiple losses. We have chosen variants from these categories based on their
+significant contributions to the field. Here, we list the primary categories and representative methods
+as summarized in Table 2:
+• Loss reweighting/Resampling (2∼4): PINNs are trained with a mixed loss of PDE residuals,
+boundary conditions, and available data losses shown in Eq 3. Various methods (Wang
+et al., 2021a; 2022b; Bischof & Kraus, 2021; Maddu et al., 2022; Rohrhofer et al., 2021)
+propose different strategies to adjust these weights wc , wb and wd at different epochs or
+resample collocation points {xic } and {xib } in Eq 3, which indirectly adjust the weights (Wu
+et al., 2023; Nabian et al., 2021). We choose three famous examples, i.e., reweighting using
+gradient norms (PINN-LRA) (Wang et al., 2021a), using neural tangent kernel (PINN-NTK)
+(Wang et al., 2022b), and residual-based resampling (RAR)(Lu et al., 2021; Wu et al., 2023).
+5
+
+Preprint, under review
+
+Vanilla PINN 1
+Reweighting/Resampling2∼4
+Novel Optimizer7
+Novel Loss Functions5∼6
+Novel Architecture8∼10
+
+Complex Geometry
+×
+√
+
+Multi-scale
+×
+√
+√
+
+×
+×
+√
+
+×
+√
+
+Nonlinearity
+×
+×
+×
+×
+×
+
+High dim
+×
+×
+×
+×
+×
+
+√
+Table 2: Overivew of methods in our PINNacle. denotes the method is potentially designed to
+solve or show empirical improvements for problems encountering the challenge and vice versa.
+• Novel optimizer (5): To handle the problem of multi-scale objectives, some new optimizers
+(Liu et al., 2022; Yao et al., 2023) are proposed. We chose MultiAdam, which is resistant to
+domain scale changes.
+• Novel loss functions (6∼7): Some works introduce novel loss functions like variational
+formulation (Sirignano & Spiliopoulos, 2018; Khodayi-Mehr & Zavlanos, 2020; Kharazmi
+et al., 2021) and regularization terms to improve training. We choose hp-VPINN (Kharazmi
+et al., 2021) and gPINN (Yu et al., 2022; Son et al., 2021), which are representative examples
+from these two categories.
+• Novel activation architectures (8∼10): Some works propose various network architectures,
+such as using CNN and LSTM (Zhang et al., 2020; Gao et al., 2021; Ren et al., 2022),
+custom activation functions (Jagtap et al., 2020a;b), and domain decomposition (Jagtap &
+Karniadakis, 2021; Shukla et al., 2021; Jagtap et al., 2020c; Moseley et al., 2021). Among
+adaptive activations for PINNs, we choose LAAF (Jagtap et al., 2020a) and GAAF (Jagtap
+et al., 2020b). Domain decomposition is a method that divides the whole domain into
+multiple subdomains and trains subnetworks on these subdomains. It is helpful for solving
+multi-scale problems, but multiple subnetworks increase the difficulty of training. XPINNs,
+cPINNs, and FBPINNs (Jagtap & Karniadakis, 2021; Jagtap et al., 2020c; Moseley et al.,
+2021) are three representative examples. We choose FBPINNs which is the state-of-the-art
+domain decomposition that applies domain-specific normalization to stabilize training.
+3.3.2
+
+S TRUCTURE OF T OOLBOX
+
+We provide a user-friendly and concise toolbox for implementing, training, and evaluating diverse
+PINN variants. Specifically, our codebase is based on DeepXDE and provides a series of encapsulated
+classes and functions to facilitate high-level training and custom PDEs. These utilities allow for a
+standardized and streamlined approach to the implementation of various PINN variants and PDEs.
+Moreover, we provided many auxiliary functions, including computing different metrics, visualizing
+predictions, and recording results.
+Despite the unified implementation of diverse PINNs, we also design an adaptive multi-GPU parallel
+training framework To enhance the efficiency of systematic evaluations of PINN methods. It addresses
+the parallelization phase of training on multiple tasks, effectively balancing the computational loads
+of multiple GPUs. It allows for the execution of larger and more complex tasks. In a nutshell, we
+provide an example code for training and evaluating PINNs on two Poisson equations using our
+PINNacle framework in Appendix D.
+3.4
+
+E VALUATION
+
+To comprehensively analyze the discrepancy between the PINN solutions and the true solutions,
+we adopt multiple metrics to evaluate the performance of the PINN variants. Generally, we choose
+several metrics that are commonly used in literature that apply to all methods and problems. We
+suppose that y = (yi )ni=1 is the prediction and y ′ = (yi′ )ni=1 to is ground truth, where n is the number
+of testing examples. Specifically, we use ℓ2 relative error (L2RE), and ℓ1 relative error (L1RE)
+which are two most commonly used metrics to measure the global quality of the solution,
+sP
+Pn
+n
+′
+′ 2
+i=1 |yi − yi |
+i=1 (yi − yi )
+P
+.
+(4)
+L2RE =
+,
+L1RE
+=
+Pn
+n
+2
+′
+′
+i=1 |yi |
+i=1 yi
+6
+
+Preprint, under review
+
+L2RE
+
+Name
+
+Loss Reweighting/Sampling
+
+Optimizer
+
+PINN
+
+PINN-w
+
+LBFGS
+
+LRA
+
+NTK
+
+RAR
+
+MultiAdam
+
+gPINN
+
+vPINN
+
+LAAF
+
+GAAF
+
+FBPINN
+
+1d-C
+
+1.45E-2
+
+2.63E-2
+
+1.33E-2
+
+2.61E-2
+
+1.84E-2
+
+3.32E-2
+
+4.85E-2
+
+2.16E-1
+
+3.47E-1
+
+1.43E-2
+
+5.20E-2
+
+2.32E-1
+
+2d-C
+
+3.24E-1
+
+2.70E-1
+
+4.65E-1
+
+2.60E-1
+
+2.75E-1
+
+3.45E-1
+
+3.33E-1
+
+3.27E-1
+
+6.38E-1
+
+2.77E-1
+
+2.95E-1
+
+–
+
+2d-C
+
+6.94E-1
+
+3.49E-2
+
+NaN
+
+1.17E-1
+
+1.23E-2
+
+6.99E-1
+
+2.63E-2
+
+6.87E-1
+
+4.91E-1
+
+7.68E-1
+
+6.04E-1
+
+4.49E-2
+
+2d-CG
+
+6.36E-1
+
+6.08E-2
+
+2.96E-1
+
+4.34E-2
+
+1.43E-2
+
+6.48E-1
+
+2.76E-1
+
+7.92E-1
+
+2.86E-1
+
+4.80E-1
+
+8.71E-1
+
+2.90E-2
+
+3d-CG
+
+5.60E-1
+
+3.74E-1
+
+7.05E-1
+
+1.02E-1
+
+9.47E-1
+
+5.76E-1
+
+3.63E-1
+
+4.85E-1
+
+7.38E-1
+
+5.79E-1
+
+5.02E-1
+
+7.39E-1
+1.04E+0
+
+–
+Burgers
+
+Poisson
+
+Heat
+
+NS
+
+Wave
+
+Chaotic
+High dim
+Inverse
+
+Vanilla
+
+Loss functions
+
+Architecture
+
+2d-MS
+
+6.30E-1
+
+7.60E-1
+
+1.45E+0
+
+7.94E-1
+
+7.48E-1
+
+6.44E-1
+
+5.90E-1
+
+6.16E-1
+
+9.72E-1
+
+5.93E-1
+
+9.31E-1
+
+2d-VC
+
+1.01E+0
+
+2.35E-1
+
+2.32E-1
+
+2.12E-1
+
+2.14E-1
+
+9.66E-1
+
+4.75E-1
+
+2.12E+0
+
+9.40E-1
+
+6.42E-1
+
+8.49E-1
+
+9.52E-1
+
+2d-MS
+
+6.21E-2
+
+2.42E-1
+
+1.73E-2
+
+8.79E-2
+
+4.40E-2
+
+7.49E-2
+
+2.18E-1
+
+1.13E-1
+
+9.30E-1
+
+7.40E-2
+
+9.85E-1
+
+8.20E-2
+
+2d-CG
+
+3.64E-2
+
+1.45E-1
+
+8.57E-1
+
+1.25E-1
+
+1.16E-1
+
+2.72E-2
+
+7.12E-2
+
+9.38E-2
+
+–
+
+2.39E-2
+
+4.61E-1
+
+9.16E-2
+
+2d-LT
+
+9.99E-1
+
+9.99E-1
+
+1.00E+0
+
+9.99E-1
+
+1.00E+0
+
+9.99E-1
+
+1.00E+0
+
+1.00E+0
+
+1.00E+0
+
+9.99E-1
+
+9.99E-1
+
+1.01E+0
+
+2d-C
+
+4.70E-2
+
+1.45E-1
+
+2.14E-1
+
+NaN
+
+1.98E-1
+
+4.69E-1
+
+7.27E-1
+
+7.70E-2
+
+2.92E-1
+
+3.60E-2
+
+3.79E-2
+
+8.45E-2
+
+2d-CG
+
+1.19E-1
+
+3.26E-1
+
+NaN
+
+3.32E-1
+
+2.93E-1
+
+3.34E-1
+
+4.31E-1
+
+1.54E-1
+
+9.94E-1
+
+8.24E-2
+
+1.74E-1
+
+8.27E+0
+
+2d-LT
+
+9.96E-1
+
+1.00E+0
+
+9.70E-1
+
+1.00E+0
+
+9.99E-1
+
+1.00E+0
+
+1.00E+0
+
+9.95E-1
+
+1.73E+0
+
+9.98E-1
+
+9.99E-1
+
+1.00E+0
+
+1d-C
+
+5.88E-1
+
+2.85E-1
+
+NaN
+
+3.61E-1
+
+9.79E-2
+
+5.39E-1
+
+1.21E-1
+
+5.56E-1
+
+8.39E-1
+
+4.54E-1
+
+6.77E-1
+
+5.91E-1
+
+2d-CG
+
+1.84E+0
+
+1.66E+0
+
+1.33E+0
+
+1.48E+0
+
+2.16E+0
+
+1.15E+0
+
+1.09E+0
+
+8.14E-1
+
+7.99E-1
+
+8.19E-1
+
+7.94E-1
+
+1.06E+0
+
+2d-MS
+
+1.34E+0
+
+1.02E+0
+
+1.37E+0
+
+1.02E+0
+
+1.04E+0
+
+1.35E+0
+
+1.01E+0
+
+1.02E+0
+
+9.82E-1
+
+1.06E+0
+
+1.06E+0
+
+1.03E+0
+
+GS
+
+3.19E-1
+
+1.58E-1
+
+NaN
+
+9.37E-2
+
+2.16E-1
+
+9.46E-2
+
+9.37E-2
+
+2.48E-1
+
+1.16E+0
+
+9.47E-2
+
+9.46E-2
+
+7.99E-2
+
+KS
+
+1.01E+0
+
+9.86E-1
+
+NaN
+
+9.57E-1
+
+9.64E-1
+
+1.01E+0
+
+9.61E-1
+
+9.94E-1
+
+9.72E-1
+
+1.01E+0
+
+1.00E+0
+
+1.02E+0
+
+PNd
+
+3.04E-3
+
+2.58E-3
+
+4.67E-4
+
+4.58E-4
+
+4.64E-3
+
+3.59E-3
+
+3.98E-3
+
+5.05E-3
+
+–
+
+4.14E-3
+
+7.75E-3
+
+–
+
+HNd
+
+3.61E-1
+
+4.59E-1
+
+1.19E-4
+
+3.94E-1
+
+3.97E-1
+
+3.57E-1
+
+3.02E-1
+
+3.17E-1
+
+–
+
+5.22E-1
+
+5.21E-1
+
+–
+
+PInv
+
+9.42E-2
+
+1.66E-1
+
+NaN
+
+1.54E-1
+
+1.93E-1
+
+9.35E-2
+
+1.30E-1
+
+8.03E-2
+
+1.96E-2
+
+1.30E-1
+
+2.54E-1
+
+8.44E-1
+
+HInv
+
+1.57E+0
+
+5.26E-2
+
+NaN
+
+5.09E-2
+
+7.52E-2
+
+1.52E+0
+
+8.04E-2
+
+4.84E+0
+
+1.19E-2
+
+5.59E-1
+
+2.12E-1
+
+9.27E-1
+
+Table 3: Mean L2RE of different PINN variants on our benchmark.Best results are highlighted in
+blue and second-places in lightblue . We do not bold any result if errors of all methods are about
+100%. “NaN” means the method does not converge and “–” means the method is not suitable for the
+problem.
+We also compute max error (mERR in short), mean square error (MSE), and Fourier error (fMSE) for
+a detailed analysis of the prediction. These three metrics are computed as follows:
+qP
+kmax
+n
+′ 2
+1X
+kmin |F(y) − F(y )|
+′ 2
+′
+MSE =
+(yi − yi ) , mERR = maxi |yi − yi |, fMSE =
+, (5)
+n i=1
+kmax − kmin + 1
+where F denotes Fourier transform of y and kmin , kmax are chosen similar to PDEBench (Takamoto
+et al., 2022). Besides, for time-dependent problems, investigating the quality of the solution with
+time is important. Therefore we compute the L2RE error varying with time in Appendix E.2.
+We assess the performance of PINNs against the reference from numerical solvers. Experimental
+results utilizing the ℓ2 relative error (L2RE) metric are incorporated within the main text, while a
+more exhaustive set of results, based on the aforementioned metrics, is available in the Appendix E.1.
+
+4
+
+E XPERIMENTS
+
+4.1
+
+M AIN R ESULTS
+
+We now present experimental results. Except for the ablation study in Sec 4.3 and Appendix E.2, we
+use a learning rate of 0.001 and train all models with 20,000 epochs. We repeat all experiments three
+times and record the mean and std. Table 3 presents the main results for all methods on our tasks and
+shows their average ℓ2 relative errors (with standard deviation results available in Appendix E.1).
+PINN. We use PINN-w to denote training PINNs with larger boundary weights. The vanilla PINNs
+struggle to accurately solve complex physics systems, indicating substantial room for improvement.
+Using an ℓ2 relative error (L2RE) of 10% as a threshold for a successful solution, we find that vanilla
+PINN only solves 10 out of 22 tasks, most of which involve simpler equations (e.g., 1.45% on
+Burgers-1d-C). They encounter significant difficulties when faced with physics systems characterized
+by complex geometries, multi-scale phenomena, nonlinearity, and longer time spans. This shows
+that directly optimizing an average of the PDE losses and initial/boundary condition losses leads to
+critical issues such as loss imbalance, suboptimal convergence, and limited expressiveness.
+7
+
+Preprint, under review
+
+L2RE
+
+Name
+
+Vanilla
+
+Loss Reweighting/Sampling
+
+Optimizer
+
+–
+
+–
+
+PINN
+
+LRA
+
+NTK
+
+RAR
+
+MultiAdam
+
+gPINN
+
+Loss functions
+vPINN
+
+LAAF
+
+Architecture
+GAAF
+
+Burgers-P
+
+2d-C
+
+4.74E-01
+
+4.36E-01
+
+4.13E-01
+
+4.71E-01
+
+4.93E-01
+
+4.91E-01
+
+2.82E+0
+
+4.37E-01
+
+4.34E-01
+
+-
+
+Poisson-P
+
+2d-C
+
+2.24E-01
+
+7.07E-02
+
+1.66E-02
+
+2.33E-01
+
+8.24E-02
+
+4.03E-01
+
+5.51E-1
+
+1.84E-01
+
+2.97E-01
+
+2.87E-2
+
+Heat-P
+
+2d-MS
+
+1.73E-01
+
+1.23E-01
+
+1.50E-01
+
+1.53E-01
+
+4.00E-01
+
+4.59E-01
+
+5.12E-1
+
+6.27E-02
+
+1.89E-01
+
+2.46E-1
+
+NS-P
+
+2d-C
+
+3.89E-01
+
+-
+
+4.52E-01
+
+3.91E-01
+
+9.33E-01
+
+7.19E-01
+
+3.76E-1
+
+3.63E-01
+
+4.85E-01
+
+3.99E-1
+
+Wave-P
+
+1d-C
+
+5.22E-01
+
+3.44E-01
+
+2.69E-01
+
+5.05E-01
+
+6.89E-01
+
+7.66E-01
+
+3.58E-1
+
+4.03E-01
+
+9.00E-01
+
+1.15E+0
+
+High dim-P
+
+HNd
+
+7.66E-03
+
+6.53E-03
+
+9.04E-03
+
+8.07E-03
+
+2.22E-03
+
+7.87E-03
+
+-
+
+6.97E-03
+
+1.94E-01
+
+-
+
+FBPINN
+
+Table 4: Results of different PINN variants on parametric PDEs. We report average L2RE on all
+examples within a class of PDE. We bold the best results across all methods.
+PINN variants. PINN variants offer approaches to addressing some of these challenges to varying
+degrees. Methods involving loss reweighting and resampling have shown improved performance in
+some cases involving complex geometries and multi-scale phenomena (e.g., 1.43% on Poisson-2dCG). This is due to the configuration of loss weights and sampled collocation points, which adaptively
+place more weight on more challenging domains during the training process. However, these methods
+still struggle with Wave equations, Navier-Stokes equations, and other cases with higher dimensions
+or longer time spans. MultiAdam, a representative of novel optimizers, solves several simple cases
+and the chaotic GS equation (9.37%), but does not significantly outperform other methods. The new
+loss term of variational form demonstrates significant superiority in solving inverse problems (e.g.,
+1.19% on HInv for vPINN), but no clear improvement in fitting error over standard PINN in forward
+cases. Changes in architecture can enhance expressiveness and flexibility for cases with complex
+geometries and multi-scale systems. For example, FBPINN achieves the smallest error on the chaotic
+GS equation (7.99%), while LAAF delivers the best fitting result on Heat-2d-CG (2.39%).
+Discussion. For challenges related to complex geometries and multi-scale phenomena, some methods
+can mitigate these issues by implementing mechanisms like loss reweighting, novel optimizers, and
+better capacity through adaptive activation. This holds true for the 2D cases of Heat and Poisson
+equations, which are classic linear equations. However, when systems have higher dimensions
+(Poisson3d-CG) or longer time spans (Heat2d-LT), all methods fail to solve, highlighting the difficulties associated with complex geometries and multi-scale systems.
+In contrast, nonlinear, long-time PDEs like 2D Burgers, NS, and KS pose challenges for most
+methods. These equations are sensitive to initial conditions, resulting in complicated solution spaces
+and more local minima for PINNs (Steger et al., 2022). The Wave equation, featuring a second-order
+time derivative and periodic behavior, is particularly hard for PINNs, which often become unstable
+and may violate conservation laws (Jagtap et al., 2020c; Wang et al., 2022a). Although all methods
+perform well on Poisson-Nd, only PINN with LBFGS solves Heat-Nd, indicating the potential of a
+second-order optimizer for solving high dimensional PDEs(Tang et al., 2021).
+4.2
+
+PARAMETERIZED PDE E XPERIMENTS
+
+The performance of PINNs is also highly influenced by parameters in PDEs (Krishnapriyan et al.,
+2021). To investigate whether PINNs could handle a class of PDEs, we design this experiment to
+solve the same PDEs with different parameters. We choose 6 PDEs, i.e., Burgers2d-C, Poisson2d-C,
+Heat2d-MS, NS-C, Wave1d-C, and Heat-Nd (HNd), with each case containing five parameterized
+examples. Details of the parametrized PDEs are shown in Appendix B. Here we report the average
+L2RE metric on these parameterized PDEs for every case, and results are shown in the following
+Table 4. First, we see that compared with the corresponding cases in Table E.1, the mean L2RE of
+parameterized PDEs is usually higher. We suggest that this is because there are some difficult cases
+under certain parameters for these PDEs with very high errors. Secondly, we find that PINN-NTK
+works well on parameterized PDE tasks which achieve three best results among all six experiments.
+We speculate that solving PDEs with different parameters requires different weights for loss terms,
+and PINN-NTK is a powerful method for automatically balancing these weights.
+4.3
+
+H YPERPARAMETER A NALYSIS
+
+The performance of PINNs is strongly affected by hyperparameters, with each variant potentially
+introducing its own unique set. Here we aim to investigate the impact of several shared and methodspecific hyperparameters via ablation studies. We consider the batch size and the number of training
+8
+
+Preprint, under review
+
+Performance of PINNs with different batchsize
+
+10 1
+
+10 2
+
+Burgers1d
+
+GS
+
+Heat2d-CG
+
+Performance of PINNs with different epochs
+
+100
+
+Batchsize: 512
+Batchsize: 2048
+Batchsize: 8192
+Batchsize:32768
+
+L2RE
+
+L2RE
+
+100
+
+Epochs: 5k
+Epochs: 20k
+Epochs: 80k
+Epochs: 160k
+
+10 1
+
+10 2
+
+Poisson2d-C
+
+Burgers1d
+
+GS
+
+Heat2d-CG
+
+Poisson2d-C
+
+Figure 2: Performance of vanilla PINNs under different batch sizes (number of collocation points),
+which is shown in the left figure; and number of training epochs, which is shown in the right figure.
+
+lr : 1e-2
+lr : 1e-3
+lr : 1e-4
+lr : 1e-5
+lr : stepdecay1
+lr : stepdecay2
+
+10 1
+
+10 2
+
+0
+
+5000
+
+10000
+
+15000
+
+20000
+
+100
+
+L2RE of Poisson2D
+
+100
+
+L2RE of HeatComplex
+
+L2RE of Burger1D
+
+100
+
+10 1
+
+10 2
+
+lr : 1e-2
+lr : 1e-3
+lr : 1e-4
+lr : 1e-5
+lr : stepdecay1
+lr : stepdecay2
+
+0
+
+5000
+
+10000
+
+15000
+
+20000
+
+lr : 1e-2
+lr : 1e-3
+lr : 1e-4
+lr : 1e-5
+lr : stepdecay1
+lr : stepdecay2
+
+10 1
+
+10 2
+
+0
+
+5000
+
+10000
+
+15000
+
+20000
+
+Figure 3: Convergence curve of PINNs with different learning rate schedules on Burgers1d, Heat2dCG, and Poisson2d-C.
+epochs. The corresponding results are shown in Figure 2. We focus on a set of problems, i.e.,
+Burgers1d, GS, Heat2d-CG, and Poisson2d-C. Detailed numerical results and additional findings are
+in Appendix E.2.
+Batch Size. The left figure of Figure 18 shows the testing L2RE of PINNs for varying batch sizes. It
+suggests that larger batch sizes provide superior results, possibly due to improved gradient estimation
+accuracy. Despite the GS and Poisson2d-C witnessing saturation beyond a batch size of 2048,
+amplifying the batch sizes generally enhances results for the remaining problems.
+Training Epochs. The right figure of Figure 18 illustrates the L2RE of PINNs across varying training
+epochs. Mirroring the trend observed with batch size, we find that an increase in epochs leads to a
+decrease in overall error. However, the impact of the number of epochs also has a saturation point.
+Notably, beyond 20k or 80k epochs, the error does not decrease significantly, suggesting convergence
+of PINNs around 20∼ 80 epochs.
+Learning Rates. The performance of standard PINNs under various learning rates and learning rate
+schedules is shown in Figure 3. We observe that the influence of the learning rate on performance is
+intricate, with optimal learning rates varying across problems. Furthermore, PINN training tends to
+be unstable. High learning rates, such as 10−2 , often lead to error spikes, while low learning rates,
+like 10−5 , result in slow convergence. Our findings suggest that a moderate learning rate, such as
+10−3 or 10−4 , or a step decay learning rate schedule, tends to yield more stable performance.
+
+5
+
+C ONCLUSION AND D ISCUSSION
+
+In this work, we introduced PINNacle, a comprehensive benchmark offering a user-friendly toolbox
+that encompasses over 10 PINN methods. We evaluated these methods against more than 20 challenging PDE problems, conducting extensive experiments and ablation studies for hyperparameters.
+Looking forward, we plan to expand the benchmark by integrating additional state-of-the-art methods
+and incorporating more practical problem scenarios.
+Our analysis of the experimental results yields several key insights. First, domain decomposition is
+beneficial for addressing problems characterized by complex geometries, and PINN-NTK is a strong
+9
+
+Preprint, under review
+
+method for balancing loss weights as experiments show. Second, the choice of hyperparameters
+is crucial to the performance of PINNs. Selecting a larger batch size and appropriately weighting
+losses or betas in Adam may significantly reduce the error. However, the best hyperparameters
+usually vary with PDEs. Third, we identify high-dimensional and nonlinear problems as a pressing
+challenge. The overall performance of PINNs is not yet on par with traditional numerical methods
+(Grossmann et al., 2023). Fourth, from a theoretical standpoint, the exploration of PINNs’ loss
+landscape during the training of high-dimensional or nonlinear problems remains largely unexplored.
+Finally, from an algorithmic perspective, integrating the strengths of neural networks with numerical
+methods like preconditioning, weak formulation, and multigrid may present a promising avenue
+toward overcoming the challenges identified herein (Markidis, 2021).
+
+R EFERENCES
+Simon Axelrod and Rafael Gomez-Bombarelli. Geom, energy-annotated molecular conformations
+for property prediction and molecular generation. Scientific Data, 9(1):185, 2022.
+Rafael Bischof and Michael Kraus. Multi-objective loss balancing for physics-informed deep learning.
+arXiv preprint arXiv:2110.09813, 2021.
+Aleksandar Botev, Andrew Jaegle, Peter Wirnsberger, Daniel Hennes, and Irina Higgins. Which priors
+matter? benchmarking models for learning latent dynamics. arXiv preprint arXiv:2111.05458,
+2021.
+Emmanuel Boutet, Damien Lieberherr, Michael Tognolli, Michel Schneider, Parit Bansal, Alan J
+Bridge, Sylvain Poux, Lydie Bougueleret, and Ioannis Xenarios. Uniprotkb/swiss-prot, the
+manually annotated section of the uniprot knowledgebase: how to use the entry view. Plant
+bioinformatics: methods and protocols, pp. 23–54, 2016.
+Salva Rühling Cachay, Venkatesh Ramesh, Jason NS Cole, Howard Barker, and David Rolnick.
+Climart: A benchmark dataset for emulating atmospheric radiative transfer in weather and climate
+models. arXiv preprint arXiv:2111.14671, 2021.
+DM Causon and CG Mingham. Introductory finite difference methods for PDEs. Bookboon, 2010.
+Feiyu Chen, David Sondak, Pavlos Protopapas, Marios Mattheakis, Shuheng Liu, Devansh Agarwal,
+and Marco Di Giovanni. Neurodiffeq: A python package for solving differential equations with
+neural networks. Journal of Open Source Software, 5(46):1931, 2020.
+Salvatore Cuomo, Vincenzo Schiano Di Cola, Fabio Giampaolo, Gianluigi Rozza, Maziar Raissi, and
+Francesco Piccialli. Scientific machine learning through physics–informed neural networks: where
+we are and what’s next. Journal of Scientific Computing, 92(3):88, 2022.
+Sourav Das and Solomon Tesfamariam. State-of-the-art review of design of experiments for physicsinformed deep learning. arXiv preprint arXiv:2202.06416, 2022.
+Arka Daw, Anuj Karpatne, William Watkins, Jordan Read, and Vipin Kumar. Physics-guided neural
+networks (pgnn): An application in lake temperature modeling. arXiv preprint arXiv:1710.11431,
+2017.
+Tobin A Driscoll, Nicholas Hale, and Lloyd N Trefethen. Chebfun guide, 2014.
+Robert Eymard, Thierry Gallouët, and Raphaèle Herbin. Finite volume methods. Handbook of
+numerical analysis, 7:713–1018, 2000.
+Han Gao, Luning Sun, and Jian-Xun Wang. Phygeonet: Physics-informed geometry-adaptive
+convolutional neural networks for solving parameterized steady-state pdes on irregular domain.
+Journal of Computational Physics, 428:110079, 2021.
+Tamara G Grossmann, Urszula Julia Komorowska, Jonas Latz, and Carola-Bibiane Schönlieb.
+Can physics-informed neural networks beat the finite element method?
+arXiv preprint
+arXiv:2302.04107, 2023.
+10
+
+Preprint, under review
+
+Jayesh K Gupta and Johannes Brandstetter. Towards multi-spatiotemporal-scale generalized pde
+modeling. arXiv preprint arXiv:2209.15616, 2022.
+Zhongkai Hao, Songming Liu, Yichi Zhang, Chengyang Ying, Yao Feng, Hang Su, and Jun Zhu.
+Physics-informed machine learning: A survey on problems, methods and applications. arXiv
+preprint arXiv:2211.08064, 2022.
+Oliver Hennigh, Susheela Narasimhan, Mohammad Amin Nabian, Akshay Subramaniam, Kaustubh Tangsali, Zhiwei Fang, Max Rietmann, Wonmin Byeon, and Sanjay Choudhry. Nvidia
+simnet™: An ai-accelerated multi-physics simulation framework. In International Conference on
+Computational Science, pp. 447–461. Springer, 2021.
+Zizhou Huang, Teseo Schneider, Minchen Li, Chenfanfu Jiang, Denis Zorin, and Daniele Panozzo.
+A large-scale benchmark for the incompressible navier-stokes equations. arXiv preprint
+arXiv:2112.05309, 2021.
+Ameya D Jagtap and George E Karniadakis. Extended physics-informed neural networks (xpinns): A
+generalized space-time domain decomposition based deep learning framework for nonlinear partial
+differential equations. In AAAI Spring Symposium: MLPS, 2021.
+Ameya D Jagtap, Kenji Kawaguchi, and George Em Karniadakis. Locally adaptive activation
+functions with slope recovery for deep and physics-informed neural networks. Proceedings of the
+Royal Society A, 476(2239):20200334, 2020a.
+Ameya D Jagtap, Kenji Kawaguchi, and George Em Karniadakis. Adaptive activation functions
+accelerate convergence in deep and physics-informed neural networks. Journal of Computational
+Physics, 404:109136, 2020b.
+Ameya D Jagtap, Ehsan Kharazmi, and George Em Karniadakis. Conservative physics-informed
+neural networks on discrete domains for conservation laws: Applications to forward and inverse
+problems. Computer Methods in Applied Mechanics and Engineering, 365:113028, 2020c.
+George Em Karniadakis, Ioannis G Kevrekidis, Lu Lu, Paris Perdikaris, Sifan Wang, and Liu Yang.
+Physics-informed machine learning. Nature Reviews Physics, 3(6):422–440, 2021.
+Ehsan Kharazmi, Zhongqiang Zhang, and George Em Karniadakis. Variational physics-informed
+neural networks for solving partial differential equations. arXiv preprint arXiv:1912.00873, 2019.
+Ehsan Kharazmi, Zhongqiang Zhang, and George Em Karniadakis. hp-vpinns: Variational physicsinformed neural networks with domain decomposition. Computer Methods in Applied Mechanics
+and Engineering, 374:113547, 2021.
+Reza Khodayi-Mehr and Michael Zavlanos. Varnet: Variational neural networks for the solution of
+partial differential equations. In Learning for Dynamics and Control, pp. 298–307. PMLR, 2020.
+R Khudorozhkov, S Tsimfer, and A Koryagin. Pydens framework for solving differential equations
+with deep learning. arXiv preprint arXiv:1909.11544, 2019.
+Aditi Krishnapriyan, Amir Gholami, Shandian Zhe, Robert Kirby, and Michael W Mahoney. Characterizing possible failure modes in physics-informed neural networks. Advances in Neural
+Information Processing Systems, 34:26548–26560, 2021.
+Ke Li, Kejun Tang, Tianfan Wu, and Qifeng Liao. D3m: A deep domain decomposition method for
+partial differential equations. IEEE Access, 8:5283–5294, 2019.
+Yuhao Liu, Xiaojian Li, and Zhengxian Liu. An improved physics-informed neural network based on
+a new adaptive gradient descent algorithm for solving partial differential equations of nonlinear
+systems. 2022.
+Lu Lu, Xuhui Meng, Zhiping Mao, and George Em Karniadakis. Deepxde: A deep learning library
+for solving differential equations. SIAM review, 63(1):208–228, 2021.
+11
+
+Preprint, under review
+
+Lu Lu, Xuhui Meng, Shengze Cai, Zhiping Mao, Somdatta Goswami, Zhongqiang Zhang, and
+George Em Karniadakis. A comprehensive and fair comparison of two neural operators (with
+practical extensions) based on fair data. Computer Methods in Applied Mechanics and Engineering,
+393:114778, 2022.
+Suryanarayana Maddu, Dominik Sturm, Christian L Müller, and Ivo F Sbalzarini. Inverse dirichlet
+weighting enables reliable training of physics informed neural networks. Machine Learning:
+Science and Technology, 3(1):015026, 2022.
+Stefano Markidis. The old and the new: Can physics-informed deep-learning replace traditional
+linear solvers? Frontiers in big Data, 4:669097, 2021.
+Keith W Morton and David Francis Mayers. Numerical solution of partial differential equations: an
+introduction. Cambridge university press, 2005.
+Ben Moseley, Andrew Markham, and Tarje Nissen-Meyer. Finite basis physics-informed neural
+networks (fbpinns): a scalable domain decomposition approach for solving differential equations.
+arXiv preprint arXiv:2107.07871, 2021.
+COMSOL Multiphysics. Introduction to comsol multiphysics®. COMSOL Multiphysics, Burlington,
+MA, accessed Feb, 9:2018, 1998.
+Mohammad Amin Nabian, Rini Jasmine Gladstone, and Hadi Meidani. Efficient training of physicsinformed neural networks via importance sampling. Computer-Aided Civil and Infrastructure
+Engineering, 36(8):962–977, 2021.
+Karl Otness, Arvi Gjoka, Joan Bruna, Daniele Panozzo, Benjamin Peherstorfer, Teseo Schneider,
+and Denis Zorin. An extensible benchmark suite for learning to simulate physical systems. arXiv
+preprint arXiv:2108.07799, 2021.
+Evan Racah, Christopher Beckham, Tegan Maharaj, Samira Ebrahimi Kahou, Mr Prabhat, and Chris
+Pal. Extremeweather: A large-scale climate dataset for semi-supervised detection, localization,
+and understanding of extreme weather events. Advances in neural information processing systems,
+30, 2017.
+Christopher Rackauckas and Qing Nie. Differentialequations. jl–a performant and feature-rich
+ecosystem for solving differential equations in julia. Journal of open research software, 5(1), 2017.
+Maziar Raissi, Paris Perdikaris, and George E Karniadakis. Physics-informed neural networks: A
+deep learning framework for solving forward and inverse problems involving nonlinear partial
+differential equations. Journal of Computational physics, 378:686–707, 2019.
+Junuthula Narasimha Reddy. Introduction to the finite element method. McGraw-Hill Education,
+2019.
+Pu Ren, Chengping Rao, Yang Liu, Jian-Xun Wang, and Hao Sun. Phycrnet: Physics-informed
+convolutional-recurrent network for solving spatiotemporal pdes. Computer Methods in Applied
+Mechanics and Engineering, 389:114399, 2022.
+Franz M Rohrhofer, Stefan Posch, and Bernhard C Geiger. On the pareto front of physics-informed
+neural networks. arXiv preprint arXiv:2105.00862, 2021.
+Khemraj Shukla, Ameya D Jagtap, and George Em Karniadakis. Parallel physics-informed neural
+networks via domain decomposition. Journal of Computational Physics, 447:110683, 2021.
+Justin Sirignano and Konstantinos Spiliopoulos. Dgm: A deep learning algorithm for solving partial
+differential equations. Journal of computational physics, 375:1339–1364, 2018.
+Hwijae Son, Jin Woo Jang, Woo Jin Han, and Hyung Ju Hwang. Sobolev training for the neural
+network solutions of pdes. 2021.
+Sophie Steger, Franz M Rohrhofer, and Bernhard C Geiger. How pinns cheat: Predicting chaotic
+motion of a double pendulum. In The Symbiosis of Deep Learning and Differential Equations II,
+2022.
+12
+
+Preprint, under review
+
+Makoto Takamoto, Timothy Praditia, Raphael Leiteritz, Daniel MacKinlay, Francesco Alesiani, Dirk
+Pflüger, and Mathias Niepert. Pdebench: An extensive benchmark for scientific machine learning.
+Advances in Neural Information Processing Systems, 35:1596–1611, 2022.
+Kejun Tang, Xiaoliang Wan, and Chao Yang. Das: A deep adaptive sampling method for solving
+partial differential equations. arXiv preprint arXiv:2112.14038, 2021.
+Nanzhe Wang, Dongxiao Zhang, Haibin Chang, and Heng Li. Deep learning of subsurface flow via
+theory-guided neural network. Journal of Hydrology, 584:124700, 2020.
+Sifan Wang, Yujun Teng, and Paris Perdikaris. Understanding and mitigating gradient flow pathologies
+in physics-informed neural networks. SIAM Journal on Scientific Computing, 43(5):A3055–A3081,
+2021a.
+Sifan Wang, Hanwen Wang, and Paris Perdikaris. On the eigenvector bias of fourier feature networks:
+From regression to solving multi-scale pdes with physics-informed neural networks. Computer
+Methods in Applied Mechanics and Engineering, 384:113938, 2021b.
+Sifan Wang, Shyam Sankaran, and Paris Perdikaris. Respecting causality is all you need for training
+physics-informed neural networks. arXiv preprint arXiv:2203.07404, 2022a.
+Sifan Wang, Xinling Yu, and Paris Perdikaris. When and why pinns fail to train: A neural tangent
+kernel perspective. Journal of Computational Physics, 449:110768, 2022b.
+Chenxi Wu, Min Zhu, Qinyang Tan, Yadhu Kartha, and Lu Lu. A comprehensive study of nonadaptive and residual-based adaptive sampling for physics-informed neural networks. Computer
+Methods in Applied Mechanics and Engineering, 403:115671, 2023.
+Jiachen Yao, Chang Su, Zhongkai Hao, Songming Liu, Hang Su, and Jun Zhu. Multiadam: Parameterwise scale-invariant optimizer for multiscale training of physics-informed neural networks. arXiv
+preprint arXiv:2306.02816, 2023.
+Bing Yu et al. The deep ritz method: a deep learning-based numerical algorithm for solving variational
+problems. Communications in Mathematics and Statistics, 6(1):1–12, 2018.
+Jeremy Yu, Lu Lu, Xuhui Meng, and George Em Karniadakis. Gradient-enhanced physics-informed
+neural networks for forward and inverse pde problems. Computer Methods in Applied Mechanics
+and Engineering, 393:114823, 2022.
+Ruiyang Zhang, Yang Liu, and Hao Sun. Physics-informed multi-lstm networks for metamodeling
+of nonlinear structures. Computer Methods in Applied Mechanics and Engineering, 369:113226,
+2020.
+
+13
+
+Preprint, under review
+
+A
+
+OVERVIEW OF A PPENDICES
+
+We provide supplementary details about problems and experiments for the main text in the Appendix.
+In Appendix B, we provide mathematical descriptions and visualization for all PDEs in this paper.
+In Appendix C, we list the detailed hyperparameters and training/testing settings. In Appendix D,
+we provide a high-level overview of the codebase of the toolbox. In Appendix E, the results for the
+main experiments, i.e., the performance of L2RE, L1RE, MSE, and runtime for all methods on all
+PDEs are displayed. In Appendix F, we show the visualization results for several methods on some
+problems.
+
+B
+
+D ETAILS OF PDE S
+
+Here provide details of PDE tasks used for evaluating different variants of PINNs. Denote u to be the
+function to solve and x, t to be spatial and temporal variables.
+B.1
+
+D EFINITIONS FOR PDE S IN MAIN EXPERIMENTS
+
+1. One-dimensional Burgers Equation (Burgers1d)
+The Burgers 1D equation is given by
+ut + uux = νuxx .
+
+(6)
+
+(x, t) ∈ Ω = [−1, 1] × [0, 1].
+
+(7)
+
+The domain is defined as
+The initial and boundary conditions are
+u(x, 0) = − sin πx,
+u(−1, t) = u(1, t) = 0.
+
+(8)
+(9)
+
+The parameter is
+ν=
+
+0.01
+.
+π
+
+(10)
+
+2. 2D Coupled Burgers equation (Burgers 2d)
+The 2D Coupled Burgers equation is given by
+ut + u · ∇u − ν∆u = 0,
+u(0, y, t) = u(L, y, t), u(x, 0, t) = u(x, L, t),
+{x, y} ∈ [0, L], t ∈ [0, T ],
+
+(11)
+(12)
+(13)
+
+The domain is defined as
+(x, y, t) ∈ Ω = [0, L]2 × [0, 1].
+
+(14)
+
+The initial conditions are given by
+w(x, y) =
+
+L
+L
+X
+X
+
+aij sin(2π(ix + jy)) + bij cos(2π(ix + jy)),
+
+(15)
+
+i=−L j=−L
+
+u(x, y, 0) = 2w(x, y) + c
+
+(16)
+
+where a, b, c ∼ N (0, 1). The parameters are
+L = 4,
+
+T = 1,
+
+3. Poisson 2D Classic (Poisson2d-C)
+The Poisson 2D equation is given by
+14
+
+ν = 0.001.
+
+(17)
+
+Preprint, under review
+
+−∆u = 0.
+
+(18)
+2
+
+The domain is a rectangle minus four circles Ω = Ωrec \ Ri where Ωrec = [−0.5, 0.5] is the
+rectangle and Ri denotes four circle areas:
+R1
+
+= {(x, y) : (x − 0.3)2 + (y − 0.3)2 ≤ 0.12 },
+
+(19)
+
+R2
+
+2
+
+2
+
+2
+
+= {(x, y) : (x + 0.3) + (y − 0.3) ≤ 0.1 },
+
+(20)
+
+R3
+
+2
+
+2
+
+2
+
+= {(x, y) : (x − 0.3) + (y + 0.3) ≤ 0.1 },
+
+(21)
+
+R4
+
+2
+
+2
+
+2
+
+(22)
+
+= {(x, y) : (x + 0.3) + (y + 0.3) ≤ 0.1 }.
+
+The boundary condition is
+u = 0, x ∈ ∂Ri ,
+u = 1, x ∈ ∂Ωrec .
+
+(23)
+(24)
+
+4. Poisson-Boltzmann (Helmholtz) 2D Irregular Geometry (Poisson2d-CG)
+The Poisson-Boltzmann (Helmholtz) 2D equation is given by
+−∆u + k 2 u = f (x, y).
+
+(25)
+
+The function f (x) is defined as
+!
+f (x) = A ·
+
+X
+
+µ2i + x2i
+
+sin(µ1 πx1 ) sin(µ2 πx2 ).
+
+(26)
+
+i
+
+The domain is [−1, 1]2 and the boundary conditions are
+u = 0.2,
+u = 1,
+
+x ∈ ∂Ωrec ,
+x ∈ ∂Ωcircle .
+
+(27)
+(28)
+
+Parameter references are
+µ1 = 1,
+The domain is [−1, 1]
+
+2
+
+µ2 = 4,
+
+k = 8,
+
+A = 10.
+
+(29)
+
+with several circles removed. The circles Ωcircle = ∪4i=1 Ri are
+R1
+
+= {(x, y) : (x − 0.5)2 + (y − 0.5)2 ≤ 0.22 }
+
+(30)
+
+R2
+
+= {(x, y) : (x − 0.4)2 + (y + 0.4)2 ≤ 0.42 }
+
+(31)
+
+R3
+
+2
+
+2
+
+2
+
+= {(x, y) : (x + 0.2) + (y + 0.7) ≤ 0.1 }
+
+(32)
+
+R4
+
+2
+
+2
+
+2
+
+(33)
+
+= {(x, y) : (x + 0.6) + (y − 0.5) ≤ 0.3 }
+
+5. Poisson 3D Complex Geometry with Two Domains (Poisson3d-CG)
+The Poisson 3D equation with two domains is given by
+−µi ∆u + ki2 u = f (x, y, z),
+
+i = 1, 2.
+
+(34)
+
+The function f (x, y, z) is defined as
+exp(sin m1 πx + sin m2 πy + sin m3 πz) 2
+(x + y 2 + z 2 − 1)
+x2 + y 2 + z 2 + 1
++ A2 sin(m1 πx) sin(m2 πy) sin(m3 πz).
+
+f (x, y, z) =A1
+
+
+The coefficients are defined as
+
+µ = µ1 ,
+µ = µ2 ,
+
+(35)
+
+k = k1 , x ∈ Ω 1 ,
+k = k2 , x ∈ Ω 2 .
+
+The boundary condition is
+∂u
+= 0,
+∂n
+15
+
+x ∈ ∂Ω.
+
+(36)
+
+Preprint, under review
+
+The domains and other parameters are defined as follows:
+Ω1
+Ω2
+
+=
+
+[0, 1] × [0, 1] × [0, 0.5]/ ∪4i=1 Ri ,
+
+(37)
+
+=
+
+[0, 1] × [0, 1] × [0.5, 1]/ ∪4i=1 Ri .
+
+(38)
+
+The circular regions Ri are
+R1
+
+= {(x, y, z) : (x − 0.4)2 + (y − 0.3)2 + (z − 0.6)2 ≤ 0.22 }
+
+(39)
+
+R1
+
+= {(x, y, z) : (x − 0.6)2 + (y − 0.7)2 + (z − 0.6)2 ≤ 0.22 }
+
+(40)
+
+R1
+R1
+
+=
+=
+
+2
+
+2
+
+2
+
+2
+
+(41)
+
+2
+
+2
+
+2
+
+2
+
+(42)
+(43)
+
+{(x, y, z) : (x − 0.2) + (y − 0.8) + (z − 0.7) ≤ 0.1 }
+{(x, y, z) : (x − 0.6) + (y − 0.2) + (z − 0.3) ≤ 0.1 }
+
+Other parameters are
+m1 = 1, m2 = 10, m3 = 5, µ1 = 1, µ2 = 1, k1 = 8, k2 = 10, A1 = 20, A2 = 100.
+
+(44)
+
+6. 2D Poisson equation with many subdomains (Poisson2d-MS)
+The PDE and boundary condition is given by
+
+−∇(a(x)∇u) = f (x, y), xinΩ
+∂u
++ u = 0, x ∈ ∂Ω.
+∂n
+
+(45)
+(46)
+
+Here the domain is (x, y) ∈ Ω = [−10, 10]2 . We divide the whole domain into many small squares,
+and a(x) is a piecewise linear function in each square. We store the a(x) in a file in practical
+implementation.
+7. 2D Heat with Varying Coefficients (Heat2d-VC)
+The 2D heat equation with a varying source is given by
+∂u
+− ∇(a(x)∇u) = f (x, t).
+∂t
+
+(47)
+
+The domain is Ω × T = [0, 1]2 × [0, 5]. The function a(x) is chosen similarly to Darcy flow but with
+an exponential GRF. The function f (x, t) is defined as
+f (x, t) = A sin(m1 πx) sin(m2 πy) sin(m3 πt).
+
+(48)
+
+with A = 200, m1 = 1, m2 = 5, m3 = 1. The initial and boundary conditions are
+u(x, y, 0) = 0, x ∈ Ω
+u(x, y, t) = 0, x ∈ ∂Ω.
+
+(49)
+(50)
+
+8. 2D Heat Multi-Scale (Heat2d-MS)
+The 2D heat multi-scale equation is given by
+∂u
+1
+1
+−
+uxx − 2 uyy = 0,
+∂t
+(500π)2
+π
+
+(51)
+
+with domain Ω × T = [0, 1]2 × [0, 5].
+The initial and boundary conditions are
+u(x, y, 0) = sin(20πx) sin(πy),
+u(x, y, t) = 0, x ∈ ∂Ω.
+9. 2D Heat Complex Geometry (Heat Exchanger, Heat2d-CG)
+16
+
+x ∈ Ω,
+
+(52)
+(53)
+
+Preprint, under review
+
+The 2D heat equation for a complex geometry is given by
+∂u
+− ∆u = 0.
+∂t
+
+(54)
+
+The domain is defined as Ω × T = ([−8, 8] × [−12, 12] \ ∪i Ri ) × [0, 3].
+The boundary condition is
+−n · (−c∇u) = g − qu.
+
+(55)
+
+Here we choose c = 1. The positions of large circles are
+(±4, ±3),
+
+(±4, ±9),
+
+(0, 0),
+
+(0, ±6),
+
+r=1
+
+(56)
+
+with g = 5 and q = 1. The positions of small circles are
+(±3.2, ±6),
+
+(±3.2, 0),
+
+r = 0.4
+
+(57)
+
+with g = 1 and q = 1. For the rectangular boundary conditions, g = 0.1 and q = 1.
+10. 2D Heat Long Time (Heat2d-LT)
+The governing PDE is
+
+ 
+∂u
+πt
+2
+sin(m1 πx) sin(m2 πy)
+= 0.001∆u + 5 sin(ku ) 1 + 2 sin
+∂t
+4
+
+(58)
+
+with domain Ω × T = [0, 1]2 × [0, 100], m1 = 4, m2 = 2, and k = 1.
+The initial and boundary conditions are given by
+u(x, y, 0) = sin(4πx) sin(3πy), x ∈ Ω
+u(x, y, t) = 0, x ∈ ∂Ω.
+
+(59)
+(60)
+
+11. 2D NS lid-driven flow (NS2d-C).
+The PDE is given by
+u · ∇u + ∇p −
+
+1
+∆u
+Re
+∇·u
+
+=
+
+0, x ∈ Ω
+
+(61)
+
+=
+
+0, x ∈ Ω
+
+(62)
+
+The domain is Ω = [0, 1]2 , the top boundary is Γ1 , the left, right and bottom boundary is Γ2 .
+The boundary conditions are
+u(x) = (4x(1 − x), 0), x ∈ Γ1
+u(x) = (0, 0), x ∈ Γ2
+p = 0, x = (0, 0).
+
+(63)
+(64)
+(65)
+
+The Reynolds number Re = 100.
+12. 2D Back Step Flow (NS-CG)
+The equations and boundary conditions are given by
+1
+∆u = 0,
+(66)
+Re
+∇ · u = 0.
+(67)
+S
+The domain is defined as Ω = [0, 4] × [0, 2] \ ([0, 2] × [1, 2] Ri ) (excluding the top-left quarter).
+u · ∇u + ∇p −
+
+The inlet velocity is given by uin = 4y(1 − y), the outlet pressure is p = 0, and the boundary
+condition is no-slip: u = 0. The Reynolds number of Re = 100.
+13. 2D NS Long Time (NS2d-LT)
+17
+
+Preprint, under review
+
+The PDE of this case is given by
+∂u
+1
++ u · ∇u + ∇p −
+∆u = f (x, y, t),
+∂t
+Re
+∇ · u = 0.
+
+(68)
+(69)
+
+The domain is Ω × T = ([0, 2] × [0, 1]) × [0, 5], and the forcing term f (x, y, t) can be given as
+f (x, y, t) = (0, − sin(πx) sin(πy) sin(πt)).
+
+(70)
+
+The boundary conditions are similar to case 12, and the left inlet initial condition can be given as an
+oscillatory form:
+u(0, y, t) = sin(πy)(A1 sin(πt) + A2 sin(3πt) + A3 sin(5πt)).
+
+(71)
+
+where A1 = 1, A2 = 1, A3 = 1.
+The initial condition in the domain is
+u(x, y, 0) = 0.
+
+(72)
+
+14. Basic 1D Wave Equation (Wave1d-C)
+The governing PDE is
+utt − 4uxx = 0
+The domain is Ω × T = [0, 1] × [0, 1]. The boundary conditions are
+u(0, t) = u(1, t) = 0
+
+(73)
+(74)
+
+The initial condition:
+u(x, 0)
+
+=
+
+sin(πx) +
+
+ut (x, 0)
+
+=
+
+0
+
+1
+sin(4πx)
+2
+
+(75)
+(76)
+
+The analytical solution of this problem is
+u(x, t) = sin(πx) cos(2πt) +
+
+1
+sin(4πx) cos(8πt).
+2
+
+(77)
+
+15. 2D Wave Equation in Heterogeneous Medium (Wave2d-CG)
+The governing PDE is given by
+
+
+1 ∂2
+2
+u(x, t) = 0
+∇ −
+c(x) ∂t2
+The Domain is Ω = [−1, 1] × [−1, 1] and the initial condition is
+
+
+∥x − µ∥2
+u(x, 0) = exp −
+,x ∈ Ω
+2σ 2
+∂u
+(x, 0) = 0, x ∈ Ω
+∂t
+The boundary conditions are
+∂u
+= 0, x ∈ ∂Ω
+∂n
+The parameters are
+µ = (−0.5, 0), σ = 0.3,
+and c(x) are generated by a Gaussian random field.
+
+(78)
+
+(79)
+(80)
+
+(81)
+(82)
+
+16. 2D Multi-Scale Long Time Wave Equation (Wave2d-MS)
+The governing PDE is
+
+utt − (uxx + a2 uyy ) = 0
+18
+
+(83)
+
+Preprint, under review
+
+The domain is defined as Ω = [0, 1]2 × [0, 100] and the boundary and initial conditions are
+
+0, bottom
+
+
+0, left
+u(x, y, t) =
+
+ c2 sinh(m2 π) sin(n2 πy) cos(p2 πt), right
+c1 sin(m1 πx) sinh(n1 πy) cos(p1 πt), top
+∂u
+(x, y, 0) = 0
+∂t
+
+(84)
+
+(85)
+
+The exact solution to this problem is
+u(x, y, t) = c1 sin(m1 πx) sinh(n1 πy) cos(p1 πt) + c2 sinh(m2 πx) sin(n2 πy) cos(p2 πt),
+√
+where a = 2, m1 = 1, m2 = 3, n1 = 1, n2 = 2, p1 = 1, p2 = 1 and c1 = 1, c2 = 1.
+
+(86)
+
+17. 2D Diffusion-Reaction Gray-Scott Model (GS)
+The governing PDE is
+ut
+vt
+
+=
+=
+
+ε1 ∆u + b(1 − u) − uv 2
+ε2 ∆v − dv + uv
+
+(87)
+
+2
+
+(88)
+
+2
+
+The domain is Ω × T = [−1, 1] × [0, 200] and parameters are
+b = 0.04, d = 0.1, ε1 = 1 × 10−5 , ε2 = 5 × 10−6
+
+(89)
+
+The initial conditions are
+u(x, y, 0)
+v(x, y, 0)
+
+=
+
+1 − exp(−80((x + 0.05)2 + (y + 0.02)2 ))
+
+(90)
+
+=
+
+2
+
+(91)
+
+2
+
+exp(−80((x − 0.05) + (y − 0.02) ))
+
+The visualization of the reference solution of this case is in Figure 16.
+18. Kuramoto-Sivashinsky Equation (KS)
+The governing PDE is
+ut + αuux + βuxx + γuxxxx = 0
+(92)
+The domain is Ω × T = [0, 2π] × [0, 1]. (Note: Error may increase rapidly in chaotic problems.)
+100
+100
+100
+,β = 2,γ = 4
+16
+16
+16
+
+(93)
+
+u(x, 0) = cos(x)(1 + sin(x))
+
+(94)
+
+α=
+The initial condition is
+
+The reference solution of KS equation is shown in Figure B.1.
+19. N-Dimensional Poisson equation (PNd)
+The governing PDE is
+n
+
+−∆u =
+
+π 
+π2 X
+sin
+xi
+4 i=1
+2
+
+The domain is defined by Ω = [0, 1]n . The exact solution is
+n
+π 
+X
+u=
+sin
+xi
+2
+i=1
+
+(95)
+
+(96)
+
+We choose n = 5 in our code.
+20. N-Dimensional Heat Equation (HNd)
+The governing PDE is
+∂u
+=
+∂t
+n · ∇u =
+u(x, 0) =
+
+k∆u + f (x, t), x ∈ Ω × [0, 1]
+
+(97)
+
+g(x, t), x ∈ ∂Ω × [0, 1]
+g(x, 0), x ∈ Ω
+
+(98)
+(99)
+
+19
+
+Preprint, under review
+
+The geometric domain Ω = {x : |x|2 ⩽ 1} is a unit sphere in d-dimensional space. We choose
+dimension d = 5.
+1
+k=
+(100)
+d
+The two functions are
+
+
+1 2
+1 2
+f (x, t) = − |x|2 exp
+|x| + t
+(101)
+d
+2 2
+
+
+1 2
+g(x, t) = exp
+|x| + t
+(102)
+2 2
+We can see that the exact solution of the equation is g(x, t).
+21. Poisson inverse problem (PInv)
+The governing PDE is
+−∇(a∇u) = f
+
+(103)
+
+u = sin πx sin πy.
+
+(104)
+
+The geometric domain is Ω = [0, 1]2 , and
+
+The source term f is
+f=
+
+2π((2x − 1) cos πx sin πy + (2y − 1) sin πx cos πy)
+2π 2 sin πx sin πy
++
+. (105)
+1 + x2 + y 2 + (x − 1)2 + (y − 1)2
+(1 + x2 + y 2 + (x − 1)2 + (y − 1)2 )2
+
+To ensure the uniqueness of the solution, we impose a boundary condition of a(x, y), i.e.,
+a(x, y) =
+
+1
+1 + x2 + y 2 + (x − 1)2 + (y − 1)2
+
+, x ∈ ∂Ω
+
+(106)
+
+We sample data of u(x, y) with 2500 uniformly distributed 50 × 50 points and add Gaussian noise
+N (0, 0.1) to it. The goal is to reconstruct the diffusion coefficients. We see that the ground truth of
+a(x, y) is
+1
+a(x, y) =
+, x ∈ Ω.
+(107)
+1 + x2 + y 2 + (x − 1)2 + (y − 1)2
+22. Heat (Diffusion) inverse problem (HInv)
+The governing PDE of this inverse problem is
+ut − ∇(a∇u) = f
+
+(108)
+
+The geometric domain is Ω × T = [−1, 1]2 × [0, 1], and
+u = e−t sin πx sin πy
+
+(109)
+
+Similarly, we impose a boundary condition for the diffusion coefficient field:
+a(x, y) = 2, ∂x ∈ Ω.
+
+(110)
+
+Then the source function f is
+f = ((4π 2 − 1) sin πx sin πy + π 2 (2 sin2 πx sin2 πy − cos2 πx sin2 πy − sin2 πx cos2 πy))e−t
+
+(111)
+
+We sample data of u(x, y, t) randomly with 2500 points from the temporal domain Ω × T and add
+Gaussian noise N (0, 0.1) to it. The goal is to reconstruct the diffusion coefficients. We see that the
+ground truth is
+a(x, y) = 2 + sin πx sin πy, x ∈ Ω.
+(112)
+20
+
+Preprint, under review
+
+B.2
+
+D EFINITIONS AND DESIGN CHOICES FOR PARAMETRIC PDE S
+
+We design a set of parametric PDEs and evaluate the average performance of PINN variants on cases
+with different parameters. We choose Burgers2d-C, Poisson2d-C, Heat2d-MS, NS2d-C, Wave2d-C,
+and Heat-Nd to design these parametric cases.
+1. 2D Coupled Burgers equation (Burgers2d-C) with different initial values.
+The initial values of this case are shown in Eq 16 where a and b are sampled from Gaussian Random
+Field. Here the initial values are used as parameters and we sample 5 different a and b from GRF
+and test the performance of PINN variants on all 5 cases. Each parametrized PDE is solved using
+COMSOL. In PDEBench, the authors similarly tested the average effect of PDEs sampled multiple
+times from the GRF with the same equation. Since the GRF has not changed, there is not much
+variation in the magnitude and frequency of the initial flow velocity, but there may be significant
+differences in their spatial distribution. This can also lead to differences in difficulty when solving
+with the PINN method. From the 4, we see that the error of the best method increased from 26% to
+41%, indicating a significant influence of the flow distribution on the solution.
+2. Poisson 2d Classic (Poisson2d-C)
+This PDE is defined on Ω = [−L, L]2 . We parametrize this case by using different domain scales L
+from {1, 2, 4, 8, 16}. Since this PDE is linear, we could compute the ground truth solution by linearly
+scaling the original PDE where L = 0.5. Some papers (Yao et al., 2023) pointed out that the effect of
+PINN is influenced by the size of the domain. This is because scaling the domain directly to [0, 1]d
+may be suboptimal and can lead to an imbalanced ratio of PDE loss to boundary loss. This is because
+PINNs are sensitive to initialization, so different domain scales might lead to different results. Here
+the real solution of this linear PDE can be obtained through a linear transformation from a solution of
+another domain scale L. The condition number does not differ when we change L, making it suitable
+to study the influence of domain scale on PINN’s performance. We observed from the results that
+some methods (PINN-NTK, MultiAdam, FBPINN) are relatively robust to domain scale.
+3. 2D Heat Multi-Scale (Heat2d-MS)
+We parameterize this case using different initial conditions in Eq 53,
+u(x, y, 0) = sin(aπx) sin(πy).
+(113)
+Here we choose (a, b) from {(20, 1), (1, 20), (10, 2), (2, 10), (5, 4)}. The reference solutions for
+different parameters are solved using COMSOL. Changes in the frequency of the initial condition
+will lead to changes in the frequency of the solution, which allows us to study the influence of the
+initial condition frequency on PINN. Comparing the results of several experiments, we found that the
+loss reweighting strategy of PINN-NTK and the adaptive activation function of LAAF perform well
+for multi-scale problems overall. However, when the frequency variation range is more significant,
+both their performances decline, suggesting room for improvement.
+4. 2D NS lid-driven flow (NS2d-C)
+We parametrize NS2d-C by setting different speeds at the top boundary in Eq 65,
+u(x) = (ax(1 − x), 0), x ∈ Γ1 ,
+(114)
+where a is chosen from {2, 4, 8, 16, 32}. The reference solutions for different parameters are solved
+using COMSOL. Different flow rates imply different Reynolds numbers, thus altering the difficulty
+of solving the equation. As the Reynolds number increases, the condition number of the equation
+will also increase. Generally, the higher the Reynolds number, the more likely turbulence or some
+small-scale complex flow states will occur. Testing different Reynolds numbers is a natural idea.
+Specifically, we chose a velocity u = ax(1 − x), where a ranges between 2 and 32. Compared to the
+main experiment with a = 4, the Reynolds number increased eightfold when a = 32.
+5. 1D Wave Equation
+We parametrize this case with different initial conditions in Eq 76,
+1
+u(x, 0) = sin(πx) + sin(aπx),
+2
+where a is chosen from {2, 4, 6, 8, 10}. The ground truth solution is given by,
+1
+u(x, t) = sin(πx) cos(2πt) + sin(πax) cos(2aπt).
+2
+21
+
+(115)
+
+(116)
+
+Preprint, under review
+
+6. N-Dimensional Heat Equation
+We parametrize this case by choosing a different number of dimensions n from {4, 5, 6, 8, 10}.
+The solutions are given by Eq 102. Although neural networks are theoretically universal function
+approximators, the ability to fit the solution of high-dimensional PDEs still needs to be studied. So,
+we chose heat equations of different dimensions to compare the effects of various PINN methods.
+We observed that for high-dimensional heat equations, the improved optimizer MultiAdam is very
+helpful in solving high-dimensional problems.
+
+C
+
+M ODEL C ONFIGURATION AND H YPERPARAMETERS
+
+C.1
+
+M ODEL ARCHITECTURE
+
+Our research employs a specific model structure: a Multilayer Perceptron (MLP) with 5 layers, each
+of which has a width of 100 neurons.
+The model was trained for a total of 20,000 iterations or epochs. This number of training rounds was
+found to be sufficient for the model to learn the underlying patterns in the data, while also avoiding
+potential overfitting that might occur with too many epochs.
+As for the number of collocation points, for 2-dimensional problems, we used 8192 points. These
+collocation points provide dense coverage of the problem space while it does not consume too much
+GPU memory. In addition to these, we utilized 2048 boundary/initial points.
+For 3-dimensional problems, the number of collocation points and boundary/initial points were
+increased to 32768 and 8192, respectively. This increase corresponds to the added complexity of
+3-dimensional problems, requiring a more comprehensive representation of the problem space to
+achieve reliable and accurate results.
+C.2
+
+O PTIMIZATION HYPERPARAMETERS
+
+In our primary experiment, we use Adam optimizer with momentum (0.9, 0.999). We set the learning
+rate at 1e-3. This learning rate was selected after carefully considering the trade-off between the
+speed of convergence and the stability of learning, which we discussed previously. We found that this
+learning rate provides a good balance, enabling robust learning without the issues associated with
+excessively high or low rates. For vanilla PINNs, the loss weights are set to 1.
+In summary, our model structure and parameters were carefully selected to balance the need for
+accuracy and computational efficiency, providing a fair and effective comparison in our study. Detailed
+ablation studies about these hyperparameters are reported in Appendix E.
+C.3
+
+OTHER METHOD - SPECIFIC HYPERPARAMETERS
+
+Here we present the hyperparameters of the methods we tested.
+• PINN. There are no special hyperparameters for the baseline PINN. Please refer to the
+section above for the network structure and optimization hyperparameters.
+• PINN-w. We assign larger weights to boundary conditions for PINN-w. Specifically, the
+weight for PDE loss is set at 1, while those for initial and boundary conditions are increased
+to 100. These losses are then aggregated as the target loss.
+• PINN-LRA. We set α = 0.1 for updating loss weights, which is the recommended value in
+the original paper.
+• PINN-NTK. No special hyperparameter is needed for this method.
+• RAR. For residual-based adaptive refinement, we add new points where the residual is
+greatest into the training set every 2000 epochs.
+• MultiAdam. Although there is no manual weighting for MultiAdam, the loss grouping
+criteria can affect its performance. Due to time constraints, we only tuned the grouping
+criteria for the Wave1d-C case, where losses were divided into Dirichlet boundary losses and
+22
+
+Preprint, under review
+
+non-Dirichlet losses and trained for 10,000 epochs. For all other cases, we simply categorize
+the losses into PDE and boundary losses.
+• gPINN. For simplicity, we assign a weight of 0.01 to the gradient terms and a weight of 1 to
+all others. However, these weights are delicate and require further fine-tuning.
+
+D
+
+H IGH - LEVEL S TRUCTURE OF T OOLBOX
+
+In Figure 18, we provide a high-level overview of the usage and modules of the benchmark. We
+provide several encapsulated classes upon DeepXDE. Specifically, we have a PDE class for building
+PDE problems conveniently. Then we warp the model class by passing neural network architecture,
+optimizer, and custom callbacks. After that, the model is compiled by DeepXDE. Finally, we invoke
+the multi-GPU parallel training and evaluation framework to allocate the training tasks to different
+GPUs. We support convenient one-button parallel training and testing on all PDE cases using all
+methods. An example code snippet is shown here.
+import deepxde as dde
+from trainer import Trainer
+from src.pde import PDE1, ..., PDEn
+from src.utils.callbacks import TesterCallback
+trainer = Trainer(’experiment-name’,device)
+for pde_class in [PDE1, ..., PDEn]:
+def get_model():
+pde = pde_class()
+net = dde.nn.FNN([pde.input_dim] + n_layers * [n_hidden] + [pde.output_dim])
+opt = torch.optim.Adam(net.parameters(), lr=learning_rate)
+model = pde.create_model(net)
+model.compile(opt)
+return model
+trainer.add_task(
+get_model, {’iterations’: num_iterations,’callbacks’: [TesterCallback()]}
+)
+trainer.train_all_parallel()
+
+E
+
+D ETAILED E XPERIMENTAL R ESULTS
+
+E.1
+
+D ETAILED RESULTS OF MAIN EXPERIMENTS .
+
+The detailed results of the main experiments in listed in the subsection. In Table 7, we provide the
+mean and std of L2RE for all baselines on all PDEs. In Table 6, we provide the mean and std of
+L1RE for all baselines on all PDEs. In Table 9, Table 10, and Table 11, we provide the low-frequency,
+medium-frequency, and high-frequency Fourier errors, respectively. In Table 8, we provide the mean
+and std of MSE for all baselines on all PDEs. In Table In Table 12, we provide the average runtime
+(seconds) for all baselines trained with 20000 epochs on all PDEs averaged by three runs.
+Here we provide an analysis of these results. Since the results of the main experiments have been
+described in the main text, we won’t go over them again. For different metrics of the same PDE, the
+best-performing methods often differ. This is because different errors reflect different mismatches
+between the predicted solution and the true solution.
+• From the results, we can see that for most cases, methods that perform well in L2RE error
+also perform well in L1RE. This shows that L1RE and L2RE are generally similar. Although
+the absolute values differ, they can mostly be used interchangeably, or one can be chosen for
+calculation.
+• Max error measures the worst-case error, significantly different from the average loss
+measured by L1RE/L2RE. From the results, we can see that hp-VPINN performs very
+well on this metric, followed by the adaptive activation function LAAF. PINN-LRA and
+PINN-NTK are optimal for some equations, but their effects are not as stable.
+• Fourier error allows for the convergence of different frequency components, so it’s an
+essential reference indicator. Since functions defined in irregular geometric areas are not
+suitable for calculating Fourier error, we ignored these equations. Looking at **Table 9,
+23
+
+Preprint, under review
+
+Table 10, and Table 11** comprehensively, for mid-low frequency functions, FBPINN is the
+best performing in most instances. Loss reweighting methods like PINN-LRA and ordinary
+PINN are better for low and high-frequency components, respectively. We speculate that
+reweighting the loss to some extent changes the convergence order of different function
+components.
+• Finally, regarding the runtime metric, hp-VPINN is the fastest in most problems. This
+might be due to the optimization inherent in hp-VPINN’s implementation and its fewer
+required differentiations than vanilla PINN. All other methods introduced varying degrees
+of additional computational overhead compared to vanilla PINN, with some methods like
+gPINN even requiring about twice the computational time.
+
+24
+
+Preprint, under review
+
+Figure 4: Reference solution of Burgers1d using FEM solver.
+
+Figure 5: Reference solution of Burgers2d at timesteps t = 0, 0.2, 0.4, 1.0 using FEM solver.
+
+25
+
+Preprint, under review
+
+Figure 6: Reference solution of Poisson2d-CG by FEM solver.
+
+Figure 7: Reference solution of Poisson3d-CG by FEM solver. The top row displays the solution
+at 5 YZ planes with x = 0, 0.25, 0.5, 0.75, 1.0. The medium row displays it at XZ planes with y =
+0.0, 0.25, 0.5, 0.75, 1.0. The bottom row displays it at XY planes with z = 0.0, 0.25, 0.5, 0.75, 1.0.
+
+26
+
+Preprint, under review
+
+Figure 8: Reference solution of Poisson2d-MS by FEM solver.
+
+Figure 9: Reference solution of Heat2d-VC by FEM solver at timesteps t = 0, 0.5, 2.0, 3.5.
+
+Figure 10: Reference solution of Heat2d-MS by FEM solver.
+
+Figure 11: reference solution of Heat2d-CG by FEM solver at timesteps t = 0.5, 2.0, 2, 5, 3.0.
+
+27
+
+Preprint, under review
+
+Figure 12: reference solution of Heat2d-LT by FEM solver at timesteps t = 0, 20, 50, 80, 100.
+
+Figure 13: Reference solution of NS2d-Ld by FEM solver.
+
+Figure 14: Reference fields u, v, p from top to bottom of NS2d-LT by FEM solver at timesteps
+t = 0.5, 1.0, 2.5, 4.0, 5.0.
+
+28
+
+Preprint, under review
+
+Figure 15: Reference solution of Wave2d-CG by FEM solver at timesteps t = 0, 0.5, 2.0, 4.0, 5.0.
+
+Figure 16: Reference solution of GS equation at timestep t = 0.0, 2.5, 5.0, 7.5, 10.0.
+
+Figure 17: Reference solution of KS equation.
+
+29
+
+Preprint, under review
+
+Trainer
+
+Net
+BasicPDE
+
+Callbacks
+
+Logs/Visualization
+
+net = FNN(...)
+
+Optimizer
+
+[TesterCallback(),
+...
+
+opt = LR_Adaptor(...)
+
+PlotCallback()]
+
+Custom PDE Class
+mypde.geom = ...
+mypde.pde = ...
+mypde.add_bcs(...)
+mypde.load_ref_data(...)
+
+mypde.
+create_model
+(net)
+
+Multi-GPU
+Multi-GPU
+Multi-GPU
+Training
+Training
+Training
+
+model.
+complile
+(opt,weights)
+
+Task
+Trainer.train_all_parallel()
+
+Figure 18: A high-level illustration of PINNacle code structure.
+
+30
+
+L2RE
+
+Name
+
+–
+Burgers
+
+Poisson
+
+Heat
+
+NS
+
+Wave
+
+Chaotic
+
+High dim
+
+Inverse
+
+Vanilla
+
+Loss Reweighting/Sampling
+
+Optimizer
+
+Loss functions
+
+Architecture
+
+PINN
+
+PINN-w
+
+LRA
+
+NTK
+
+RAR
+
+MultiAdam
+
+gPINN
+
+vPINN
+
+LAAF
+
+GAAF
+
+FBPINN
+
+1d-C
+
+1.45E-2(1.59E-3)
+
+2.63E-2(4.68E-3)
+
+2.61E-2(1.18E-2)
+
+1.84E-2(3.66E-3)
+
+3.32E-2(2.14E-2)
+
+4.85E-2(1.61E-2)
+
+2.16E-1(3.34E-2)
+
+3.47E-1(3.49E-2)
+
+1.43E-2(1.44E-3)
+
+5.20E-2(2.08E-2)
+
+2.32E-1(9.14E-2)
+
+2d-C
+
+3.24E-1(7.54E-4)
+
+2.70E-1(3.93E-3)
+
+2.60E-1(5.78E-3)
+
+2.75E-1(4.78E-3)
+
+3.45E-1(4.56E-5)
+
+3.33E-1(8.65E-3)
+
+3.27E-1(1.25E-4)
+
+6.38E-1(1.47E-2)
+
+2.77E-1(1.39E-2)
+
+2.95E-1(1.17E-2)
+
+–
+
+2d-C
+
+6.94E-1(8.78E-3)
+
+3.49E-2(6.91E-3)
+
+1.17E-1(1.26E-1)
+
+1.23E-2(7.37E-3)
+
+6.99E-1(7.46E-3)
+
+2.63E-2(6.57E-3)
+
+6.87E-1(1.87E-2)
+
+4.91E-1(1.55E-2)
+
+7.68E-1(4.70E-2)
+
+6.04E-1(7.52E-2)
+
+4.49E-2(7.91E-3)
+
+2d-CG
+
+6.36E-1(2.57E-3)
+
+6.08E-2(4.88E-3)
+
+4.34E-2(7.95E-3)
+
+1.43E-2(4.31E-3)
+
+6.48E-1(7.87E-3)
+
+2.76E-1(1.03E-1)
+
+7.92E-1(4.56E-3)
+
+2.86E-1(2.00E-3)
+
+4.80E-1(1.43E-2)
+
+8.71E-1(2.67E-1)
+
+2.90E-2(3.92E-3)
+
+3d-CG
+
+5.60E-1(2.84E-2)
+
+3.74E-1(3.23E-2)
+
+1.02E-1(3.16E-2)
+
+9.47E-1(4.94E-4)
+
+5.76E-1(5.40E-2)
+
+3.63E-1(7.81E-2)
+
+4.85E-1(5.70E-2)
+
+7.38E-1(6.47E-4)
+
+5.79E-1(2.65E-2)
+
+5.02E-1(7.47E-2)
+
+7.39E-1(7.24E-2)
+
+2d-MS
+
+6.30E-1(1.07E-2)
+
+7.60E-1(6.96E-3)
+
+7.94E-1(6.51E-2)
+
+7.48E-1(9.94E-3)
+
+6.44E-1(2.13E-2)
+
+5.90E-1(4.06E-2)
+
+6.16E-1(1.74E-2)
+
+9.72E-1(2.23E-2)
+
+5.93E-1(1.18E-1)
+
+9.31E-1(7.12E-2)
+
+1.04E+0(6.13E-5)
+
+2d-VC
+
+1.01E+0(6.34E-2)
+
+2.35E-1(1.70E-2)
+
+2.12E-1(8.61E-4)
+
+2.14E-1(5.82E-3)
+
+9.66E-1(1.86E-2)
+
+4.75E-1(8.44E-2)
+
+2.12E+0(5.51E-1)
+
+9.40E-1(1.73E-1)
+
+6.42E-1(6.32E-2)
+
+8.49E-1(1.06E-1)
+
+9.52E-1(2.29E-3)
+
+2d-MS
+
+6.21E-2(1.38E-2)
+
+2.42E-1(2.67E-2)
+
+8.79E-2(2.56E-2)
+
+4.40E-2(4.81E-3)
+
+7.49E-2(1.05E-2)
+
+2.18E-1(9.26E-2)
+
+1.13E-1(3.08E-3)
+
+9.30E-1(2.06E-2)
+
+7.40E-2(1.92E-2)
+
+9.85E-1(1.04E-1)
+
+8.20E-2(4.87E-3)
+
+2d-CG
+
+3.64E-2(8.82E-3)
+
+1.45E-1(4.77E-3)
+
+1.25E-1(4.30E-3)
+
+1.16E-1(1.21E-2)
+
+2.72E-2(3.22E-3)
+
+7.12E-2(1.30E-2)
+
+9.38E-2(1.45E-2)
+
+1.67E+0(3.62E-3)
+
+2.39E-2(1.39E-3)
+
+4.61E-1(2.63E-1)
+
+9.16E-2(3.29E-2)
+
+2d-LT
+
+9.99E-1(1.05E-5)
+
+9.99E-1(8.01E-5)
+
+9.99E-1(7.37E-5)
+
+1.00E+0(2.82E-4)
+
+9.99E-1(1.56E-4)
+
+1.00E+0(3.85E-5)
+
+1.00E+0(9.82E-5)
+
+1.00E+0(0.00E+0)
+
+9.99E-1(4.49E-4)
+
+9.99E-1(2.20E-4)
+
+1.01E+0(1.23E-4)
+
+2d-C
+
+4.70E-2(1.12E-3)
+
+1.45E-1(1.21E-2)
+
+NaN(NaN)
+
+1.98E-1(2.60E-2)
+
+4.69E-1(1.16E-2)
+
+7.27E-1(1.95E-1)
+
+7.70E-2(2.99E-3)
+
+2.92E-1(8.24E-2)
+
+3.60E-2(3.87E-3)
+
+3.79E-2(4.32E-3)
+
+8.45E-2(2.26E-2)
+
+2d-CG
+
+1.19E-1(5.46E-3)
+
+3.26E-1(7.69E-3)
+
+3.32E-1(7.60E-3)
+
+2.93E-1(2.02E-2)
+
+3.34E-1(6.52E-4)
+
+4.31E-1(6.95E-2)
+
+1.54E-1(5.89E-3)
+
+9.94E-1(3.80E-3)
+
+8.24E-2(8.21E-3)
+
+1.74E-1(7.00E-2)
+
+8.27E+0(3.68E-5)
+
+2d-LT
+
+9.96E-1(1.19E-3)
+
+1.00E+0(3.34E-4)
+
+1.00E+0(4.05E-4)
+
+9.99E-1(6.04E-4)
+
+1.00E+0(3.35E-4)
+
+1.00E+0(2.19E-4)
+
+9.95E-1(7.19E-4)
+
+1.73E+0(1.00E-5)
+
+9.98E-1(3.42E-3)
+
+9.99E-1(1.10E-3)
+
+1.00E+0(2.07E-3)
+
+1d-C
+
+5.88E-1(9.63E-2)
+
+2.85E-1(8.97E-3)
+
+3.61E-1(1.95E-2)
+
+9.79E-2(7.72E-3)
+
+5.39E-1(1.77E-2)
+
+1.21E-1(1.76E-2)
+
+5.56E-1(1.67E-2)
+
+8.39E-1(5.94E-2)
+
+4.54E-1(1.08E-2)
+
+6.77E-1(1.05E-1)
+
+5.91E-1(4.74E-2)
+
+2d-CG
+
+1.84E+0(3.40E-1)
+
+1.66E+0(7.39E-2)
+
+1.48E+0(1.03E-1)
+
+2.16E+0(1.01E-1)
+
+1.15E+0(1.06E-1)
+
+1.09E+0(1.24E-1)
+
+8.14E-1(1.18E-2)
+
+7.99E-1(4.31E-2)
+
+8.19E-1(2.67E-2)
+
+7.94E-1(9.33E-3)
+
+1.06E+0(7.54E-2)
+
+2d-MS
+
+1.34E+0(2.34E-1)
+
+1.02E+0(1.16E-2)
+
+1.02E+0(1.36E-2)
+
+1.04E+0(3.11E-2)
+
+1.35E+0(2.43E-1)
+
+1.01E+0(5.64E-3)
+
+1.02E+0(4.00E-3)
+
+9.82E-1(1.23E-3)
+
+1.06E+0(1.71E-2)
+
+1.06E+0(5.35E-2)
+
+1.03E+0(6.68E-3)
+
+GS
+
+3.19E-1(3.18E-1)
+
+1.58E-1(9.10E-2)
+
+9.37E-2(4.42E-5)
+
+2.16E-1(7.73E-2)
+
+9.46E-2(9.46E-4)
+
+9.37E-2(1.21E-5)
+
+2.48E-1(1.10E-1)
+
+1.16E+0(1.43E-1)
+
+9.47E-2(7.07E-5)
+
+9.46E-2(1.15E-4)
+
+7.99E-2(1.69E-2)
+
+KS
+
+1.01E+0(1.28E-3)
+
+9.86E-1(2.24E-2)
+
+9.57E-1(2.85E-3)
+
+9.64E-1(4.94E-3)
+
+1.01E+0(8.63E-4)
+
+9.61E-1(4.77E-3)
+
+9.94E-1(3.83E-3)
+
+9.72E-1(5.80E-4)
+
+1.01E+0(2.12E-3)
+
+1.00E+0(1.24E-2)
+
+1.02E+0(2.31E-2)
+
+PNd
+
+3.04E-3(5.62E-4)
+
+2.58E-3(1.31E-3)
+
+4.58E-4(1.89E-5)
+
+4.64E-3(4.36E-3)
+
+3.59E-3(1.25E-3)
+
+3.98E-3(1.11E-3)
+
+5.05E-3(6.07E-4)
+
+–
+
+4.14E-3(5.59E-4)
+
+7.75E-3(1.41E-3)
+
+–
+
+HNd
+
+3.61E-1(4.40E-3)
+
+4.59E-1(4.34E-3)
+
+3.94E-1(1.28E-2)
+
+3.97E-1(1.26E-2)
+
+3.57E-1(3.69E-3)
+
+3.02E-1(4.07E-2)
+
+3.17E-1(6.66E-3)
+
+–
+
+5.22E-1(3.12E-3)
+
+5.21E-1(7.79E-4)
+
+–
+
+PInv
+
+9.42E-2(1.58E-3)
+
+1.66E-1(5.45E-3)
+
+1.54E-1(3.32E-3)
+
+1.93E-1(1.39E-2)
+
+9.35E-2(1.12E-2)
+
+1.30E-1(1.55E-2)
+
+8.03E-2(2.79E-3)
+
+2.45E-2(1.03E-2)
+
+1.30E-1(1.07E-2)
+
+2.54E-1(1.53E-1)
+
+8.44E-1(1.37E-1)
+
+HInv
+
+1.57E+0(7.21E-2)
+
+5.26E-2(3.31E-3)
+
+5.09E-2(4.34E-3)
+
+7.52E-2(5.42E-3)
+
+1.52E+0(6.46E-2)
+
+8.04E-2(1.20E-2)
+
+4.84E+0(2.07E+0)
+
+4.56E-1(1.30E-2)
+
+5.59E-1(5.24E-1)
+
+2.12E-1(4.89E-2)
+
+9.27E-1(1.20E-1)
+
+Table 5: Mean (Std) of L2RE for main experiments.
+
+L1RE
+
+Name
+
+–
+Burgers
+
+Poisson
+
+Heat
+
+NS
+
+Wave
+
+Chaotic
+
+High dim
+
+Inverse
+
+Vanilla
+
+Loss Reweighting/Sampling
+
+Optimizer
+
+Loss functions
+
+Architecture
+
+PINN
+
+PINN-w
+
+LRA
+
+NTK
+
+RAR
+
+MultiAdam
+
+gPINN
+
+vPINN
+
+LAAF
+
+GAAF
+
+FBPINN
+
+1d-C
+
+9.55E-3(6.42E-4)
+
+1.88E-2(4.05E-3)
+
+1.35E-2(2.57E-3)
+
+1.30E-2(1.73E-3)
+
+1.35E-2(4.66E-3)
+
+2.64E-2(5.69E-3)
+
+1.42E-1(1.98E-2)
+
+4.02E-2(6.41E-3)
+
+1.40E-2(3.68E-3)
+
+1.95E-2(8.30E-3)
+
+3.75E-2(9.70E-3)
+
+2d-C
+
+2.96E-1(7.40E-4)
+
+2.43E-1(2.98E-3)
+
+2.31E-1(7.16E-3)
+
+2.48E-1(5.33E-3)
+
+3.27E-1(3.73E-5)
+
+3.12E-1(1.15E-2)
+
+3.01E-1(3.55E-4)
+
+6.56E-1(3.01E-2)
+
+2.57E-1(2.06E-2)
+
+2.67E-1(1.22E-2)
+
+–
+
+2d-C
+
+7.40E-1(5.49E-3)
+
+3.08E-2(5.13E-3)
+
+7.82E-2(7.47E-2)
+
+1.30E-2(8.23E-3)
+
+7.48E-1(1.01E-2)
+
+2.47E-2(6.38E-3)
+
+7.35E-1(2.08E-2)
+
+4.60E-1(1.39E-2)
+
+7.67E-1(1.36E-2)
+
+6.57E-1(3.99E-2)
+
+5.01E-2(4.71E-3)
+
+2d-CG
+
+5.45E-1(4.71E-3)
+
+4.54E-2(6.42E-3)
+
+2.63E-2(5.50E-3)
+
+1.33E-2(4.96E-3)
+
+5.60E-1(8.19E-3)
+
+2.46E-1(1.07E-1)
+
+7.31E-1(2.77E-3)
+
+2.45E-1(5.14E-3)
+
+4.04E-1(1.03E-2)
+
+7.09E-1(2.12E-1)
+
+3.21E-2(6.23E-3)
+
+3d-CG
+
+4.51E-1(3.35E-2)
+
+3.33E-1(2.64E-2)
+
+7.76E-2(1.63E-2)
+
+9.93E-1(2.91E-4)
+
+4.61E-1(4.46E-2)
+
+3.55E-1(7.75E-2)
+
+4.57E-1(5.07E-2))
+
+7.96E-1(3.57E-4)
+
+4.60E-1(1.13E-2)
+
+3.82E-1(4.89E-2)
+
+6.91E-1(7.52E-2)
+
+2d-MS
+
+7.60E-1(1.06E-2)
+
+7.49E-1(1.12E-2)
+
+7.93E-1(7.62E-2)
+
+7.26E-1(1.46E-2)
+
+7.84E-1(2.42E-2)
+
+6.94E-1(5.61E-2)
+
+7.41E-1(2.01E-2)
+
+9.61E-1(5.67E-2)
+
+6.31E-1(5.42E-2)
+
+9.04E-1(1.01E-1)
+
+9.94E-1(9.67E-5)
+
+2d-VC
+
+1.12E+0(5.79E-2)
+
+2.41E-1(1.73E-2)
+
+2.07E-1(1.04E-3)
+
+2.03E-1(1.12E-2)
+
+1.06E+0(5.13E-2)
+
+5.45E-1(1.07E-1)
+
+2.41E+0(5.27E-1)
+
+8.79E-1(2.57E-1)
+
+7.49E-1(8.54E-2)
+
+9.91E-1(1.37E-1)
+
+9.44E-1(1.75E-3)
+
+2d-MS
+
+9.30E-2(2.27E-2)
+
+2.90E-1(2.43E-2)
+
+1.13E-1(3.57E-2)
+
+6.69E-2(8.24E-3)
+
+1.19E-1(2.16E-2)
+
+3.00E-1(1.14E-1)
+
+1.80E-1(1.12E-2)
+
+9.25E-1(3.90E-2)
+
+1.14E-1(4.98E-2)
+
+1.08E+0(2.02E-1)
+
+5.33E-2(3.92E-3)
+
+2d-CG
+
+3.05E-2(8.47E-3)
+
+1.37E-1(7.70E-3)
+
+1.12E-1(2.57E-3)
+
+1.07E-1(1.44E-2)
+
+2.21E-2(3.42E-3)
+
+5.88E-2(1.02E-2)
+
+8.20E-2(1.32E-2)
+
+3.09E+0(1.86E-2)
+
+1.94E-2(1.98E-3)
+
+3.77E-1(2.17E-1)
+
+6.77E-1(3.93E-2)
+
+2d-LT
+
+9.98E-1(6.00E-5)
+
+9.98E-1(1.42E-4)
+
+9.98E-1(1.47E-4)
+
+9.99E-1(1.01E-3)
+
+9.98E-1(2.28E-4)
+
+9.99E-1(5.69E-5)
+
+9.98E-1(8.62E-4)
+
+9.98E-1(0.00E+0)
+
+9.98E-1(1.27E-4)
+
+9.98E-1(8.58E-5)
+
+1.01E+0(7.75E-4)
+
+2d-C
+
+5.08E-2(3.06E-3)
+
+1.84E-1(1.52E-2)
+
+NaN
+
+2.44E-1(3.05E-2)
+
+5.54E-1(1.24E-2)
+
+9.86E-1(3.16E-1)
+
+9.43E-2(3.24E-3)
+
+1.98E-1(7.81E-2)
+
+4.42E-2(7.38E-3)
+
+3.78E-2(8.71E-3)
+
+1.18E-1(3.10E-2)
+
+2d-CG
+
+1.77E-1(1.00E-2)
+
+4.22E-1(8.72E-3)
+
+4.12E-1(6.93E-3)
+
+3.69E-1(2.46E-2)
+
+4.65E-1(4.44E-3)
+
+6.23E-1(8.86E-2)
+
+2.36E-1(1.15E-2)
+
+9.95E-1(3.50E-4)
+
+1.25E-1(1.42E-2)
+
+2.40E-1(8.01E-2)
+
+5.92E+0(5.65E-4)
+
+2d-LT
+
+9.88E-1(1.86E-3)
+
+9.98E-1(4.68E-4)
+
+9.97E-1(3.64E-4)
+
+9.95E-1(6.66E-4)
+
+1.00E+0(2.46E-4)
+
+9.99E-1(9.27E-4)
+
+9.90E-1(3.60E-4)
+
+1.00E+0(1.40E-4)
+
+9.90E-1(3.78E-3)
+
+9.96E-1(2.68E-3)
+
+1.00E+0(1.38E-3)
+
+1d-C
+
+5.87E-1(9.20E-2)
+
+2.78E-1(8.86E-3)
+
+3.49E-1(2.02E-2)
+
+9.42E-2(9.13E-3)
+
+5.40E-1(1.74E-2)
+
+1.15E-1(1.91E-2)
+
+5.60E-1(1.69E-2)
+
+1.41E+0(1.30E-1)
+
+4.38E-1(1.40E-2)
+
+6.82E-1(1.08E-1)
+
+6.55E-1(4.86E-2)
+
+2d-CG
+
+1.96E+0(3.83E-1)
+
+1.78E+0(8.89E-2)
+
+1.58E+0(1.15E-1)
+
+2.34E+0(1.14E-1)
+
+1.16E+0(1.16E-1)
+
+1.09E+0(1.54E-1)
+
+7.22E-1(1.63E-2)
+
+1.08E+0(1.25E-1)
+
+7.45E-1(2.15E-2)
+
+7.08E-1(9.13E-3)
+
+1.15E+0(1.03E-1)
+
+2d-MS
+
+2.04E+0(7.38E-1)
+
+1.10E+0(4.25E-2)
+
+1.08E+0(6.01E-2)
+
+1.13E+0(4.91E-2)
+
+2.08E+0(7.45E-1)
+
+1.07E+0(1.40E-2)
+
+1.11E+0(1.91E-2)
+
+1.05E+0(1.00E-2)
+
+1.17E+0(4.66E-2)
+
+1.12E+0(8.62E-2)
+
+1.29E+0(2.81E-2)
+
+GS
+
+3.45E-1(4.57E-1)
+
+1.29E-1(1.54E-1)
+
+2.01E-2(5.99E-5)
+
+1.11E-1(4.79E-2)
+
+2.98E-2(6.44E-3)
+
+2.00E-2(6.12E-5)
+
+2.72E-1(1.79E-1)
+
+1.04E+0(3.04E-1)
+
+2.07E-2(9.19E-4)
+
+1.16E-1(1.31E-1)
+
+5.06E-2(1.87E-2)
+
+KS
+
+9.44E-1(8.57E-4)
+
+8.95E-1(2.99E-2)
+
+8.60E-1(3.48E-3)
+
+8.64E-1(3.31E-3)
+
+9.42E-1(8.75E-4)
+
+8.73E-1(8.40E-3)
+
+9.36E-1(6.12E-3)
+
+8.88E-1(9.92E-3)
+
+9.39E-1(3.25E-3)
+
+9.44E-1(9.86E-3)
+
+9.85E-1(3.35E-2)
+
+PNd
+
+2.40E-3(3.44E-4)
+
+2.34E-3(1.27E-3)
+
+3.17E-4(9.16E-6)
+
+4.58E-3(4.56E-3)
+
+2.98E-3(1.24E-3)
+
+3.40E-3(8.71E-4)
+
+4.43E-3(8.45E-4)
+
+–
+
+4.33E-3(1.88E-3)
+
+5.72E-3(1.57E-3)
+
+–
+
+HNd
+
+2.25E-1(3.87E-3)
+
+3.27E-1(5.13E-3)
+
+2.63E-1(1.30E-2)
+
+2.64E-1(1.59E-2)
+
+2.24E-1(2.56E-3)
+
+1.58E-1(2.71E-2)
+
+1.83E-1(5.99E-3)
+
+–
+
+3.42E-1(3.32E-3)
+
+3.40E-1(5.24E-3)
+
+–
+
+PInv
+
+8.30E-2(6.88E-4)
+
+1.14E-1(3.56E-3)
+
+1.14E-1(6.95E-3)
+
+1.33E-1(1.01E-2)
+
+8.35E-2(9.53E-3)
+
+1.13E-1(1.64E-2)
+
+7.33E-2(2.49E-3)
+
+1.96E-2(7.75E-3)
+
+8.12E-1(1.01E+0)
+
+2.18E-1(1.20E-1)
+
+8.39E-1(1.39E-1)
+
+HInv
+
+1.06E+0(5.39E-2)
+
+4.16E-2(3.18E-3)
+
+3.94E-2(1.52E-3)
+
+5.96E-2(2.54E-3)
+
+1.01E+0(5.68E-2)
+
+6.29E-2(8.58E-3)
+
+3.51E+0(1.59E+0)
+
+4.59E-1(1.22E-3)
+
+3.93E-1(3.32E-1)
+
+1.89E-1(6.30E-2)
+
+8.46E-1(7.18E-2)
+
+Table 6: Mean (Std) of L1RE for main experiments.
+
+mERR
+–
+Burgers
+
+Poisson
+
+Heat
+
+NS
+
+Wave
+
+Chaotic
+High dim
+
+Name
+1d-C
+2d-C
+2d-C
+2d-CG
+3d-CG
+2d-MS
+2d-VC
+2d-MS
+2d-CG
+2d-LT
+2d-C
+2d-CG
+2d-LT
+1d-C
+2d-CG
+2d-MS
+GS
+KS
+PNd
+HNd
+
+Vanilla
+PINN
+9.03E-02(6.76E-03)
+4.32E+00(8.01E-02)
+9.41E-01(9.40E-02)
+1.63E+00(1.76E-02)
+1.04E+00(5.37E-02)
+4.87E+00(2.10E-01)
+9.93E-01(7.20E-02)
+9.10E-02(3.20E-02)
+9.40E-01(7.48E-02)
+2.18E+00(6.95E-01)
+2.26E-01(6.33E-03)
+2.06E-01(6.69E-03)
+1.17E+02(5.00E-01)
+9.34E-01(1.16E-01)
+2.00E+00(9.89E-02)
+1.44E+03(2.92E+02)
+3.66E+00(1.00E-01)
+9.84E-01(1.64E-03)
+2.96E-02(1.57E-02)
+5.18E-02(2.21E-02)
+
+Loss Reweighting/Sampling
+LRA
+NTK
+RAR
+1.53E-01(5.64E-02)
+1.33E-01(7.85E-02)
+3.38E-01(2.82E-01)
+3.84E+00(1.96E-01)
+4.07E+00(6.99E-02)
+4.47E+00(1.32E-01)
+5.93E-01(3.87E-01)
+2.94E-02(1.37E-02)
+9.27E-01(9.67E-02)
+3.49E-01(2.49E-01)
+6.81E-02(3.06E-02)
+1.65E+00(1.32E-02)
+3.91E-01(1.40E-01)
+1.12E+00(7.37E-04)
+1.09E+00(1.11E-01)
+9.58E+00(2.05E-01)
+9.66E+00(1.86E-02)
+4.96E+00(2.90E-01)
+2.63E-01(8.90E-03)
+2.67E-01(1.74E-02)
+1.03E+00(7.73E-02)
+1.60E-01(5.65E-02)
+6.65E-02(2.50E-02)
+4.36E-02(1.28E-02)
+6.40E-01(3.70E-02)
+1.14E+00(1.21E-01)
+9.00E-01(1.47E-01)
+1.82E+00(1.60E-02)
+1.83E+00(1.40E-02)
+1.85E+00(1.16E-02)
+nan(nan)
+2.65E-01(3.05E-02)
+2.22E-01(1.42E-02)
+4.97E-01(9.10E-02)
+3.33E-01(3.92E-02)
+2.11E-01(4.38E-03)
+1.21E+02(2.00E-01)
+1.21E+02(6.51E-01)
+1.18E+02(7.69E-01)
+5.17E-01(6.11E-02)
+2.75E-01(2.22E-02)
+8.16E-01(6.80E-02)
+1.95E+00(1.26E-01)
+2.00E+00(1.80E-02)
+1.93E+00(8.80E-02)
+1.95E+03(3.91E+02)
+1.74E+03(2.15E+02)
+1.30E+03(2.72E+02)
+3.48E+00(8.97E-02)
+3.61E+00(6.38E-02)
+3.60E+00(6.85E-02)
+9.83E-01(3.76E-04)
+8.76E-01(1.72E-01)
+9.83E-01(7.11E-04)
+4.05E-03(9.49E-04)
+4.99E-03(4.48E-03)
+2.72E-02(1.17E-02)
+1.29E-01(1.94E-01)
+6.32E-02(3.49E-02)
+4.64E-02(1.59E-02)
+
+Optimizer
+MultiAdam
+4.02E-01(2.04E-01)
+3.99E+00(1.33E-01)
+3.99E-01(3.67E-01)
+5.84E-01(7.86E-02)
+6.88E-01(1.51E-01)
+5.88E+00(6.69E-01)
+4.73E-01(1.07E-01)
+1.58E-01(8.85E-02)
+1.39E+00(2.32E-01)
+1.82E+00(2.40E-02)
+5.67E-01(6.28E-02)
+6.23E-01(1.87E-01)
+1.21E+02(2.40E-01)
+1.26E+00(1.89E-01)
+1.71E+00(5.74E-02)
+1.05E+03(4.29E+01)
+3.41E+00(1.27E-01)
+9.82E-01(1.42E-04)
+3.96E-02(2.29E-02)
+7.92E-03(3.01E-03)
+
+Loss functions
+gPINN
+9.47E-01(1.88E-02)
+3.83E+00(6.03E-03)
+7.99E-01(2.80E-02)
+1.67E+00(5.90E-03)
+7.87E-01(1.34E-01)
+5.01E+00(2.61E-01)
+4.46E+00(1.05E+00)
+7.10E-01(3.05E-01)
+2.20E+00(2.95E-01)
+5.46E+00(6.13E+00)
+4.73E-01(3.17E-02)
+2.94E-01(9.84E-03)
+1.21E+02(5.69E-01)
+1.28E+00(6.21E-02)
+1.73E+00(2.81E-03)
+1.09E+03(4.19E+01)
+3.41E+00(3.54E-02)
+9.84E-01(4.09E-03)
+3.16E-02(1.21E-02)
+5.02E-02(5.95E-03)
+
+Table 7: Mean (Std) of max error for main experiments.
+
+vPINN
+1.84E+00(1.53E-02)
+9.12E+00(3.83E+00)
+2.09E-01(1.30E-02)
+1.62E+00(3.37E-03)
+1.59E-1(7.13E-5)
+9.87E+00(1.20E-03)
+8.83E-01(3.35E-01)
+3.69E-01(1.00E-03)
+4.38E+00(3.48E-01)
+3.09E+00(3.46E-01)
+1.80E-01(1.64E-02)
+4.31E+00(1.47E-02)
+1.23E+02(5.54E-01)
+6.17E-01(5.41E-02)
+1.66E+00(2.19E-02)
+4.43E+02(4.24E+00)
+8.93E-01(6.51E-02)
+3.33E+00(7.80E-02)
+–
+–
+
+LAAF
+2.58E-01(2.96E-01)
+4.11E+00(1.99E-01)
+8.26E-01(2.78E-02)
+1.61E+00(2.51E-02)
+1.14E+00(3.77E-02)
+4.40E+00(4.58E-01)
+7.79E-01(8.19E-02)
+5.53E-02(1.20E-02)
+9.59E-01(5.39E-02)
+1.84E+00(1.51E-02)
+1.84E-01(5.41E-03)
+1.68E-01(2.34E-03)
+1.18E+02(6.76E-01)
+7.40E-01(7.71E-02)
+1.93E+00(1.48E-01)
+1.80E+03(8.80E+01)
+3.76E+00(5.27E-02)
+9.83E-01(6.72E-04)
+5.90E-02(4.88E-02)
+2.04E-02(1.22E-02)
+
+Architecture
+GAAF
+1.88E-01(6.02E-02)
+4.14E+00(1.11E-01)
+5.02E-01(2.37E-03)
+1.49E+00(1.45E-01)
+1.21E+00(2.49E-01)
+8.77E+00(2.15E+00)
+7.85E-01(2.12E-01)
+8.35E-02(4.70E-02)
+3.18E+00(4.99E-01)
+1.81E+00(7.94E-03)
+1.99E-01(9.09E-03)
+1.80E-01(7.47E-03)
+1.19E+02(5.28E-01)
+1.18E+00(3.23E-01)
+1.88E+00(1.13E-01)
+1.45E+03(4.66E+02)
+3.41E+00(1.28E-01)
+9.83E-01(3.76E-04)
+1.76E+00(8.43E-01)
+1.27E+00(1.45E+00)
+
+FBPINN
+1.34E+00(4.98E-1)
+1.71E-1(1.52E-2)
+1.98E-1(3.14E-2)
+1.07E+00(2.63E-02)
+9.87E+00(5.44E-4)
+7.78E-1(1.11E-3)
+1.81E-1(4.94E-3)
+2.83E+00(3.63E-1)
+3.32E+00(6.15E-2)
+2.00E-1(4.73E-2)
+8.00E+00(0.00E+00)
+1.24E+02(7.76E-1)
+8.51E-1(1.11E-1)
+1.65E+00(2.44E-2)
+5.59E+03(1.55E+02)
+8.36E-1(8.16E-2)
+3.30E+00(4.74E-2)
+–
+–
+
+MSE
+
+Name
+
+–
+Burgers
+
+Poisson
+
+Heat
+
+NS
+
+Wave
+
+Chaotic
+
+High dim
+
+Inverse
+
+Vanilla
+
+Loss Reweighting/Sampling
+
+Optimizer
+
+Loss functions
+
+Architecture
+
+PINN
+
+PINN-w
+
+LRA
+
+NTK
+
+RAR
+
+MultiAdam
+
+gPINN
+
+vPINN
+
+LAAF
+
+GAAF
+
+FBPINN
+
+1d-C
+
+7.90E-5(1.78E-5)
+
+2.64E-4(8.69E-5)
+
+3.03E-4(2.62E-4)
+
+1.30E-4(5.19E-5)
+
+5.78E-4(6.31E-4)
+
+9.68E-4(5.51E-4)
+
+1.77E-2(5.58E-3)
+
+5.13E-3(1.90E-3)
+
+1.80E-4(1.35E-4)
+
+3.00E-4(1.56E-4)
+
+1.53E-2(1.03E-2)
+
+2d-C
+
+1.69E-1(7.86E-4)
+
+1.17E-1(3.41E-3)
+
+1.09E-1(4.84E-3)
+
+1.22E-1(4.22E-3)
+
+1.92E-1(5.07E-5)
+
+1.79E-1(9.36E-3)
+
+1.72E-1(1.31E-4)
+
+7.08E-1(5.16E-2)
+
+1.26E-1(1.54E-2)
+
+1.41E-1(1.12E-2)
+
+–
+
+2d-C
+
+1.17E-1(2.98E-3)
+
+3.09E-4(1.25E-4)
+
+7.24E-3(9.95E-3)
+
+5.00E-5(5.33E-5)
+
+1.19E-1(2.55E-3)
+
+1.79E-4(8.84E-5)
+
+1.15E-1(6.22E-3)
+
+4.86E-2(4.43E-3)
+
+1.39E-1(5.67E-3)
+
+9.38E-2(1.91E-2)
+
+7.89E-4(2.17E-4)
+
+2d-CG
+
+1.28E-1(1.03E-3)
+
+1.17E-3(1.83E-4)
+
+6.13E-4(2.31E-4)
+
+6.99E-5(3.50E-5)
+
+1.32E-1(3.23E-3)
+
+2.73E-2(1.92E-2)
+
+1.98E-1(2.28E-3)
+
+2.50E-2(3.80E-4)
+
+7.67E-2(2.73E-3)
+
+1.77E-1(8.70E-2)
+
+4.84E-4(9.87E-5)
+
+3d-CG
+
+2.64E-2(2.67E-3)
+
+1.18E-2(1.97E-3)
+
+9.51E-4(6.51E-4)
+
+7.54E-2(7.86E-5)
+
+2.81E-2(5.15E-3)
+
+1.16E-2(4.42E-3)
+
+2.01E-2(4.93E-3)
+
+4.58E-2(8.04E-5)
+
+2.82E-2(2.62E-3)
+
+2.16E-2(5.87E-3)
+
+4.63E-2(9.28E-3)
+
+2d-MS
+
+2.67E+0(9.04E-2)
+
+3.90E+0(7.16E-2)
+
+4.28E+0(6.83E-1)
+
+3.77E+0(9.98E-2)
+
+2.80E+0(1.87E-1)
+
+2.36E+0(3.15E-1)
+
+2.56E+0(1.43E-1)
+
+6.09E+0(5.46E-1)
+
+1.83E+0(3.00E-1)
+
+5.87E+0(8.72E-1)
+
+6.68E+0(8.23E-4)
+
+2d-VC
+
+4.00E-2(4.94E-3)
+
+2.19E-3(3.21E-4)
+
+1.76E-3(1.43E-5)
+
+1.79E-3(9.80E-5)
+
+3.67E-2(1.42E-3)
+
+9.14E-3(3.13E-3)
+
+1.89E-1(9.44E-2)
+
+3.23E-2(2.26E-2)
+
+1.74E-2(4.35E-3)
+
+2.93E-2(7.12E-3)
+
+3.56E-2(1.71E-4)
+
+2d-MS
+
+1.09E-4(4.94E-5)
+
+1.60E-3(3.35E-4)
+
+2.25E-4(1.22E-4)
+
+5.27E-5(1.18E-5)
+
+1.54E-4(4.17E-5)
+
+1.51E-3(1.25E-3)
+
+3.43E-4(1.87E-5)
+
+2.57E-2(2.22E-3)
+
+1.57E-4(8.06E-5)
+
+3.10E-2(1.15E-2)
+
+2.17E-4(2.47E-5)
+
+2d-CG
+
+2.09E-3(9.69E-4)
+
+3.15E-2(2.08E-3)
+
+2.32E-2(1.59E-3)
+
+2.02E-2(4.15E-3)
+
+1.12E-3(2.65E-4)
+
+7.79E-3(2.63E-3)
+
+1.34E-2(4.13E-3)
+
+1.16E+1(9.04E-2)
+
+8.53E-4(9.74E-5)
+
+3.94E-1(2.71E-1)
+
+5.61E-1(5.96E-2)
+
+2d-LT
+
+1.14E+0(2.38E-5)
+
+1.13E+0(1.82E-4)
+
+1.14E+0(1.67E-4)
+
+1.14E+0(6.41E-4)
+
+1.14E+0(3.55E-4)
+
+1.14E+0(8.74E-5)
+
+1.14E+0(2.23E-4)
+
+1.14E+0(0.00E+0)
+
+1.14E+0(2.20E-4)
+
+1.14E+0(3.27E-4)
+
+1.16E+0(2.83E-4)
+
+2d-C
+
+4.19E-5(2.00E-6)
+
+4.03E-4(6.45E-5)
+
+NaN
+
+7.56E-4(1.90E-4)
+
+4.18E-3(2.05E-4)
+
+1.07E-2(5.67E-3)
+
+1.13E-4(8.77E-6)
+
+5.30E-4(3.50E-4)
+
+2.33E-5(4.71E-6)
+
+2.67E-5(4.71E-6)
+
+1.37E-4(7.24E-5)
+
+2d-CG
+
+6.94E-4(6.45E-5)
+
+5.19E-3(2.43E-4)
+
+5.40E-3(2.49E-4)
+
+4.22E-3(5.82E-4)
+
+5.45E-3(2.13E-5)
+
+9.32E-3(3.09E-3)
+
+1.16E-3(8.97E-5)
+
+1.06E+0(1.61E-2)
+
+3.37E-4(6.60E-5)
+
+1.72E-3(1.33E-3)
+
+3.34E+0(2.97E-5)
+
+2d-LT
+
+5.06E+2(1.21E+0)
+
+5.10E+2(3.40E-1)
+
+5.10E+2(4.13E-1)
+
+5.09E+2(6.15E-1)
+
+5.10E+2(3.42E-1)
+
+5.10E+2(2.23E-1)
+
+5.05E+2(7.30E-1)
+
+5.11E+2(1.76E-2)
+
+5.06E+2(1.82E+0)
+
+5.11E+2(2.99E+0)
+
+5.15E+2(1.77E+0)
+
+1d-C
+
+1.11E-1(3.66E-2)
+
+2.54E-2(1.61E-3)
+
+4.08E-2(4.31E-3)
+
+3.01E-3(4.82E-4)
+
+9.07E-2(6.02E-3)
+
+4.68E-3(1.28E-3)
+
+9.66E-2(5.85E-3)
+
+6.17E-1(1.19E-1)
+
+6.03E-2(2.87E-3)
+
+1.48E-1(4.44E-2)
+
+1.39E-1(1.97E-2)
+
+2d-CG
+
+1.64E-1(6.13E-2)
+
+1.28E-1(1.13E-2)
+
+1.03E-1(1.46E-2)
+
+2.17E-1(2.05E-2)
+
+6.25E-2(1.17E-2)
+
+5.59E-2(1.29E-2)
+
+3.09E-2(8.98E-4)
+
+5.24E-2(9.01E-3)
+
+3.49E-2(3.38E-3)
+
+2.99E-2(4.68E-4)
+
+5.78E-2(7.99E-3)
+
+2d-MS
+
+1.30E+5(4.25E+4)
+
+7.35E+4(1.68E+3)
+
+7.34E+4(1.97E+3)
+
+7.69E+4(4.55E+3)
+
+1.33E+5(4.47E+4)
+
+7.15E+4(8.04E+2)
+
+7.27E+4(5.47E+2)
+
+1.13E+2(1.46E+2)
+
+7.91E+4(2.55E+3)
+
+7.98E+4(8.00E+3)
+
+8.95E+5(1.15E+4)
+
+GS
+
+1.00E-1(1.35E-1)
+
+1.64E-2(1.70E-2)
+
+4.32E-3(4.07E-6)
+
+2.59E-2(1.44E-2)
+
+4.40E-3(8.83E-5)
+
+4.32E-3(1.11E-6)
+
+3.62E-2(2.28E-2)
+
+4.00E-1(2.33E-1)
+
+4.32E-3(4.71E-6)
+
+1.69E-2(1.79E-2)
+
+5.16E-3(1.64E-3)
+
+KS
+
+1.16E+0(2.95E-3)
+
+1.11E+0(5.07E-2)
+
+1.04E+0(6.20E-3)
+
+1.06E+0(1.09E-2)
+
+1.16E+0(1.98E-3)
+
+1.05E+0(1.04E-2)
+
+1.12E+0(8.67E-3)
+
+1.05E+0(2.50E-3)
+
+1.16E+0(4.50E-3)
+
+1.14E+0(2.33E-2)
+
+1.16E+0(5.28E-2)
+
+PNd
+
+9.47E-5(3.47E-5)
+
+8.30E-5(5.53E-5)
+
+2.09E-6(1.69E-7)
+
+4.02E-4(5.23E-4)
+
+1.43E-4(9.92E-5)
+
+1.70E-4(9.61E-5)
+
+2.57E-4(6.31E-5)
+
+–
+
+3.03E-4(2.25E-4)
+
+4.80E-4(2.81E-4)
+
+–
+
+HNd
+
+1.19E+1(2.92E-1)
+
+1.93E+1(3.65E-1)
+
+1.42E+1(9.23E-1)
+
+1.44E+1(9.14E-1)
+
+1.17E+1(2.41E-1)
+
+8.52E+0(2.34E+0)
+
+9.21E+0(3.90E-1)
+
+–
+
+2.49E+1(2.99E-1)
+
+2.50E+1(2.76E-1)
+
+–
+
+PInv
+
+1.89E-3(6.31E-5)
+
+5.89E-3(3.88E-4)
+
+5.08E-3(2.18E-4)
+
+7.94E-3(1.16E-3)
+
+1.89E-3(4.49E-4)
+
+3.64E-3(8.28E-4)
+
+1.37E-3(9.45E-5)
+
+1.23E-4(9.50E-5)
+
+6.25E-1(8.80E-1)
+
+1.87E-2(1.98E-2)
+
+3.98E+0(1.33E+0)
+
+HInv
+
+5.36E+0(4.86E-1)
+
+6.02E-3(7.71E-4)
+
+5.66E-3(9.88E-4)
+
+1.23E-2(1.75E-3)
+
+5.01E+0(4.22E-1)
+
+1.43E-2(4.35E-3)
+
+6.01E+1(3.72E+1)
+
+8.83E-1(6.52E-2)
+
+1.27E+0(1.69E+0)
+
+1.03E-1(4.73E-2)
+
+2.23E+2(5.54E+1)
+
+Table 8: Mean (Std) of MSE for main experiments.
+
+fMSE-L
+–
+Burgers
+
+Poisson
+
+Heat
+
+NS
+
+Wave
+
+Chaotic
+High dim
+
+Name
+1d-C
+2d-C
+2d-C
+2d-CG
+3d-CG
+2d-MS
+2d-VC
+2d-MS
+2d-CG
+2d-LT
+2d-C
+2d-CG
+2d-LT
+1d-C
+2d-CG
+2d-MS
+GS
+KS
+PNd
+HNd
+
+Vanilla
+PINN
+2.21E-02(1.02E-02)
+4.85E+01(9.27E+00)
+–
+–
+–
+1.74E+03(6.29E+01)
+4.78E+00(5.53E-01)
+1.56E-01(2.33E-01)
+–
+3.90E+02(6.18E+02)
+4.29E-02(3.76E-02)
+–
+2.07E+05(9.61E+02)
+5.38E+01(1.52E+01)
+2.42E+01(1.08E+01)
+3.72E+08(3.03E+08)
+1.45E+02(4.99E+00)
+1.65E+01(3.09E+01)
+–
+–
+
+Loss Reweighting/Sampling
+LRA
+NTK
+RAR
+1.46E-02(1.77E-02)
+1.75E-01(2.76E-01)
+5.02E-01(6.21E-01)
+8.18E+01(1.24E+01)
+8.36E+01(1.07E+01)
+4.77E+01(6.85E+00)
+–
+–
+–
+–
+–
+–
+–
+–
+–
+8.62E+03(1.10E+03)
+8.62E+03(6.08E+02)
+2.99E+03(2.59E+02)
+3.66E-02(8.92E-03)
+3.58E-01(2.81E-01)
+2.00E+00(1.49E+00)
+1.12E-01(1.76E-01)
+1.46E+00(1.60E+00)
+3.55E-01(3.96E-01)
+–
+–
+–
+2.71E+01(3.42E-02)
+2.75E+01(5.86E-01)
+2.70E+01(1.36E-01)
+–
+3.74E-01(1.26E-01)
+2.35E-02(1.24E-02)
+–
+–
+–
+2.05E+05(2.37E+02)
+2.07E+05(5.52E+02)
+2.06E+05(4.53E+02)
+4.81E-01(5.90E-01)
+4.65E-01(4.37E-01)
+1.10E+02(7.79E+01)
+3.47E+02(2.09E+02)
+5.26E+02(5.40E+01)
+1.75E+02(1.90E+02)
+8.91E+05(1.18E+06)
+7.01E+05(3.95E+05)
+3.93E+08(3.18E+08)
+1.44E+01(1.09E+01)
+7.79E+00(4.79E+00)
+2.96E+02(7.67E+01)
+1.06E+00(5.77E-03)
+3.81E+02(2.09E+02)
+1.03E+00(6.13E-02)
+–
+–
+–
+–
+–
+–
+
+Optimizer
+MultiAdam
+1.19E-01(2.00E-01)
+1.39E+02(5.63E+01)
+–
+–
+–
+3.46E+03(1.93E+03)
+2.78E+00(3.95E+00)
+3.48E-01(3.43E-01)
+–
+2.70E+01(9.84E-02)
+2.20E+01(2.96E+01)
+–
+2.05E+05(2.78E+02)
+3.57E+02(1.97E+02)
+1.25E+02(9.42E+01)
+2.39E+06(2.83E+06)
+6.51E+00(9.23E+00)
+1.07E+00(6.48E-03)
+–
+–
+
+Loss functions
+gPINN
+1.79E+00(1.99E+00)
+8.89E+01(3.98E+00)
+–
+–
+–
+7.41E+03(5.99E+02)
+2.91E+03(1.84E+03)
+1.37E+01(1.38E+01)
+–
+3.34E+05(6.48E+05)
+6.97E-01(4.72E-01)
+–
+2.05E+05(2.96E+02)
+3.00E+02(8.28E+01)
+8.10E+01(6.42E+00)
+1.85E+06(1.89E+06)
+5.26E+01(2.87E+01)
+1.38E+02(6.24E+00)
+–
+–
+
+Table 9: Mean (Std) of low-frequency Fourier error for main experiments.
+
+vPINN
+1.40E+01(1.06E+00)
+4.54E+03(5.57E+03)
+–
+–
+–
+1.13E+04(4.70E+01)
+1.74E+00(1.04E+00)
+–
+–
+2.63E+01(7.51E-01)
+5.38E-01(1.29E-01)
+–
+4.87E+04(1.64E+02)
+2.85E+01(8.07E+00)
+1.25E+01(4.98E+00)
+1.13E+02(9.57E-01)
+2.79E+01(2.09E+01)
+1.24E+02(1.76E+01)
+–
+–
+
+LAAF
+1.32E-01(2.50E-01)
+8.34E+01(7.63E+00)
+–
+–
+–
+2.61E+03(5.60E+02)
+1.43E+00(1.87E+00)
+3.50E-01(2.74E-01)
+–
+2.70E+01(1.56E-01)
+1.34E-02(1.03E-02)
+–
+2.07E+05(7.29E+02)
+1.98E+01(1.48E+01)
+4.36E+02(4.69E+02)
+3.08E+06(2.04E+06)
+2.69E+02(1.34E+01)
+1.08E+00(1.41E-02)
+–
+–
+
+Architecture
+GAAF
+9.38E-02(1.47E-01)
+9.27E+01(7.53E+00)
+–
+–
+–
+1.24E+04(5.71E+03)
+1.28E+01(2.08E+01)
+1.11E+00(1.01E+00)
+–
+2.71E+01(3.78E-02)
+1.73E-02(8.42E-03)
+–
+2.06E+05(7.01E+02)
+3.89E+02(3.79E+02)
+7.19E+01(6.05E+01)
+4.33E+06(8.23E+06)
+4.89E+01(5.30E+01)
+1.04E+00(2.96E-02)
+–
+–
+
+FBPINN
+2.10E+00(1.50E+00)
+–
+–
+–
+–
+5.90E+03(6.03E+00)
+4.34E+00(2.13E-2)
+–
+–
+8.47E+01(7.99E-1)
+2.47E-2(2.70E-3)
+–
+–
+6.01E+01(1.46E+01)
+1.49E+01(3.22E+00)
+1.10E+07(1.93E+06)
+3.49E+00(2.45E+00)
+–
+–
+–
+
+fMSE-M
+–
+Burgers
+
+Poisson
+
+Heat
+
+NS
+
+Wave
+
+Chaotic
+High dim
+
+Name
+1d-C
+2d-C
+2d-C
+2d-CG
+3d-CG
+2d-MS
+2d-VC
+2d-MS
+2d-CG
+2d-LT
+2d-C
+2d-CG
+2d-LT
+1d-C
+2d-CG
+2d-MS
+GS
+KS
+PNd
+HNd
+
+Vanilla
+PINN
+1.43E-03(1.93E-04)
+3.28E-01(4.31E-03)
+–
+–
+–
+6.57E+00(3.70E-02)
+2.75E-02(2.11E-03)
+7.35E-04(7.70E-04)
+–
+2.11E+00(3.00E+00)
+1.72E-04(9.81E-05)
+–
+1.00E-02(9.51E-04)
+1.61E-01(3.55E-02)
+8.29E-02(6.50E-03)
+1.47E+04(1.73E+04)
+5.39E+01(2.19E-01)
+5.54E-01(1.46E-02)
+–
+–
+
+Loss Reweighting/Sampling
+LRA
+NTK
+RAR
+2.94E-05(2.03E-05)
+9.34E-05(7.38E-05)
+7.51E-05(6.01E-05)
+2.23E-01(3.59E-02)
+2.11E-01(2.04E-02)
+3.32E-01(4.83E-03)
+–
+–
+–
+–
+–
+–
+–
+–
+–
+1.70E+01(4.14E+00)
+1.47E+01(1.54E+00)
+1.18E+01(2.32E+00)
+1.46E-03(4.26E-04)
+7.99E-03(1.17E-02)
+1.01E-01(7.00E-02)
+4.55E-05(5.24E-05)
+1.26E-04(3.07E-05)
+2.07E-05(1.15E-05)
+–
+–
+–
+1.59E+02(1.37E-01)
+1.59E+02(1.97E-01)
+1.59E+02(2.12E-01)
+–
+3.96E-03(3.45E-03)
+1.48E-04(6.28E-05)
+–
+–
+–
+2.63E-02(2.55E-03)
+1.49E-02(3.02E-03)
+1.06E-02(9.30E-04)
+7.58E-03(8.03E-03)
+3.62E-02(8.80E-03)
+8.55E-01(3.57E-01)
+1.06E-03(1.01E-03)
+8.18E-04(2.57E-04)
+8.27E-04(3.83E-04)
+1.31E+05(1.66E+05)
+1.78E+05(9.50E+04)
+2.39E+04(4.63E+04)
+7.94E-02(5.38E-02)
+3.37E-02(9.80E-03)
+6.27E-02(1.76E-02)
+5.45E-01(2.42E-03)
+5.60E-01(2.11E-02)
+5.47E-01(3.82E-03)
+–
+–
+–
+–
+–
+–
+
+Optimizer
+MultiAdam
+6.18E-04(5.93E-04)
+3.25E-01(1.15E-03)
+–
+–
+–
+5.61E+00(3.18E+00)
+1.54E-02(1.23E-02)
+3.13E-03(3.56E-03)
+–
+1.59E+02(3.85E-02)
+1.48E-01(2.31E-01)
+–
+2.52E-02(4.51E-03)
+2.63E+00(2.04E+00)
+3.12E-03(2.43E-03)
+2.39E+05(1.80E+05)
+8.88E-02(8.20E-02)
+5.46E-01(6.98E-05)
+–
+–
+
+Loss functions
+gPINN
+6.69E-03(1.40E-03)
+3.03E+00(3.63E+00)
+–
+–
+–
+8.26E+00(5.99E-01)
+6.91E+01(1.07E+02)
+2.65E-03(1.55E-03)
+–
+1.59E+02(1.81E-01)
+5.84E-03(9.82E-04)
+–
+2.12E-02(2.08E-03)
+2.50E+00(9.12E-01)
+1.36E-03(3.20E-04)
+1.82E+04(2.13E+04)
+1.72E-01(3.91E-02)
+5.48E-01(1.06E-02)
+–
+–
+
+vPINN
+3.00E+00(2.22E-01)
+3.23E-01(2.30E-04)
+–
+–
+–
+2.88E+01(2.37E-01)
+9.26E-03(3.06E-03)
+7.57E-02(2.40E-03)
+–
+4.57E-01(2.67E-02)
+2.86E-03(1.58E-03)
+–
+–
+5.93E-01(6.18E-02)
+4.73E-02(3.85E-03)
+4.75E+01(2.01E+00)
+2.36E-02(1.40E-02)
+–
+–
+–
+
+Table 10: Mean (Std) of medium-frequency Fourier error for main experiments.
+
+LAAF
+3.53E-05(5.77E-05)
+3.25E-01(2.89E-02)
+–
+–
+–
+1.26E+01(3.53E+00)
+3.58E-02(2.86E-02)
+6.19E-05(1.89E-05)
+–
+1.59E+02(2.20E-01)
+1.05E-04(8.46E-05)
+–
+1.05E-02(1.37E-03)
+1.96E-01(1.46E-01)
+4.73E-02(3.85E-03)
+1.62E+05(1.72E+05)
+4.62E-02(6.99E-03)
+5.46E-01(3.93E-04)
+–
+–
+
+Architecture
+GAAF
+1.72E-05(1.72E-05)
+2.95E-01(1.71E-02)
+–
+–
+–
+9.87E+00(2.25E+00)
+8.90E-01(1.27E+00)
+1.05E-04(1.25E-04)
+–
+1.59E+02(1.36E-01)
+4.46E-05(3.38E-05)
+–
+1.26E-02(2.12E-03)
+1.48E+00(9.12E-01)
+1.53E-03(5.15E-04)
+3.15E+05(4.71E+05)
+1.35E-01(1.17E-01)
+5.46E-01(1.23E-03)
+–
+–
+
+FBPINN
+4.88E-1(3.65E-1)
+–
+–
+–
+–
+2.03E+01(2.50E-3)
+1.56E-2(2.62E-4)
+Nan
+–
+8.91E-1(4.84E-2)
+2.18E-5(2.47E-6)
+–
+4.53E+00(1.83E-2)
+8.48E-2(2.36E-2)
+1.49E-03(5.58E-04)
+6.18E+04(3.16E+04)
+5.08E-2(3.92E-2)
+–
+
+fMSE-H
+–
+Burgers
+
+Poisson
+
+Heat
+
+NS
+
+Wave
+
+Chaotic
+High dim
+
+Name
+1d-C
+2d-C
+2d-C
+2d-CG
+3d-CG
+2d-MS
+2d-VC
+2d-MS
+2d-CG
+2d-LT
+2d-C
+2d-CG
+2d-LT
+1d-C
+2d-CG
+2d-MS
+GS
+KS
+PNd
+HNd
+
+Vanilla
+PINN
+2.96E-05(9.65E-06)
+6.78E-02(1.23E-03)
+–
+–
+–
+1.68E-02(4.05E-04)
+4.22E-04(2.39E-04)
+6.81E-06(5.66E-06)
+–
+2.10E-01(1.45E-02)
+4.89E-06(1.01E-06)
+–
+1.09E+02(1.92E-01)
+1.25E-03(3.43E-04)
+6.39E-03(1.09E-03)
+7.61E+04(4.06E+03)
+5.30E-01(1.48E-03)
+1.27E-03(2.94E-04)
+–
+–
+
+Loss Reweighting/Sampling
+LRA
+NTK
+RAR
+1.85E-04(8.34E-05)
+1.48E-04(1.36E-04)
+2.39E-03(2.55E-03)
+5.33E-02(1.37E-03)
+5.43E-02(1.56E-03)
+6.78E-02(1.08E-03)
+–
+–
+–
+–
+–
+–
+–
+–
+–
+2.07E+00(3.81E-01)
+2.23E+00(1.14E-01)
+1.89E+00(2.11E-01)
+1.88E-03(1.07E-04)
+1.90E-03(7.60E-05)
+3.02E-02(3.49E-03)
+7.12E-05(4.00E-05)
+9.24E-05(6.51E-05)
+9.91E-05(1.35E-04)
+–
+–
+–
+7.73E-01(2.31E-04)
+7.72E-01(2.41E-04)
+7.72E-01(9.35E-05)
+–
+2.05E-04(4.41E-05)
+3.80E-06(3.71E-07)
+–
+–
+–
+1.11E+02(3.51E-02)
+1.10E+02(1.61E-01)
+1.09E+02(1.16E-01)
+3.43E-02(9.35E-03)
+4.28E-03(6.00E-04)
+7.06E-02(7.51E-03)
+3.93E-02(1.01E-02)
+4.80E-02(3.17E-03)
+3.31E-02(9.96E-03)
+7.51E+04(1.67E+03)
+7.90E+04(4.65E+03)
+7.62E+04(5.81E+03)
+1.04E+00(7.44E-03)
+1.05E+00(4.11E-03)
+1.12E+00(2.99E-03)
+1.11E-03(1.32E-06)
+2.17E-03(2.09E-03)
+1.12E-03(2.36E-05)
+–
+–
+–
+–
+–
+–
+
+Optimizer
+MultiAdam
+6.16E-04(4.21E-04)
+7.07E-02(7.45E-04)
+–
+–
+–
+2.30E+00(5.97E-01)
+1.15E-02(8.98E-03)
+5.69E-04(3.34E-04)
+–
+7.73E-01(2.03E-04)
+2.16E-03(5.85E-04)
+–
+1.10E+02(2.72E-01)
+8.96E-02(1.06E-02)
+2.70E-02(4.96E-03)
+7.35E+04(3.05E+02)
+1.04E+00(5.34E-03)
+1.11E-03(7.08E-09)
+–
+–
+
+Loss functions
+gPINN
+1.09E-01(8.12E-03)
+6.80E-02(2.95E-04)
+–
+–
+–
+8.62E-01(3.40E-02)
+1.99E+00(9.14E-01)
+1.03E-02(3.68E-03)
+–
+7.95E-01(4.27E-02)
+1.32E-03(3.12E-04)
+–
+1.10E+02(1.00E-01)
+8.64E-02(5.08E-03)
+3.09E-02(5.50E-04)
+7.49E+04(5.94E+02)
+1.10E+00(2.14E-03)
+7.28E-03(1.16E-03)
+–
+–
+
+Table 11: Mean (Std) of high-frequency Fourier error for main experiments.
+
+vPINN
+1.40E-02(1.26E-03)
+2.31E-01(2.46E-01)
+–
+–
+–
+5.44E-02(4.98E-03)
+5.11E-04(3.47E-04)
+1.99E-03(1.45E-04)
+–
+2.70E-01(2.79E-02)
+6.98E-06(4.41E-06)
+–
+4.51E+02(3.00E+00)
+6.15E-04(7.67E-05)
+3.03E-03(2.29E-04)
+–
+1.70E-03(1.01E-03)
+4.48E-01(1.76E-03)
+–
+–
+
+LAAF
+7.15E-04(1.24E-03)
+5.84E-02(1.19E-03)
+–
+–
+–
+1.27E+00(2.34E-01)
+2.43E-02(2.66E-03)
+8.63E-05(3.67E-05)
+–
+7.73E-01(1.59E-04)
+1.18E-06(2.56E-07)
+–
+1.09E+02(1.30E-01)
+5.34E-02(2.92E-03)
+4.91E-02(3.19E-02)
+8.09E+04(2.45E+03)
+1.12E+00(2.14E-03)
+1.11E-03(1.45E-07)
+–
+–
+
+Architecture
+GAAF
+1.93E-04(7.30E-05)
+5.98E-02(1.01E-03)
+–
+–
+–
+3.07E+00(1.14E+00)
+2.63E-02(1.52E-02)
+1.62E-04(1.36E-04)
+–
+7.72E-01(8.87E-05)
+2.05E-06(7.23E-07)
+–
+1.09E+02(4.04E-01)
+8.45E-02(1.85E-02)
+2.54E-02(2.53E-03)
+8.09E+04(6.69E+03)
+1.09E+00(7.71E-03)
+1.11E-03(7.82E-07)
+–
+–
+
+FBPINN
+6.87E-3(4.12E-3)
+–
+–
+–
+–
+7.17E-2(8.16E-6)
+6.39E-5(3.77E-6)
+–
+–
+2.05E-1(4.46E-4)
+6.48E-8(1.75E-8)
+–
+–
+–
+5.11E-3(1.86E-4)
+–
+–
+–
+–
+–
+
+Avg Runtime
+–
+Burgers
+
+Poisson
+
+Heat
+
+NS
+
+Wave
+
+Chaotic
+High dim
+Inverse
+
+Name
+1d-C
+2d-C
+2d-C
+2d-CG
+3d-CG
+2d-MS
+2d-VC
+2d-MS
+2d-CG
+2d-LT
+2d-C
+2d-CG
+2d-LT
+1d-C
+2d-CG
+2d-MS
+GS
+KS
+PNd
+HNd
+PInv
+HInv
+
+Vanilla
+PINN
+PINN-w
+2.84E+2
+2.78E+2
+3.11E+3
+3.11E+3
+3.39E+2
+3.33E+2
+3.69E+2
+3.59E+2
+1.45E+3
+2.32E+3
+3.83E+2
+3.74E+2
+1.16E+3
+1.16E+3
+1.13E+3
+1.14E+3
+1.16E+3
+1.17E+3
+1.15E+3
+1.18E+3
+7.52E+2
+7.64E+2
+7.56E+2
+7.58E+2
+3.05E+3
+3.05E+3
+3.50E+2
+3.52E+2
+1.21E+3
+1.24E+3
+2.19E+3
+2.19E+3
+2.55E+3
+2.55E+3
+1.40E+3
+1.40E+3
+1.78E+3
+1.83E+3
+2.35E+3
+2.45E+3
+4.53E+2
+4.88E+2
+1.09E+3
+1.12E+3
+
+Loss Reweighting/Sampling
+LRA
+NTK
+7.64E+2
+6.70E+2
+1.84E+4
+4.35E+3
+9.01E+2
+8.09E+2
+9.36E+2
+8.80E+2
+4.06E+3
+4.40E+3
+7.47E+2
+8.74E+2
+3.52E+3
+1.69E+3
+3.48E+3
+1.61E+3
+5.14E+3
+1.64E+3
+3.52E+3
+1.65E+3
+2.24E+3
+1.84E+3
+3.26E+3
+1.84E+3
+2.25E+4
+4.29E+3
+1.12E+3
+8.40E+2
+4.50E+3
+1.77E+3
+6.76E+3
+5.02E+3
+7.57E+3
+3.17E+3
+3.17E+3
+3.59E+3
+4.30E+3
+4.75E+3
+7.42E+3
+6.28E+3
+1.25E+3
+1.71E+3
+3.39E+3
+1.68E+3
+
+Optimizer
+MultiAdam
+5.06E+2
+2.72E+3
+6.13E+2
+6.57E+2
+2.41E+3
+6.67E+2
+1.91E+3
+1.89E+3
+1.90E+3
+1.90E+3
+1.25E+3
+1.22E+3
+3.73E+3
+2.72E+2
+2.01E+3
+4.12E+3
+4.22E+3
+2.29E+3
+3.02E+3
+4.00E+3
+7.46E+2
+1.77E+3
+
+Loss functions
+gPINN
+vPINN
+6.28E+2
+2.85E+2
+4.03E+3
+8.95E+2
+7.66E+2
+3.29E+2
+8.06E+2
+3.55E+2
+5.01E+3
+1.94E+3
+7.92E+2
+1.81E+3
+1.34E+3
+3.03E+3
+1.30E+3
+1.69E+3
+1.31E+3
+3.05E+3
+1.32E+3
+2.12E+3
+2.03E+3
+5.68E+2
+1.97E+3
+6.79E+2
+4.42E+3
+1.38E+3
+7.75E+2
+2.22E+2
+1.27E+3
+5.99E+2
+6.18E+3
+2.11E+3
+2.59E+3
+6.12E+2
+3.83E+3
+7.14E+2
+1.91E+3
+–
+2.74E+3
+–
+1.50E+3
+4.90E+2
+1.56E+3
+1.86E+3
+
+Table 12: Average running time (seconds) for main experiments, we run all methods three times with 20000 epochs.
+
+LAAF
+3.61E+2
+4.08E+3
+5.72E+2
+6.05E+2
+2.01E+3
+6.62E+2
+1.52E+3
+1.51E+3
+1.52E+3
+1.51E+3
+9.49E+2
+9.35E+2
+3.99E+3
+6.01E+2
+2.35E+3
+2.63E+3
+3.23E+3
+1.62E+3
+3.50E+3
+3.09E+3
+5.75E+2
+1.44E+3
+
+Architecture
+GAAF
+3.56E+2
+4.07E+3
+4.20E+2
+4.34E+2
+1.68E+3
+4.57E+2
+1.52E+3
+1.50E+3
+1.51E+3
+1.50E+3
+9.43E+2
+9.31E+2
+3.99E+3
+4.36E+2
+1.57E+3
+2.25E+3
+3.22E+3
+1.63E+3
+2.33E+3
+3.08E+3
+5.88E+2
+1.44E+3
+
+FBPINN
+1.11E+3
+–
+4.12E+3
+4.17E+3
+2.18E+3
+4.22E+3
+3.92E+3
+5.84E+3
+5.28E+3
+3.93E+3
+7.16E+3
+5.48E+3
+4.10E+3
+3.09E+3
+3.01E+3
+3.67E+3
+5.47E+3
+8.83E+3
+–
+–
+3.63E+3
+3.93E+3
+
+Preprint, under review
+
+L2RE
+PINN
+PINN-LRA
+
+PINN-NTK
+
+1e-5
+1e-4
+1e-3
+1e-2
+decay
+1e-5
+1e-4
+1e-3
+1e-2
+decay
+1e-5
+1e-4
+1e-3
+1e-2
+decay
+
+Burgers1d
+2.35E-2(1.90E-3)
+1.99E-2(4.30E-3)
+1.93E-2(4.00E-3)
+3.79E-1(1.40E-1)
+1.69E-2(4.10E-3)
+3.44E-2(1.40E-2)
+2.12E-2(5.30E-3)
+1.49E-2(9.60E-4)
+6.23E-1(7.40E-2)
+1.37E-2(5.00E-4)
+1.08E-1(2.70E-2)
+4.72E-2(8.70E-3)
+2.91E-2(7.40E-3)
+NaN
+1.74E-2(2.30E-3)
+
+GS
+9.39E-2(3.60E-4)
+1.79E-1(1.20E-1)
+9.35E-2(2.30E-4)
+1.91E-1(1.30E-1)
+1.81E-1(1.20E-1)
+1.79E-1(1.20E-1)
+9.36E-2(4.50E-4)
+9.37E-2(3.63E-5)
+1.29E-1(5.10E-2)
+1.81E-1(1.20E-1)
+4.09E-1(1.20E-3)
+1.96E-1(1.40E-1)
+2.99E-1(1.50E-1)
+1.90E+0(1.63E+0)
+3.06E-1(1.50E-1)
+
+Heat2d-CG
+1.20E-1(2.40E-3)
+1.35E-1(2.00E-2)
+8.51E-2(8.90E-3)
+1.73E-1(7.10E-2)
+1.59E-1(2.00E-2)
+1.18E-1(7.60E-4)
+1.37E-1(8.50E-3)
+1.31E-1(9.60E-3)
+8.99E-2(7.00E-3)
+1.19E-1(1.30E-2)
+1.21E-1(2.80E-3)
+1.27E-1(5.30E-3)
+1.21E-1(9.50E-3)
+NaN
+1.48E-1(9.60E-3)
+
+Poisson2d-C
+1.08E+0(1.08E-1)
+2.81E-2(2.44E-3)
+2.32E-2(1.52E-3)
+3.26E-2(1.51E-3)
+2.41E-2(9.33E-4)
+2.91E-2(3.19E-3)
+2.49E-2(3.88E-3)
+2.26E-2(1.93E-3)
+1.00E+0(5.62E-7)
+2.61E-2(7.64E-4)
+1.86E-3(1.26E-4)
+2.30E-3(9.48E-4)
+5.34E-3(1.22E-4)
+2.39E-1(2.00E-1)
+8.24E-4(1.32E-4)
+
+Table 13: Results of PINN, PINN-NTK, PINN-LRA under different learning rates or learning rate
+schedules.
+L2RE
+PINN
+
+PINN-LRA
+
+512
+2048
+8192
+32768
+512
+2048
+8192
+32768
+
+Burgers1d
+4.59E-1(8.36E-2)
+2.60E-1(2.43E-1)
+2.14E-2(1.76E-3)
+1.44E-2(4.91E-4)
+2.80E-1(2.02E-1)
+1.82E-1(1.85E-1)
+1.88E-2(9.45E-4)
+1.49E-2(1.51E-3)
+
+GS
+2.46E-1(1.09E-1)
+9.37E-2(2.60E-4)
+9.41E-2(6.05E-4)
+9.37E-2(3.89E-5)
+9.39E-2(1.66E-4)
+1.33E-1(5.57E-2)
+9.36E-2(2.14E-4)
+1.17E-1(3.25E-2)
+
+Heat2d-CG
+4.31E-1(6.57E-2)
+2.02E-1(1.92E-2)
+1.35E-1(1.71E-2)
+3.73E-2(3.23E-3)
+3.66E-1(3.86E-2)
+2.07E-1(4.96E-3)
+1.01E-1(2.18E-2)
+4.44E-2(1.05E-2)
+
+Poisson2d-C
+3.15E-2(4.04E-3)
+2.62E-2(2.31E-3)
+2.58E-2(6.51E-4)
+2.63E-2(2.32E-3)
+3.00E-2(3.16E-3)
+2.57E-2(1.78E-3)
+2.82E-2(8.12E-4)
+2.49E-2(6.32E-4)
+
+Table 14: Comparison of PINN and PINN-LRA’s performance under different batch sizes (number of
+collocation points).
+E.2
+
+A BLATION E XPERIMENTS
+
+Influence of learning rates. To understand the impact of learning rates We selected three methods,
+i.e., vanilla Physics-Informed Neural Networks (PINN), PINN-NTK, and PINN-LRA. We conduct
+experiments on four PDE problems, i.e., Burgers1d-C, GS, Heat2d-CG, and Poisson2d-C. The
+comparative analysis involved evaluating the performance of these methods using learning rates of
+1e-5, 1e-4, 1e-3, and 1e-2, along with a step learning rate decay strategy implemented every 1000
+epochs with a decay factor of 0.75. The results are shown in Table E.2. As stated in the main text, a
+moderate learning rate like 1e-3, 1e-4, or using a decay strategy is a good choice.
+Influence of batch size (Collocation points). To further understand the impact of the number
+of collocation points on our model’s performance, we conducted an ablation study. We used four
+different numbers of collocation points, specifically 512, 2048, 8192, and 32768. The cases tested
+in this study were burgers1d, GS, Heat2d-CG, and Poisson2d, which is the same as the ablation
+study on learning rates. We utilized two variants of Physics-Informed Neural Networks: the vanilla
+PINN and the PINN-LRA. We found that using more batch size leads to a continual improvement in
+performance. For some cases, 8192 is a enough large batch size and the performance saturates. The
+conclusions and plots of this experiment are shown in the main text.
+Influence of training epochs. In this ablation study, we examine the impact of varying the number
+of training epochs on our model’s performance. We selected four different values, specifically 5k,
+20k, 80k, and 160k epochs. Similar to the previous study, the cases chosen for testing were burgers1d,
+GS, Heat2d-CG, and Poisson2d. The trend is that training more epochs leads to better performance.
+However, it is easier to saturate than a larger batch size.
+Influence of Adam hyperparameters. Here we examine the impact of varying the momentum
+hyperparameters in the Adam optimizer. Despite the learning rate, Adam contains two momentum
+39
+
+Preprint, under review
+
+L2RE
+PINN
+PINN-LRA
+
+5k
+20k
+80k
+160k
+5k
+20k
+80k
+160k
+
+Burgers1d-C
+3.71E-2(1.21E-2)
+1.66E-2(1.87E-3)
+1.42E-2(6.63E-4)
+1.38E-2(5.45E-4)
+3.60E-2(8.82E-3)
+1.56E-2(8.87E-4)
+1.42E-2(1.23E-3)
+1.35E-2(1.84E-4)
+
+GS
+2.40E-1(1.11E-1)
+1.65E-1(1.01E-1)
+9.36E-2(8.41E-5)
+9.38E-2(5.38E-5)
+1.64E-1(9.91E-2)
+1.09E-1(2.19E-2)
+9.38E-2(1.63E-4)
+9.38E-2(5.48E-4)
+
+Heat2d-CG
+1.23E-1(3.77E-3)
+8.95E-2(2.29E-2)
+9.64E-2(1.85E-2)
+8.21E-2(7.52E-3)
+1.18E-1(2.32E-3)
+9.29E-2(1.97E-2)
+1.05E-1(1.48E-2)
+1.19E-1(2.28E-2)
+
+Poisson2d-C
+3.84E-2(1.77E-3)
+2.38E-2(1.43E-3)
+1.86E-2(3.26E-3)
+1.48E-2(1.55E-3)
+3.87E-2(3.28E-3)
+2.65E-2(1.92E-3)
+1.79E-2(4.19E-4)
+1.66E-2(3.50E-3)
+
+Table 15: Performance of PINNs and PINN-LRA with different numbers of training epochs on 4
+cases.
+L2RE
+(0.9,0.999)
+(0.9,0.99)
+PINN
+(0.9,0.9)
+(0.99,0.99)
+(0.9,0.999)
+(0.9,0.99)
+PINN-NTK
+(0.9,0.9)
+(0.99,0.99)
+
+burgers
+1.79E-2(2.20E-3)
+1.52E-2(1.34E-4)
+1.68E-2(2.45E-3)
+1.35E-2(1.03E-4)
+1.60E-2(5.50E-4)
+1.57E-2(1.34E-4)
+1.74E-2(1.40E-3)
+1.35E-2(2.27E-4)
+
+GS
+2.47E-1(1.09E-1)
+9.38E-2(5.93E-5)
+9.38E-2(1.98E-4)
+9.37E-2(1.38E-5)
+1.79E-1(1.20E-1)
+9.37E-2(5.93E-5)
+9.37E-2(2.11E-4)
+9.37E-2(1.54E-5)
+
+HeatComplex
+7.76E-2(8.27E-3)
+5.10E-2(7.20E-3)
+4.56E-2(2.55E-3)
+2.98E-2(5.24E-3)
+7.37E-2(1.59E-2)
+6.65E-2(7.20E-3)
+8.12E-2(3.33E-2)
+3.62E-2(1.60E-3)
+
+Poisson2d
+2.72E-2(2.40E-3)
+3.00E-2(6.98E-3)
+2.81E-2(3.95E-3)
+9.18E-3(4.90E-4)
+1.40E-2(4.06E-3)
+1.57E-2(3.03E-3)
+2.45E-2(3.64E-3)
+2.85E-3(1.68E-4)
+
+Table 16: Performance comparison of PINN and PINN-NTK under different momentum parameters
+of Adam optimizer.
+hyperparameters, i.e., (β1 , β2 ) for storing the approximate first and second-order momentum. In
+experiments, we observe that the momentum parameters not only affect the convergence speed and
+stability but also influence the final error. Here we list the results in Table E.2. We observe that in
+average (β1 , β2 ) = (0.99, 0.99) achieves the best results compared with others.
+Other method-specific parameters
+We chose several different method-specific hyperparameters to study their influence.
+Influence of momentum parameters for loss reweighting. Here we choose the momentum update
+α from {0.01, 0.05, 0.2, 0.4, 0.7}. We see that the optimal value of α is problem-dependent. However,
+we observe that relatively small α achieves better performance.
+Influence of weight for gPINNs. Here we choose the weight of gPINNs w from
+{0.001, 0.01, 0.1, 1}. We see that the optimal value of w is also problem-dependent and the property
+is intriguing. We observe that the performance of gPINNs is bad on Poisson2d-C for all values of
+w. We suggest that adding higher-order PDE residuals might harm the training process in some
+situations.
+Influence of number of grids for hp-VPINNs. The number of points to compute integral within a
+domain Q and number of grids Ngrid are two critical hyperparameters for hp-VPINN. Here we choose
+Q from {5, 10, 15, 20} for 2-dimensional problems and {6, 8, 10, 12} for 3-dimensional problems to
+investigate their influence. We also take Ngrid into consideration, which varies in {4, 8, 16, 32} for
+2-dimensional problems and 3-dimensional problems. Different parameter selection is applied due to
+α
+0.01
+0.05
+0.1
+0.2
+0.4
+0.7
+
+Burgers1d
+2.45E-2(1.75E-3)
+5.20E-2(2.14E-2)
+1.99E-2(5.61E-3)
+2.04E-2(3.66E-3)
+3.53E-2(2.47E-2)
+2.00E-2(3.72E-3)
+
+GS
+9.37E-2(4.25E-5)
+9.37E-2(3.48E-5)
+9.37E-2(1.70E-5)
+9.37E-2(1.03E-5)
+1.75E-1(1.15E-1)
+9.37E-2(4.21E-5)
+
+Heat2d-CG
+1.18E-1(4.72E-3)
+1.25E-1(7.62E-3)
+1.28E-1(4.66E-3)
+1.55E-1(3.31E-2)
+1.35E-1(7.37E-3)
+1.90E-1(4.09E-2)
+
+Poisson2d-C
+2.51E-2(8.40E-3)
+2.63E-2(1.10E-2)
+2.62E-1(3.00E-1)
+4.69E-2(1.37E-2)
+1.14E-1(1.23E-1)
+3.50E-1(2.24E-1)
+
+Table 17: Performance comparison of PINN-LRA with different momentum parameters.
+40
+
+Preprint, under review
+
+weight w
+0.001
+0.01
+0.1
+1
+
+Burgers1d
+6.12E-2(1.36E-2)
+1.95E-1(2.47E-2)
+4.93E-1(1.59E-2)
+5.53E-1(7.49E-2)
+
+GS
+1.66E-1(1.01E-1)
+1.79E-1(1.21E-1)
+4.61E-1(1.99E-1)
+9.38E-2(1.79E-5)
+
+Heat2d-CG
+4.97E-2(7.10E-4)
+7.78E-2(1.47E-2)
+1.34E-1(1.37E-3)
+2.19E-1(9.90E-2)
+
+Poisson2d-C
+6.74E-1(1.71E-2)
+6.89E-1(2.47E-2)
+6.92E-1(7.72E-3)
+6.96E-1(4.39E-3)
+
+Table 18: Performance comparison of gPINN with different weights.
+Q
+5
+10
+15
+20
+
+Burgers1d
+3.19E-01(2.91E-02)
+2.88E-01(6.03E-03)
+1.85E-01(6.97E-02)
+1.85E-01(4.65E-02)
+
+Q
+6
+8
+10
+12
+
+GS
+3.88E-01(9.73E-02)
+4.25E-01(1.51E-01)
+3.68E-01(2.04E-01)
+3.58E-01(2.06E-01)
+
+Q
+6
+8
+10
+12
+
+Heat2d-CG
+7.14E-01(7.14E-01)
+7.19E-01(4.89E-02)
+7.19E-01(4.75E-02)
+7.21E-01(4.95E-02)
+
+Q
+5
+10
+15
+20
+
+Poisson2d-C
+2.46E-01(1.62E-01)
+2.43E-01(1.57E-01)
+2.45E-01(1.61E-01)
+2.46E-01(2.46E-01)
+
+Table 19: Performance comparison of hp-VPINN with different Q.
+the limit of the VRAM. We can observe a consistent trend that as the Q value rises, the accuracy of the
+model’s predictions also enhanced. This is attributed to the fact that the Q value dictates the number
+of integration points; hence, a higher value leads to more precise integration. However, for certain
+scenarios where hp-VPINN might not be the best fit, a surge in the Q value doesn’t significantly
+bolster the prediction accuracy. On the other hand, the choice of Ngrid exhibits a complex influence
+on accuracy. Generally, as the value of Ngrid increases, precision tends to improve. However, in
+regions where the solution has large gradients or discontinuities, a denser grid might amplify these
+anomalies, leading to larger errors during model training.
+Influence of the number of subdomains and overlap factors for FBPINNs. The number of
+subdomains for domain decomposition and the overlap ratio α are two important hyperparameters for
+FBPINNs. The overlap ratio is chosen from {0.2, 0.4, 0.6, 0.8}.
+Results on different domain scale Here we study the influence of domain scales. While numerical
+methods are usually resistant to domain scales, PINN methods are not invariant to domain scale
+changes. Moreover, normalizing the domain to [0, 1] might be suboptimal for PINNs. Here we
+take the domain scale L of Poisson2d-C as an example to study the performance under different
+settings. We see that Multi-Adam is the most stable under domain scale changes and achieves the
+best performance when L is small.
+Comparison between MultiAdam and L-BFGS . Here we compare the new MUltiAdam optimizer
+for PINNs with L-BFGS, which is a frequently used optimizer in PINN variants. The L2Re result is
+listed in the Table E.2. We see that L-BFGS does not converge in many cases as it is unstable while
+MultiAdam has a better convergence property. However, L-BFGS achieves better accuracy on some
+of the problems like high dimensional PDEs.
+Temporal error analysis For time-dependent problems, an important metric is the generalization
+ability along the time dimension. We selected Heat2d-CG, Heat2d-MS, and Wave1d-C with two
+different parameters (domain scale is 2 and 8) to observe how the error evolves over time. We found
+that the error accumulation over time varies depending on the specific PDE problem. For instance,
+in the case of Heat2d-CG, its final state is a relatively easy steady state, which results in a gradual
+reduction of error over time. On the other hand, for Heat2d-MS, the solution continuously oscillates,
+leading to an increasing error as time progresses. In the case of Wave1d-C, due to the periodic nature
+of the wave equation and the presence of a ground truth solution that is entirely zero, we observed
+Ngrid
+4
+8
+16
+32
+
+Burgers1d
+3.67E-01(1.28E-02)
+2.43E-01(2.39E-03)
+3.66E-01(3.67E-02)
+4.59E-01(1.34E-02)
+
+Ngrid
+3
+4
+5
+6
+
+GS
+1.93E-01(2.06E-02)
+3.68E-01(2.04E-01)
+3.59E-01(1.34E-01)
+2.81E-01(1.96E-01)
+
+Ngrid
+3
+4
+5
+6
+
+Heat2d-CG
+6.91E-01(2.44E-02)
+7.19E-01(4.75E-02)
+7.22E-01(5.14E-02)
+7.23E-01(5.19E-02)
+
+Ngrid
+4
+8
+16
+32
+
+Table 20: Performance comparison of hp-VPINN with different number of grids Ngrid .
+41
+
+Poisson2d-C
+4.95E-01(8.46E-02)
+4.95E-01(8.63E-02)
+2.86E-01(1.94E-02)
+2.43E-01(1.57E-01)
+
+Preprint, under review
+
+(1,1)
+(2,1)
+(3,1)
+(1,2)
+(1,1,1)
+(1,1,3)
+(1,1,5)
+(2,2,1)
+
+Burgers1d
+2.12E-1(1.19E-1)
+1.75E-1(7.97E-2)
+1.61E-1(9.77E-2)
+1.98E-1(7.34E-2)
+Heat2d-CG
+3.30E-1(1.04E-1)
+6.80E-1(1.18E-1)
+7.48E-1(3.39E-2)
+2.89E-1(2.30E-2)
+
+(1,1,1)
+(1,1,3)
+(1,1,5)
+(2,2,1)
+(1,1)
+(1,2)
+(2,1)
+(2,2)
+
+GS
+7.98E-2(3.59E-3)
+8.15E-2(1.73E-3)
+7.90E-2(1.28E-3)
+8.15E-2(3.56E-3)
+Poisson2d-C
+5.01E-2(2.80E-3)
+3.51E-1(1.26E-1)
+4.38E-1(5.30E-2)
+5.54E-2(1.23E-3)
+
+Table 21: Performance (L2RE) comparison of FBPINN with different domain decomposition types.
+
+α
+0.2
+0.4
+0.6
+0.8
+
+Burgers1d
+9.88E-2(1.75E-2)
+9.01E-2(1.43E-2)
+1.75E-1(7.97E-2)
+1.61E-1(1.08E-1)
+
+GS
+8.57E-2(3.14E-3)
+8.09E-2(7.63E-4)
+7.95E-2(6.30E-4)
+8.04E-2(1.03E-3)
+
+Heat2d-CG
+1.05E+0(1.68E-1)
+7.36E-1(7.23E-2)
+6.79E-1(1.17E-1)
+6.96E-1(1.50E-1)
+
+Poisson2d-C
+5.81E-1(1.01E-3)
+2.85E-1(9.30E-2)
+5.54E-2(1.23E-3)
+4.19E-2(4.71E-3)
+
+Table 22: Performance (L2RE) comparison of FBPINN with different overlap ratios α.
+
+Scale L
+0.5
+1
+2
+4
+8
+16
+
+Adam
+6.94E-1(1.76E-2)
+6.92E-1(1.79E-2)
+4.41E-1(9.57E-2)
+1.77E-2(4.66E-3)
+2.39E-2(7.26E-3)
+1.83E-2(8.19E-3)
+
+MultiAdam
+5.71E-1(6.11E-2)
+3.56E-2(1.25E-2)
+3.81E-2(9.38E-3)
+3.38E-2(9.71E-3)
+4.40E-2(3.07E-2)
+3.62E-2(1.10E-2)
+
+LRA
+6.93E-1(1.48E-2)
+3.88E-1(2.61E-1)
+1.68E-1(6.78E-2)
+1.11E-1(1.43E-1)
+1.41E-1(7.10E-2)
+9.45E-2(2.05E-2)
+
+GePinn
+7.06E-1(2.94E-3)
+6.89E-1(1.41E-2)
+6.76E-1(3.86E-2)
+3.13E-2(2.85E-3)
+1.95E-2(6.42E-3)
+1.59E-2(6.03E-3)
+
+Table 23: Performance comparison of vanilla PINNs, Multi-Adam, PINN-LRA, and gPINN on
+Poisson2d-C different domain scales.
+
+L2RE
+Burgers
+Poisson
+Heat
+
+NS
+Wave
+Chaotic
+High dim
+
+1d-C
+2d-C
+2d-C
+2d-CG
+3d-CG
+2d-MS
+2d-VC
+2d-MS
+2d-CG
+2d-LT
+2d-C
+2d-CG
+2d-LT
+1d-C
+2d-CG
+2d-MS
+GS
+KS
+PNd
+HNd
+
+MultiAdam
+4.85E-2(1.61E-2)
+3.33E-1(8.65E-3)
+2.63E-2(6.57E-3)
+2.76E-1(1.03E-1)
+3.64E+0(2.74E-2)
+5.90E-1(4.06E-2)
+4.75E-1(8.44E-2)
+2.18E-1(9.26E-2)
+7.12E-2(1.30E-2)
+1.00E+0(3.85E-5)
+7.27E-1(1.95E-1)
+4.31E-1(6.95E-2)
+1.00E+0(2.19E-4)
+1.21E-1(1.76E-2)
+1.09E+0(1.24E-1)
+9.33E-1(1.26E-2)
+9.37E-2(1.21E-5)
+9.61E-1(4.77E-3)
+3.98E-3(1.11E-3)
+3.02E-1(4.07E-2)
+
+L-BFGS
+1.33E-2(5.30E-5)
+4.65E-1(4.69E-3)
+NaN
+2.96E-1(4.77E-1)
+3.51E+0(9.33E-2)
+1.45E+0(4.75E-3)
+2.32E-1(5.29E-3)
+1.73E-2(4.74E-3)
+8.57E-1(6.69E-4)
+1.00E+0(6.69E-5)
+2.14E-1(1.07E-3)
+NaN
+9.70E-1(3.66E-4)
+NaN
+1.33E+0(2.34E-1)
+NaN
+NaN
+NaN
+4.67E-4(7.12E-5)
+1.19E-4(4.01E-6)
+
+Table 24: Mean L2RE comparison between MultiAdam and L-BFGS.
+
+42
+
+Preprint, under review
+
+Figure 19: L2RE varying with time for PINNs on Heat2d-CG, Heat2d-MS.
+
+Figure 20: L2RE varying with time for PINNs on Wave1d-C-scale2 and Wave1d-C-Scale8.
+the L2 Relative Error (L2RE) also increases with fluctuations. In summary, error accumulation in
+time-dependent problems remains challenging for PINNs, necessitating deeper analysis and improved
+optimization methods in future research.
+Runtime analysis The runtime results for different methods are shown in Table 12. We have
+analyzed the results in the previous section.
+
+F
+
+OTHER VISUALIZATION RESULTS AND ANALYSIS
+
+Here we list some visualization results of these experiments. We see that Burgers1d, Poisson2d-C,
+Poisson2d-CG, and NS2d-C could be solved with a relatively low error. Other problems are difficult
+to learn, even the approximate shape of the solution. Here we only visualize two-dimensional cases,
+which are easier to display in the paper. Note that we also support different forms of three-dimensional
+plot functionals in our code.
+
+43
+
+Preprint, under review
+
+Figure 21: Visualization of Burgers1d. The left pictures are the prediction of PINN methods. The
+right pictures show the error between the prediction and the ground truth.
+
+44
+
+Preprint, under review
+
+Figure 22: Visualization of Poisson2d-C. The left pictures are the prediction of PINN methods. The
+right pictures show the error between the prediction and the ground truth.
+
+45
+
+Preprint, under review
+
+Figure 23: Visualization of Poisson2d-CG. The left pictures are the prediction of PINN methods. The
+right pictures show the error between the prediction and the ground truth.
+
+46
+
+Preprint, under review
+
+Figure 24: Visualization of Poisson2d-MS. The left pictures are the prediction of PINN methods. The
+right pictures show the error between the prediction and the ground truth.
+
+47
+
+Preprint, under review
+
+Figure 25: Visualization of NS2d-C. The left pictures are the prediction of PINN methods. The right
+pictures show the error between the prediction and the ground truth. Note that PINN-LRA diverged
+in this case.
+
+48
+
+Preprint, under review
+
+Figure 26: Visualization of NS2d-CG. The left pictures are the prediction of PINN methods. The
+right pictures show the error between the prediction and the ground truth.
+
+49
+
+Preprint, under review
+
+Figure 27: Visualization of KS. The left pictures are the prediction of PINN methods. The right
+pictures show the error between the prediction and the ground truth.
+
+50
+
+

@@ -1,0 +1,5510 @@
+Published as a conference paper at ICLR 2021
+
+A DAPTIVE F EDERATED O PTIMIZATION
+Sashank J. Reddi∗, Zachary Charles∗, Manzil Zaheer, Zachary Garrett, Keith Rush,
+Jakub Konečný, Sanjiv Kumar, H. Brendan McMahan
+Google Research
+{sashank, zachcharles, manzilzaheer, zachgarrett, krush,
+konkey, sanjivk, mcmahan}@google.com
+
+arXiv:2003.00295v5 [cs.LG] 8 Sep 2021
+
+A BSTRACT
+Federated learning is a distributed machine learning paradigm in which a large
+number of clients coordinate with a central server to learn a model without sharing
+their own training data. Standard federated optimization methods such as Federated Averaging (F EDAVG) are often difficult to tune and exhibit unfavorable
+convergence behavior. In non-federated settings, adaptive optimization methods
+have had notable success in combating such issues. In this work, we propose federated versions of adaptive optimizers, including A DAGRAD, A DAM, and YOGI,
+and analyze their convergence in the presence of heterogeneous data for general
+nonconvex settings. Our results highlight the interplay between client heterogeneity
+and communication efficiency. We also perform extensive experiments on these
+methods and show that the use of adaptive optimizers can significantly improve the
+performance of federated learning.
+
+1
+
+I NTRODUCTION
+
+Federated learning (FL) is a machine learning paradigm in which multiple clients cooperate to learn
+a model under the orchestration of a central server (McMahan et al., 2017). In FL, raw client data
+is never shared with the server or other clients. This distinguishes FL from traditional distributed
+optimization, and requires contending with heterogeneous data. FL has two primary settings, crosssilo (eg. FL between large institutions) and cross-device (eg. FL across edge devices) (Kairouz et al.,
+2019, Table 1). In cross-silo FL, most clients participate in every round and can maintain state
+between rounds. In the more challenging cross-device FL, our primary focus, only a small fraction of
+clients participate in each round, and clients cannot maintain state across rounds. For a more in-depth
+discussion of FL and the challenges involved, we defer to Kairouz et al. (2019) and Li et al. (2019a).
+Standard optimization methods, such as distributed S GD, are often unsuitable in FL and can incur
+high communication costs. To remedy this, many federated optimization methods use local client
+updates, in which clients update their models multiple times before communicating with the server.
+This can greatly reduce the amount of communication required to train a model. One such method is
+F EDAVG (McMahan et al., 2017), in which clients perform multiple epochs of S GD on their local
+datasets. The clients communicate their models to the server, which averages them to form a new
+global model. While F EDAVG has seen great success, recent works have highlighted its convergence
+issues in some settings (Karimireddy et al., 2019; Hsu et al., 2019). This is due to a variety of factors
+including (1) client drift (Karimireddy et al., 2019), where local client models move away from
+globally optimal models, and (2) a lack of adaptivity. F EDAVG is similar in spirit to S GD, and may
+be unsuitable for settings with heavy-tail stochastic gradient noise distributions, which often arise
+when training language models (Zhang et al., 2019a). Such settings benefit from adaptive learning
+rates, which incorporate knowledge of past iterations to perform more informed optimization.
+In this paper, we focus on the second issue and present a simple framework for incorporating
+adaptivity in FL. In particular, we propose a general optimization framework in which (1) clients
+perform multiple epochs of training using a client optimizer to minimize loss on their local data and
+(2) server updates its global model by applying a gradient-based server optimizer to the average of the
+clients’ model updates. We show that F EDAVG is the special case where S GD is used as both client
+and server optimizer and server learning rate is 1. This framework can also seamlessly incorporate
+∗
+
+Authors contributed equally to this work
+
+1
+
+Published as a conference paper at ICLR 2021
+
+adaptivity by using adaptive optimizers as client or server optimizers. Building upon this, we develop
+novel adaptive optimization techniques for FL by using per-coordinate methods as server optimizers.
+By focusing on adaptive server optimization, we enable use of adaptive learning rates without increase
+in client storage or communication costs, and ensure compatibility with cross-device FL.
+Main contributions In light of the above, we highlight the main contributions of the paper.
+• We study a general framework for federated optimization using server and client optimizers. This
+framework generalizes many existing federated optimization methods, including F EDAVG.
+• We use this framework to design novel, cross-device compatible, adaptive federated optimization
+methods, and provide convergence analysis in general nonconvex settings. To the best of our
+knowledge, these are the first methods for FL using adaptive server optimization. We show an
+important interplay between the number of local steps and the heterogeneity among clients.
+• We introduce comprehensive and reproducible empirical benchmarks for comparing federated
+optimization methods. These benchmarks consist of seven diverse and representative FL tasks
+involving both image and text data, with varying amounts of heterogeneity and numbers of clients.
+• We demonstrate strong empirical performance of our adaptive optimizers throughout, improving
+upon commonly used baselines. Our results show that our methods can be easier to tune, and
+highlight their utility in cross-device settings.
+Related work F EDAVG was first introduced by McMahan et al. (2017), who showed it can dramatically reduce communication costs. Many variants have since been proposed to tackle issues such as
+convergence and client drift. Examples include adding a regularization term in the client objectives
+towards the broadcast model (Li et al., 2018), and server momentum (Hsu et al., 2019). When clients
+are homogeneous, F EDAVG reduces to local S GD (Zinkevich et al., 2010), which has been analyzed
+by many works (Stich, 2019; Yu et al., 2019; Wang & Joshi, 2018; Stich & Karimireddy, 2019; Basu
+et al., 2019). In order to analyze F EDAVG in heterogeneous settings, many works derive convergence
+rates depending on the amount of heterogeneity (Li et al., 2018; Wang et al., 2019; Khaled et al., 2019;
+Li et al., 2019b). Typically, the convergence rate of F EDAVG gets worse with client heterogeneity.
+By using control variates to reduce client drift, the SCAFFOLD method (Karimireddy et al., 2019)
+achieves convergence rates that are independent of the amount of heterogeneity. While effective in
+cross-silo FL, the method is incompatible with cross-device FL as it requires clients to maintain state
+across rounds. For more detailed comparisons, we defer to Kairouz et al. (2019).
+Adaptive methods have been the subject of significant theoretical and empirical study, in both
+convex (McMahan & Streeter, 2010b; Duchi et al., 2011; Kingma & Ba, 2015) and non-convex
+settings (Li & Orabona, 2018; Ward et al., 2018; Wu et al., 2019). Reddi et al. (2019); Zaheer et al.
+(2018) study convergence failures of A DAM in certain non-convex settings, and develop an adaptive
+optimizer, YOGI, designed to improve convergence. While most work on adaptive methods focuses
+on non-FL settings, Xie et al. (2019) propose A DA A LTER, a method for FL using adaptive client
+optimization. Conceptually, our approach is also related to the L OOKAHEAD optimizer (Zhang et al.,
+2019b), which was designed for non-FL settings. Similar to A DA A LTER, an adaptive FL variant of
+L OOKAHEAD entails adaptive client optimization (see Appendix B.3 for more details). We note that
+both A DA A LTER and L OOKAHEAD are, in fact, special cases of our framework (see Algorithm 1)
+and the primary novelty of our work comes in focusing on adaptive server optimization. This allows
+us to avoid aggregating optimizer states across clients, making our methods require at most half as
+much communication and client memory usage per round (see Appendix B.3 for details).
+√
+Notation For a, b ∈ Rd , we let a, a2 and a/b denote the element-wise square root, square, and
+division of the vectors. For θi ∈ Rd , we use both θi,j and [θi ]j to denote its j th coordinate.
+
+2
+
+F EDERATED L EARNING AND F EDAVG
+
+In federated learning, we solve an optimization problem of the form:
+m
+
+min f (x) =
+
+x∈Rd
+
+1 X
+Fi (x),
+m i=1
+
+(1)
+
+where Fi (x) = Ez∼Di [fi (x, z)], is the loss function of the ith client, z ∈ Z, and Di is the data
+distribution for the ith client. For i 6= j, Di and Dj may be very different. The functions Fi (and
+2
+
+Published as a conference paper at ICLR 2021
+
+therefore f ) may be nonconvex. For each i and x, we assume access to an unbiased stochastic gradient
+gi (x) of the client’s true gradient ∇Fi (x). In addition, we make the following assumptions.
+Assumption 1 (Lipschitz Gradient). The function Fi is L-smooth for all i ∈ [m] i.e., k∇Fi (x) −
+∇Fi (y)k ≤ Lkx − yk, for all x, y ∈ Rd .
+Assumption 2 (Bounded Variance). The function Fi have σl -bounded (local) variance i.e.,
+2
+E[k∇[fi (x, z)]j − [∇Fi (x)]j k2 ] = σl,j
+for all x ∈ Rd , j ∈ [d] and i ∈ [m]. Furthermore, we
+Pm
+2
+assume the (global) variance is bounded, (1/m) i=1 k∇[Fi (x)]j − [∇f (x)]j k2 ≤ σg,j
+for all
+d
+x ∈ R and j ∈ [d].
+Assumption 3 (Bounded Gradients). The function fi (x, z) have G-bounded gradients i.e., for any
+i ∈ [m], x ∈ Rd and z ∈ Z we have |[∇fi (x, z)]j | ≤ G for all j ∈ [d].
+Pd
+Pd
+2
+2
+With a slight abuse of notation, we use σl2 and σg2 to denote j=1 σl,j
+and j=1 σg,j
+. Assumptions 1
+and 3 are fairly standard in nonconvex optimization literature (Reddi et al., 2016; Ward et al., 2018;
+Zaheer et al., 2018). We make no further assumptions regarding the similarity of clients datasets.
+Assumption 2 is a form of bounded variance, but between the client objective functions and the
+overall objective function. This assumption has been used throughout various works on federated
+optimization (Li et al., 2018; Wang et al., 2019). Intuitively, the parameter σg quantifies similarity of
+client objective functions. Note σg = 0 corresponds to the i.i.d. setting.
+A common approach to solving (1) in federated settings is F EDAVG (McMahan et al., 2017). At each
+round of F EDAVG, a subset of clients are selected (typically randomly) and the server broadcasts its
+global model to each client. In parallel, the clients run S GD on their own loss function, and send the
+resulting model to the server. The server then updates its global model as the average of these local
+models. See Algorithm 3 in the appendix for more details.
+Suppose that at round t, the server has model xt and samples a set S of clients. Let xti denote the
+model of each client i ∈ S after local training. We rewrite F EDAVG’s update as
+
+1 X t
+1 X
+xt+1 =
+xi = xt −
+xt − xti .
+|S|
+|S|
+i∈S
+
+Let ∆ti := xti − xt and ∆t := (1/|S|)
+
+i∈S
+
+t
+i∈S ∆i . Then the server update in F EDAVG is equivalent to
+applying S GD to the “pseudo-gradient” −∆t with learning rate η = 1. This formulation makes it
+
+P
+
+clear that other choices of η are possible. One could also utilize optimizers other than S GD on the
+clients, or use an alternative update rule on the server. This family of algorithms, which we refer to
+collectively as F ED O PT, is formalized in Algorithm 1.
+Algorithm 1 F ED O PT
+1: Input: x0 , C LIENT O PT, S ERVERO PT
+2: for t = 0, · · · , T − 1 do
+3:
+Sample a subset S of clients
+4:
+xti,0 = xt
+5:
+for each client i ∈ S in parallel do
+6:
+for k = 0, · · · , K − 1 do
+t
+7:
+Compute an unbiased estimate gi,k
+of ∇Fi (xti,k )
+t
+t
+t
+8:
+xi,k+1 = C LIENT O PT(xi,k , gi,k , ηl , t)
+t
+9:
+∆i = xti,K − xt
+P
+1
+t
+10:
+∆t = |S|
+i∈S ∆i
+11:
+xt+1 = S ERVERO PT(xt , −∆t , η, t)
+In Algorithm 1, C LIENT O PT and S ERVERO PT are gradient-based optimizers with learning rates
+ηl and η respectively. Intuitively, C LIENT O PT aims to minimize (1) based on each client’s local
+data while S ERVERO PT optimizes from a global perspective. F ED O PT naturally allows the use of
+adaptive optimizers (eg. A DAM, YOGI, etc.), as well as techniques such as server-side momentum
+(leading to F EDAVG M, proposed by Hsu et al. (2019)). In its most general form, F ED O PT uses a
+C LIENT O PT whose updates can depend on globally aggregated statistics (e.g. server updates in the
+3
+
+Published as a conference paper at ICLR 2021
+
+previous iterations). We also allow η and ηl to depend on the round t in order to encompass learning
+rate schedules. While we focus on specific adaptive optimizers in this work, we can in principle use
+any adaptive optimizer (e.g. AMSG RAD (Reddi et al., 2019), A DA B OUND (Luo et al., 2019)).
+While F ED O PT has intuitive benefits over F EDAVG, it also raises a fundamental question: Can the
+negative of the average model difference ∆t be used as a pseudo-gradient in general server optimizer
+updates? In this paper, we provide an affirmative answer to this question by establishing a theoretical
+basis for F ED O PT. We will show that the use of the term S ERVERO PT is justified, as we can guarantee
+convergence across a wide variety of server optimizers, including A DAGRAD, A DAM, and YOGI,
+thus developing principled adaptive optimizers for FL based on our framework.
+
+3
+
+A DAPTIVE F EDERATED O PTIMIZATION
+
+In this section, we specialize F ED O PT to settings where S ERVERO PT is an adaptive optimization
+method (one of A DAGRAD, YOGI or A DAM) and C LIENT O PT is S GD. By using adaptive methods
+(which generally require maintaining state) on the server and S GD on the clients, we ensure our
+methods have the same communication cost as F EDAVG and work in cross-device settings.
+Algorithm 2 provides pseudo-code for our methods. An alternate version using batched data and
+example-based weighting (as opposed to uniform weighting) of clients is given in Algorithm 5. The
+parameter τ controls the algorithms’ degree of adaptivity, with smaller values of τ representing higher
+degrees of adaptivity. Note that the server updates of our methods are invariant to fixed multiplicative
+changes to the client learning rate ηl for appropriately chosen τ , though as we shall see shortly, we
+will require ηl to be sufficiently small in our analysis.
+Algorithm 2 F EDA DAGRAD , F EDYOGI , and F EDA DAM
+1: Initialization: x0 , v−1 ≥ τ 2 , decay parameters β1 , β2 ∈ [0, 1)
+2: for t = 0, · · · , T − 1 do
+3:
+Sample subset S of clients
+4:
+xti,0 = xt
+5:
+for each client i ∈ S in parallel do
+6:
+for k = 0, · · · , K − 1 do
+t
+7:
+Compute an unbiased estimate gi,k
+of ∇Fi (xti,k )
+t
+t
+t
+8:
+xi,k+1 = xi,k − ηl gi,k
+
+12:
+
+∆ti = xti,K − xt
+P
+1
+t
+∆t = |S|
+i∈S ∆i
+mt = β1 mt−1 + (1 − β1 )∆t
+vt = vt−1 + ∆2t (F EDA DAGRAD)
+
+13:
+
+vt = vt−1 − (1 − β2 )∆2t sign(vt−1 − ∆2t ) (F EDYOGI)
+
+14:
+
+vt = β2 vt−1 + (1 − β2 )∆2t (F EDA DAM)
+t
+xt+1 = xt + η √vmt +τ
+
+9:
+10:
+11:
+
+15:
+
+We provide convergence analyses of these methods in general nonconvex settings, assuming full
+participation, i.e. S = [m]. For expository purposes, we assume β1 = 0, though our analysis can be
+directly extended to β1 > 0. Our analysis can also be extended to partial participation (i.e. |S| < m,
+see Appendix A.2.1 for details). Furthermore, non-uniform weighted averaging typically used in
+F EDAVG (McMahan et al., 2017) can also be incorporated into our analysis fairly easily.
+Theorem 1. Let Assumptions 1 to 3 hold, and let L, G, σl , σg be as defined therein. Let σ 2 =
+σl2 + 6Kσg2 . Consider the following conditions for ηl :
+
+i1/3 
+1
+1
+1 h
+τ
+(Condition I)
+ηl ≤
+min
+, 1/6
+,
+16K
+L T
+120L2 G
+(
+ 2 1/2 )
+τ ηL τ
+1
+1
+τ
+(Condition II)
+ηl ≤
+min
+,
+, 1/4
+.
+2
+16K
+2G 4Lη T
+GLη
+
+4
+
+Published as a conference paper at ICLR 2021
+
+Then the iterates of Algorithm 2 for F EDA DAGRAD satisfy
+under Condition I only,
+under both Condition I & II,
+
+
+
+τ
+G
+√ +
+min Ek∇f (xt )k ≤ O
+(Ψ + Ψvar ) ,
+0≤t≤T −1
+ηl KT
+T
+
+
+
+G
+τ
+2
+e
+√
+min Ek∇f (xt )k ≤ O
++
+Ψ + Ψvar
+.
+0≤t≤T −1
+ηl KT
+T
+2
+
+
+
+Here, we define
+f (x0 ) − f (x∗ ) 5ηl3 K 2 L2 T 2
++
+σ ,
+η
+2τ
+"
+#
+d(ηl KG2 + τ ηL)
+τ 2 + ηl2 K 2 G2 T
+Ψvar =
+1 + log
+,
+τ
+τ2
+ 2
+
+2
+e var = 2ηl KG + τ ηL 2ηl KT σl2 + 10ηl4 K 3 L2 T σ 2 .
+Ψ
+τ2
+m
+Ψ=
+
+All proofs are relegated to Appendix A due to space constraints. When ηl satisfies the condition in the
+e var }. To obtain
+second part the above result, we obtain a convergence rate depending on min{Ψvar , Ψ
+an explicit dependence on T and K, we simplify the above result for a specific choice of η, ηl and τ .
+√
+Corollary 1. Suppose√ηl is such that the conditions in Theorem 1 are satisfied and ηl = Θ(1/(KL T ).
+Also suppose η = Θ( Km) and τ = G/L. Then, for sufficiently large T , the iterates of Algorithm 2
+for F EDA DAGRAD satisfy
+!
+√
+2σl2 L
+σ2
+σ2 L m
+f (x0 ) − f (x∗ )
+2
+√
+√
+√
+min Ek∇f (xt )k = O
++
++
++
+.
+0≤t≤T −1
+GKT
+mKT
+G2 mKT
+G2 KT 3/2
+We defer a detailed discussion about our analysis and its implication to the end of the section.
+Analysis of F EDA DAM Next, we provide the convergence analysis of F EDA DAM. The proof of
+F EDYOGI is very similar and hence, we omit the details of F EDYOGI’s analysis.
+Theorem 2. Let Assumptions 1 to 3 hold, and L, G, σl , σg be as defined therein. Let σ 2 = σl2 +6Kσg2 .
+Suppose the client learning rate satisfies ηl ≤ 1/16LK and
+h
+
+i1/3
+τ
+τ
+1
+,
+min
+ηl ≤
+.
+16K
+120L2 G
+2(2G + ηL)
+Then the iterates of Algorithm 2 for F EDA DAM satisfy
+
+√
+β2 ηl KG + τ
+2
+min Ek∇f (xt )k = O
+(Ψ + Ψvar ) ,
+0≤t≤T −1
+ηl KT
+where
+
+f (x0 ) − f (x∗ ) 5ηl3 K 2 L2 T 2
++
+σ ,
+Ψ=
+η
+2τ
+
+ 2
+
+ηL
+4ηl KT 2 20ηl4 K 3 L2 T 2
+Ψvar = G +
+σ
++
+σ
+.
+2
+mτ 2 l
+τ2
+
+Similar to the F EDA DAGRAD case, we restate the above result for a specific choice of ηl , η and τ in
+order to highlight the dependence of K and T .
+Corollary 2. Suppose ηl is chosen such that
+√ the conditions in Theorem 2 are satisfied and that
+√
+ηl = Θ(1/(KL T )). Also, suppose η = Θ( Km) and τ = G/L. Then, for sufficiently large T , the
+iterates of Algorithm 2 for F EDA DAM satisfy
+!
+√
+f (x0 ) − f (x∗ )
+2σl2 L
+σ2
+σ2 L m
+2
+√
+√
+√
+min Ek∇f (xt )k = O
++
++
++
+.
+0≤t≤T −1
+GKT
+mKT
+G2 mKT
+G2 KT 3/2
+
+5
+
+Published as a conference paper at ICLR 2021
+
+Remark 1. The server learning rate η = 1 typically used in F EDAVG does not necessarily minimize
+the upper bound in Theorems 1 & 2. The effect of σg , a measure of client heterogeneity, on convergence
+can be reduced by choosing sufficiently ηl and a reasonably large η (e.g. see Corollary 1). Thus, the
+effect of client heterogeneity can be reduced by carefully choosing client and server learning rates,
+but not removed entirely. Our empirical analysis (eg. Figure 1) supports this conclusion.
+Discussion. We briefly discuss our theoretical analysis and its implications in the FL setting. The
+convergence rates for F EDA DAGRAD and F EDA DAM are similar, so our discussion applies to all the
+adaptive federated optimization algorithms (including F EDYOGI) proposed in the paper.
+√
+
+(i) Comparison of convergence rates. When T is sufficiently large compared to K, O(1/ mKT )
+is the√ dominant term in Corollary 1 & 2. Thus, we effectively obtain a convergence rate of
+O(1/ mKT ), which matches the best known rate for the general non-convex setting of our interest
+(e.g. see (Karimireddy et al., 2019)). We also note that in the i.i.d setting considered in (Wang
+& Joshi, 2018), which corresponds to σg = 0, we match their convergence rates. Similar to the
+centralized setting, it is possible to obtain convergence rates with better dependence on constants
+for federated adaptive methods, compared to F EDAVG, by incorporating non-uniform bounds on
+gradients across coordinates (Zaheer et al., 2018).
+√
+
+(ii) Learning rates & their decay. The client learning rate of 1/ T in our analysis requires knowledge of the number of rounds T a priori; however, it is easy to generalize our analysis to the case
+√
+where ηl is decayed at a rate of 1/ t. Observe that one must decay ηl , not the server learning
+rate η, to obtain convergence. This is because the client drift introduced by the local updates
+does not vanish as T → ∞ when ηl is constant. As we show in Appendix E.6, learning rate
+decay can improve empirical performance. Also, note the inverse relationship between ηl and η
+in Corollary 1 & 2, which we observe in our empirical analysis (see Appendix E.4).
+(iii) Communication efficiency & local steps. The total communication cost of the algorithms
+depends on the number of communication rounds T . From Corollary 1 & 2, it is clear that a larger
+K leads to fewer rounds of communication as long as K = O(T σl2 /σg2 ). Thus, the number of
+local iterations can be large when either the ratio σl2 /σg2 or T is large. In the i.i.d setting where
+σg = 0, unsurprisingly, K can be very large.
+(iv) Client heterogeneity. While careful selection of client and server learning rates can reduce
+the effect of client heterogeneity (see Remark 1), it does not completely remove it. In highly
+heterogeneous settings, it may be necessary to use mechanisms such as control variates (Karimireddy et al., 2019). However, our empirical analysis suggest that for moderate, naturally arising
+heterogeneity, adaptive optimizers are quite effective, especially in cross-device settings (see
+Figure 1). Furthermore, our algorithms can be directly combined with such mechanisms.
+As mentioned earlier, for the sake of simplicity, our analysis assumes full-participation (S = [m]).
+Our analysis can be directly generalized to limited participation at the cost of an additional variance
+term in our rates that depends on |S|/m, the fraction of clients sampled (see Section A.2.1 for details).
+
+4
+
+E XPERIMENTAL E VALUATION : DATASETS , TASKS , AND M ETHODS
+
+We evaluate our algorithms on what we believe is the most extensive and representative suite of
+federated datasets and modeling tasks to date. We wish to understand how server adaptivity can help
+improve convergence, especially in cross-device settings. To accomplish this, we conduct simulations
+on seven diverse and representative learning tasks across five datasets. Notably, three of the five have
+a naturally-arising client partitioning, highly representative of real-world FL problems.
+Datasets, models, and tasks We use five datasets: CIFAR-10, CIFAR-100 (Krizhevsky & Hinton,
+2009), EMNIST (Cohen et al., 2017), Shakespeare (McMahan et al., 2017), and Stack Overflow (Authors, 2019). The first three are image datasets, the last two are text datasets. For CIFAR-10 and
+CIFAR-100, we train ResNet-18 (replacing batch norm with group norm (Hsieh et al., 2019)). For
+EMNIST, we train a CNN for character recognition (EMNIST CR) and a bottleneck autoencoder
+(EMNIST AE). For Shakespeare, we train an RNN for next-character-prediction. For Stack Overflow,
+we perform tag prediction using logistic regression on bag-of-words vectors (SO LR) and train an
+RNN to do next-word-prediction (SO NWP). For full details of the datasets, see Appendix C.
+6
+
+Published as a conference paper at ICLR 2021
+
+Implementation We implement all algorithms in TensorFlow Federated (Ingerman & Ostrowski,
+2019), and provide an open-source implementation of all optimizers and benchmark tasks1 . Clients
+are sampled uniformly at random, without replacement in a given round, but with replacement across
+rounds. Our implementation has two important characteristics. First, instead of doing K training
+steps per client, we do E epochs of training over each client’s dataset. Second, to account for varying
+numbers of gradient steps per client, we weight the average of the client outputs ∆ti by each client’s
+number of training samples. This follows the approach of (McMahan et al., 2017), and can often
+outperform uniform weighting (Zaheer et al., 2018). For full descriptions of the algorithms used, see
+Appendix B.
+Optimizers and hyperparameters We compare F EDA DAGRAD, F EDA DAM, and F EDYOGI (with
+adaptivity τ ) to F ED O PT where C LIENT O PT and S ERVERO PT are S GD with learning rates ηl and
+η. For the server, we use a momentum parameter of 0 (F EDAVG), and 0.9 (F EDAVG M). We fix the
+client batch size on a per-task level (see Appendix D.3). For F EDA DAM and F EDYOGI, we fix a
+momentum parameter β1 = 0.9 and a second moment parameter β2 = 0.99. We also compare to
+SCAFFOLD (see Appendix B.2 for implementation details). For SO NWP, we sample 50 clients per
+round, while for all other tasks we sample 10. We use E = 1 local epochs throughout.
+We select ηl , η, and τ by grid-search tuning. While this is often done using validation data in
+centralized settings, such data is often inaccessible in FL, especially cross-device FL. Therefore, we
+tune by selecting the parameters that minimize the average training loss over the last 100 rounds
+of training. We run 1500 rounds of training on the EMNIST CR, Shakespeare, and Stack Overflow
+tasks, 3000 rounds for EMNIST AE, and 4000 rounds for the CIFAR tasks. For more details and a
+record of the best hyperparameters, see Appendix D.
+Validation metrics For all tasks, we measure the performance on a validation set throughout training.
+For Stack Overflow tasks, the validation set contains 10,000 randomly sampled test examples (due
+to the size of the test dataset, see Table 2). For all other tasks, we use the entire test set. Since
+all algorithms exchange equal-sized objects between server and clients, we use the number of
+communication rounds as a proxy for wall-clock training time.
+
+5
+
+E XPERIMENTAL E VALUATION : R ESULTS
+
+5.1
+
+C OMPARISONS BETWEEN METHODS
+
+We compare the convergence of our adaptive methods to non-adaptive methods: F EDAVG, F EDAVG M
+and SCAFFOLD. Plots of validation performances for each task/optimizer are in Figure 1, and
+Table 1 summarizes the last-100-round validation performance. Due to space constraints, results for
+EMNIST CR are in Appendix E.1, and full test set results for Stack Overflow are in Appendix E.2.
+Sparse-gradient tasks Text data often
+F ED ...
+A DAGRAD A DAM YOGI AVG M AVG
+produces long-tailed feature distributions,
+72.1
+77.4 78.0
+77.4 72.8
+leading to approximately-sparse gradients CIFAR-10
+47.9
+52.5 52.4
+52.4 44.7
+which adaptive optimizers can capitalize CIFAR-100
+EMNIST
+CR
+85.1
+85.6
+85.5
+85.2 84.9
+on (Zhang et al., 2019a). Both Stack Over57.0 57.2
+57.3 56.9
+flow tasks exhibit such behavior, though S HAKESPEARE 57.5
+23.8
+25.2 25.2
+23.8 19.5
+they are otherwise dramatically different— SO NWP
+SO
+LR
+67.1
+65.8
+65.9
+36.9 30.0
+in feature representation (bag-of-words vs.
+variable-length token sequence), model ar- EMNIST AE 4.20
+1.01 0.98
+1.65 6.47
+chitecture (GLM vs deep network), and
+optimization landscape (convex vs non- Table 1: Average validation performance over the last
+convex). In both tasks, words that do not 100 rounds: % accuracy for rows 1–5; Recall@5 (×100)
+appear in a client’s dataset produce near- for Stack Overflow LR; and MSE (×1000) for EMNIST
+zero client updates. Thus, the accumulators AE. Performance within 0.5% of the best result for each
+vt,j in Algorithm 2 remain small for pa- task are shown in bold.
+rameters tied to rare words, allowing large
+updates to be made when they do occur. This intuition is born out in Figure 1, where adaptive
+optimizers dramatically outperform non-adaptive ones. For the non-convex NWP task, momentum is
+also critical, whereas it slightly hinders performance for the convex LR task.
+1
+https://github.com/google-research/federated/tree/
+780767fdf68f2f11814d41bbbfe708274eb6d8b3/optimization
+
+7
+
+Published as a conference paper at ICLR 2021
+
+0.6
+
+0.6
+
+Accuracy
+
+Accuracy
+
+1000 2000 3000
+Number of Rounds
+
+0.6
+
+Shakespeare
+
+Accuracy
+
+0.01
+
+0.00
+
+1000 2000 3000
+Number of Rounds
+
+0.8
+
+Stack Overflow LR
+
+4000
+
+0.6
+
+FedAdagrad
+FedAdam
+FedYogi
+FedAvgM
+FedAvg
+SCAFFOLD
+
+0.3
+
+Stack Overflow NWP
+
+3000
+
+0.1
+
+0.2
+0.00
+
+1000
+2000
+Number of Rounds
+
+0.2
+
+0.4
+
+0.30 200 400 600 800 1000 1200
+Number of Rounds
+
+0.000
+
+4000
+
+Recall@5
+
+0.00
+
+EMNIST AE
+
+0.02
+
+0.2
+
+0.2
+
+0.4
+
+0.03
+
+0.4
+
+0.4
+
+0.5
+
+CIFAR-100
+
+Mean Squared Error
+
+CIFAR-10
+
+Accuracy
+
+0.8
+
+500
+1000
+Number of Rounds
+
+0.00
+
+1500
+
+500
+1000
+Number of Rounds
+
+1500
+
+Figure 1: Validation accuracy of adaptive and non-adaptive methods, as well as SCAFFOLD, using
+constant learning rates η and ηl tuned to achieve the best training performance over the last 100
+communication rounds; see Appendix D.2 for grids.
+
+Dense-gradient tasks CIFAR-10/100, EMNIST AE/CR, and Shakespeare lack a sparse-gradient
+structure. Shakespeare is relatively easy—most optimizers perform well after enough rounds once suitably tuned, though F EDA DAGRAD converges faster. For CIFAR-10/100 and EMNIST AE, adaptivity
+and momentum offer substantial improvements over F EDAVG. Moreover, F EDYOGI and F EDA DAM
+have faster initial convergence than F EDAVG M on these tasks. Notably, F EDA DAM and F EDYOGI
+perform comparably to or better than non-adaptive optimizers throughout, and close to or better than
+F EDA DAGRAD throughout. As we discuss below, F EDA DAM and F EDYOGI actually enable easier
+learning rate tuning than F EDAVG M in many tasks.
+Comparison to SCAFFOLD On all tasks, SCAFFOLD performs comparably to or worse than
+F EDAVG and our adaptive methods. On Stack Overflow, SCAFFOLD and F EDAVG are nearly
+identical. This is because the number of clients (342,477) makes it unlikely we sample any client
+more than once. Intuitively, SCAFFOLD does not have a chance to use its client control variates. In
+other tasks, SCAFFOLD performs worse than other methods. We present two possible explanations:
+First, we only sample a small fraction of clients at each round, so most users are sampled infrequently.
+Intuitively, the client control variates can become stale, and may consequently degrade the performance. Second, SCAFFOLD is similar to variance reduction methods such as SVRG (Johnson
+& Zhang, 2013). While theoretically performant, such methods often perform worse than S GD in
+practice (Defazio & Bottou, 2018). As shown by Defazio et al. (2014), variance reduction often only
+accelerates convergence when close to a critical point. In cross-device settings (where the number of
+communication rounds are limited), SCAFFOLD may actually reduce empirical performance.
+E ASE OF TUNING
+
+20
+
+10
+5
+0
+
+25
+20
+15
+10
+5
+0
+
+Stack Overflow NWP, FedAvgM
+1.0 15.0 1.6 0.6 0.0 2.3 1.7 0.7 1.4
+0.5 10.3 15.3 19.2 21.6 22.9 0.0 0.7 0.0
+0.0 7.0 10.5 16.2 20.0 22.3 23.8 0.4 0.0
+-0.5 5.6 7.0 10.7 16.1 19.9 19.2 0.2 1.6
+-1.0 0.5 5.6 7.1 10.5 15.5 19.4 0.1 0.0
+-1.5 0.0 0.5 5.5 7.2 10.2 14.6 2.4 2.2
+-2.0 0.0 0.0 0.9 5.5 7.0 10.1 0.0 1.4
+-2.5 0.0 0.0 0.0 1.2 5.4 6.9 1.1 0.0
+-3.0 0.0 0.0 0.0 0.0 0.6 5.0 1.3 0.0
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+30
+25
+20
+Accuracy
+
+15
+
+30
+
+Server Learning Rate (log10)
+
+25
+
+Stack Overflow NWP, FedYogi
+1.0 2.3 1.9 1.3 0.3 0.4 0.0 0.0 0.0
+0.5 1.9 0.9 0.8 0.4 1.2 1.0 0.0 0.0
+0.0 1.4 1.4 0.7 0.6 2.2 0.9 0.0 0.0
+-0.5 2.1 0.3 1.5 2.3 8.0 1.6 0.0 0.0
+-1.0 21.6 22.4 14.3 17.8 19.3 7.5 0.0 0.0
+-1.5 22.9 23.1 23.3 22.0 23.7 24.5 0.0 0.0
+-2.0 20.3 21.4 22.2 23.6 24.7 25.2 0.0 0.0
+-2.5 16.8 18.5 19.5 21.9 23.9 24.5 0.0 0.0
+-3.0 12.1 14.3 16.5 18.9 21.1 22.2 0.2 0.0
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+Accuracy
+
+Server Learning Rate (log10)
+
+30
+
+Accuracy
+
+Stack Overflow NWP, FedAdam
+1.0 2.1 2.1 1.2 0.1 0.3 0.0 0.0 0.0
+0.5 2.2 1.6 1.2 0.6 0.5 0.0 0.0 0.0
+0.0 1.6 1.7 1.1 1.7 2.1 0.6 0.0 0.0
+-0.5 0.6 1.7 5.6 4.0 5.8 3.2 0.0 0.0
+-1.0 3.8 19.7 13.2 15.0 17.4 6.2 0.0 0.0
+-1.5 23.0 22.9 23.3 22.7 23.2 23.1 0.0 0.0
+-2.0 20.3 21.4 22.4 23.5 24.7 25.2 0.0 0.0
+-2.5 17.1 18.7 20.1 22.2 23.8 24.7 0.0 0.0
+-3.0 11.9 14.6 16.7 19.3 21.7 20.3 0.0 0.0
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+Server Learning Rate (log10)
+
+5.2
+
+15
+10
+5
+0
+
+Figure 2: Validation accuracy (averaged over the last 100 rounds) of F EDA DAM, F EDYOGI, and
+F EDAVG M for various client/server learning rates combination on the SO NWP task. For F EDA DAM
+and F EDYOGI, we set τ = 10−3 .
+8
+
+Published as a conference paper at ICLR 2021
+
+0.6
+
+0.75
+
+0.020
+
+Accuracy
+
+Accuracy
+
+0.010
+
+0.4
+
+0.65
+
+0.70
+
+10 4 10 3 10 2
+Adaptivity ( )
+Stack Overflow LR
+
+10 1
+
+0.65
+
+Accuracy
+
+0.60
+0.58
+0.56
+0.54
+FedAdagrad
+FedAdam
+0.52
+FedYogi
+0.5010 5 10 4 10 3 10 2
+Adaptivity ( )
+
+0.310 5
+
+10 1
+
+0.005
+
+0.60
+
+0.20
+
+0.55
+
+10 1
+
+0.5010 5
+
+0.00010 5 10 4 10 3 10 2 10 1
+Adaptivity ( )
+Stack
+Overflow NWP
+0.30
+0.25
+
+Recall@5
+
+10 4 10 3 10 2
+Adaptivity ( )
+Shakespeare
+
+EMNIST AE
+
+0.015
+
+0.5
+
+0.70
+0.6010 5
+
+CIFAR-100
+
+Mean Squared Error
+
+CIFAR-10
+
+Accuracy
+
+0.80
+
+0.15
+
+10 4 10 3 10 2
+Adaptivity ( )
+
+10 1
+
+0.1010 5
+
+10 4 10 3 10 2
+Adaptivity ( )
+
+10 1
+
+Figure 3: Validation performance of F EDA DAGRAD, F EDA DAM, and F EDYOGI for varying τ on
+various tasks. The learning rates η and ηl are tuned for each τ to achieve the best training performance
+on the last 100 communication rounds.
+
+Obtaining optimal performance involves tuning ηl , η, and for the adaptive methods, τ . To quantify
+how easy it is to tune various methods, we plot their validation performance as a function of ηl and η.
+Figure 2 gives results for F EDA DAM, F EDYOGI, and F EDAVG M on Stack Overflow NWP. Plots for
+all other optimizers and tasks are in Appendix E.3. For F EDAVG M, there are only a few good values
+of ηl for each η, while for F EDA DAM and F EDYOGI, there are many good values of ηl for a range of
+η. Thus, F EDA DAM and F EDYOGI are arguably easier to tune in this setting. Similar results hold for
+other tasks and optimizers (Figures 5 to 11).
+This leads to a natural question: Is the reduction in the need to tune ηl and η offset by the need to
+tune the adaptivity τ ? In fact, while we tune τ in Figure 1, our results are relatively robust to τ . To
+demonstrate, we plot the best validation performance for various τ in Figure 3. For nearly all tasks
+and optimizers, τ = 10−3 works almost as well all other values. This aligns with work by Zaheer
+et al. (2018), who show that moderately large τ yield better performance for centralized adaptive
+optimizers. F EDA DAM and F EDYOGI see only small differences in performance among τ on all tasks
+except Stack Overflow LR (for which F EDA DAGRAD is the best optimizer, and is robust to τ ).
+
+5.3
+
+OTHER F INDINGS
+
+We present additional empirical analyses in Appendix E. These include EMNIST CR results (Appendix E.1), Stack Overflow results on the full test dataset (Appendix E.2), client/server learning rate
+heat maps for all optimizers and tasks (Appendix E.3), an analysis of the relationship between η and
+ηl (Appendix E.4), and experiments with learning rate decay (Appendix E.6).
+
+6
+
+C ONCLUSION
+
+In this paper, we demonstrated that adaptive optimizers can be powerful tools in improving the convergence of FL. By using a simple client/server optimizer framework, we can incorporate adaptivity into
+FL in a principled, intuitive, and theoretically-justified manner. We also developed comprehensive
+benchmarks for comparing federated optimization algorithms. To encourage reproducibility and
+breadth of comparison, we have attempted to describe our experiments as rigorously as possible,
+and have created an open-source framework with all models, datasets, and code. We believe our
+work raises many important questions about how best to perform federated optimization. Example
+directions for future research include understanding how the use of adaptivity affects differential
+privacy and fairness.
+9
+
+Published as a conference paper at ICLR 2021
+
+R EFERENCES
+The TensorFlow Federated Authors.
+TensorFlow Federated Stack Overflow dataset,
+2019. URL https://www.tensorflow.org/federated/api_docs/python/tff/
+simulation/datasets/stackoverflow/load_data.
+Debraj Basu, Deepesh Data, Can Karakus, and Suhas Diggavi. Qsparse-local-SGD: Distributed
+SGD with quantization, sparsification and local computations. In Advances in Neural Information
+Processing Systems, pp. 14668–14679, 2019.
+Keith Bonawitz, Hubert Eichner, Wolfgang Grieskamp, Dzmitry Huba, Alex Ingerman, Vladimir
+Ivanov, Chloé Kiddon, Jakub Konečný, Stefano Mazzocchi, Brendan McMahan, Timon
+Van Overveldt, David Petrou, Daniel Ramage, and Jason Roselander. Towards federated learning at scale: System design.
+In A. Talwalkar, V. Smith, and M. Zaharia
+(eds.), Proceedings of Machine Learning and Systems, volume 1, pp. 374–388. Proceedings of MLSys, 2019. URL https://proceedings.mlsys.org/paper/2019/file/
+bd686fd640be98efaae0091fa301e613-Paper.pdf.
+Sebastian Caldas, Peter Wu, Tian Li, Jakub Konečný, H Brendan McMahan, Virginia Smith, and
+Ameet Talwalkar. LEAF: A benchmark for federated settings. arXiv preprint arXiv:1812.01097,
+2018.
+Gregory Cohen, Saeed Afshar, Jonathan Tapson, and Andre Van Schaik. EMNIST: Extending MNIST
+to handwritten letters. In 2017 International Joint Conference on Neural Networks (IJCNN), pp.
+2921–2926. IEEE, 2017.
+Aaron Defazio and Léon Bottou. On the ineffectiveness of variance reduced optimization for deep
+learning. arXiv preprint arXiv:1812.04529, 2018.
+Aaron Defazio, Francis Bach, and Simon Lacoste-Julien. SAGA: A fast incremental gradient method
+with support for non-strongly convex composite objectives. In NIPS, pp. 1646–1654, 2014.
+John Duchi, Elad Hazan, and Yoram Singer. Adaptive subgradient methods for online learning and
+stochastic optimization. Journal of Machine Learning Research, 12(Jul):2121–2159, 2011.
+Priya Goyal, Piotr Dollár, Ross Girshick, Pieter Noordhuis, Lukasz Wesolowski, Aapo Kyrola,
+Andrew Tulloch, Yangqing Jia, and Kaiming He. Accurate, large minibatch SGD: Training
+ImageNet in 1 hour. arXiv preprint arXiv:1706.02677, 2017.
+Kevin Hsieh, Amar Phanishayee, Onur Mutlu, and Phillip B Gibbons. The non-IID data quagmire of
+decentralized machine learning. arXiv preprint arXiv:1910.00189, 2019.
+Tzu-Ming Harry Hsu, Hang Qi, and Matthew Brown. Measuring the effects of non-identical data
+distribution for federated visual classification. arXiv preprint arXiv:1909.06335, 2019.
+Alex
+Ingerman
+and
+Krzys
+Ostrowski.
+Introducing
+TensorFlow
+Federated,
+2019.
+URL
+https://medium.com/tensorflow/
+introducing-tensorflow-federated-a4147aa20041.
+Rie Johnson and Tong Zhang. Accelerating stochastic gradient descent using predictive variance
+reduction. In Advances in Neural Information Processing Systems, pp. 315–323, 2013.
+Peter Kairouz, H Brendan McMahan, Brendan Avent, Aurélien Bellet, Mehdi Bennis, Arjun Nitin
+Bhagoji, Keith Bonawitz, Zachary Charles, Graham Cormode, Rachel Cummings, et al. Advances
+and open problems in federated learning. arXiv preprint arXiv:1912.04977, 2019.
+Sai Praneeth Karimireddy, Satyen Kale, Mehryar Mohri, Sashank J Reddi, Sebastian U Stich, and
+Ananda Theertha Suresh. SCAFFOLD: Stochastic controlled averaging for on-device federated
+learning. arXiv preprint arXiv:1910.06378, 2019.
+Ahmed Khaled, Konstantin Mishchenko, and Peter Richtárik. First analysis of local GD on heterogeneous data. arXiv preprint arXiv:1909.04715, 2019.
+Diederik P. Kingma and Jimmy Ba. Adam: A method for stochastic optimization. In 3rd International
+Conference on Learning Representations, ICLR 2015, San Diego, CA, USA, May 7-9, 2015,
+Conference Track Proceedings, 2015.
+10
+
+Published as a conference paper at ICLR 2021
+
+Alex Krizhevsky and Geoffrey Hinton. Learning multiple layers of features from tiny images.
+Technical report, Citeseer, 2009.
+Tian Li, Anit Kumar Sahu, Manzil Zaheer, Maziar Sanjabi, Ameet Talwalkar, and Virginia Smith.
+Federated optimization in heterogeneous networks. arXiv preprint arXiv:1812.06127, 2018.
+Tian Li, Anit Kumar Sahu, Ameet Talwalkar, and Virginia Smith. Federated learning: Challenges,
+methods, and future directions. arXiv preprint arXiv:1908.07873, 2019a.
+Wei Li and Andrew McCallum. Pachinko allocation: DAG-structured mixture models of topic
+correlations. In Proceedings of the 23rd international conference on Machine learning, pp. 577–
+584, 2006.
+Xiang Li, Kaixuan Huang, Wenhao Yang, Shusen Wang, and Zhihua Zhang. On the convergence of
+FedAvg on non-IID data. arXiv preprint arXiv:1907.02189, 2019b.
+Xiaoyu Li and Francesco Orabona. On the convergence of stochastic gradient descent with adaptive
+stepsizes. arXiv preprint arXiv:1805.08114, 2018.
+Liangchen Luo, Yuanhao Xiong, Yan Liu, and Xu Sun. Adaptive gradient methods with dynamic
+bound of learning rate. In 7th International Conference on Learning Representations, ICLR 2019,
+New Orleans, LA, USA, May 6-9, 2019. OpenReview.net, 2019. URL https://openreview.
+net/forum?id=Bkg3g2R9FX.
+Brendan McMahan, Eider Moore, Daniel Ramage, Seth Hampson, and Blaise Agüera y Arcas.
+Communication-efficient learning of deep networks from decentralized data. In Proceedings of the
+20th International Conference on Artificial Intelligence and Statistics, AISTATS 2017, 20-22 April
+2017, Fort Lauderdale, FL, USA, pp. 1273–1282, 2017. URL http://proceedings.mlr.
+press/v54/mcmahan17a.html.
+H. Brendan McMahan and Matthew Streeter. Adaptive bound optimization for online convex
+optimization. In COLT, 2010a.
+H. Brendan McMahan and Matthew J. Streeter. Adaptive bound optimization for online convex
+optimization. In COLT The 23rd Conference on Learning Theory, 2010b.
+Sashank J Reddi, Ahmed Hefny, Suvrit Sra, Barnabás Póczós, and Alex Smola. Stochastic variance
+reduction for nonconvex optimization. arXiv:1603.06160, 2016.
+Sashank J Reddi, Satyen Kale, and Sanjiv Kumar. On the convergence of ADAM and beyond. arXiv
+preprint arXiv:1904.09237, 2019.
+Sebastian U. Stich. Local SGD converges fast and communicates little. In International Conference on Learning Representations, 2019. URL https://openreview.net/forum?id=
+S1g2JnRcFX.
+Sebastian U Stich and Sai Praneeth Karimireddy. The error-feedback framework: Better rates for
+SGD with delayed gradients and compressed communication. arXiv preprint arXiv:1909.05350,
+2019.
+Jianyu Wang and Gauri Joshi. Cooperative SGD: A unified framework for the design and analysis of
+communication-efficient SGD algorithms. arXiv preprint arXiv:1808.07576, 2018.
+Shiqiang Wang, Tiffany Tuor, Theodoros Salonidis, Kin K Leung, Christian Makaya, Ting He, and
+Kevin Chan. Adaptive federated learning in resource constrained edge computing systems. IEEE
+Journal on Selected Areas in Communications, 37(6):1205–1221, 2019.
+Rachel Ward, Xiaoxia Wu, and Leon Bottou. Adagrad stepsizes: Sharp convergence over nonconvex
+landscapes, from any initialization. arXiv preprint arXiv:1806.01811, 2018.
+Xiaoxia Wu, Simon S Du, and Rachel Ward. Global convergence of adaptive gradient methods for an
+over-parameterized neural network. arXiv preprint arXiv:1902.07111, 2019.
+Yuxin Wu and Kaiming He. Group normalization. In Proceedings of the European Conference on
+Computer Vision (ECCV), pp. 3–19, 2018.
+11
+
+Published as a conference paper at ICLR 2021
+
+Cong Xie, Oluwasanmi Koyejo, Indranil Gupta, and Haibin Lin. Local AdaAlter: Communicationefficient stochastic gradient descent with adaptive learning rates. arXiv preprint arXiv:1911.09030,
+2019.
+Hao Yu, Sen Yang, and Shenghuo Zhu. Parallel restarted SGD with faster convergence and less
+communication: Demystifying why model averaging works for deep learning. In Proceedings of
+the AAAI Conference on Artificial Intelligence, volume 33, pp. 5693–5700, 2019.
+Manzil Zaheer, Sashank Reddi, Devendra Sachan, Satyen Kale, and Sanjiv Kumar. Adaptive methods
+for nonconvex optimization. In Advances in Neural Information Processing Systems, pp. 9815–
+9825, 2018.
+Jingzhao Zhang, Sai Praneeth Karimireddy, Andreas Veit, Seungyeon Kim, Sashank J. Reddi,
+Sanjiv Kumar, and Suvrit Sra. Why ADAM beats SGD for attention models. arXiv preprint
+arxiv:1912.03194, 2019a.
+Michael R. Zhang, James Lucas, Jimmy Ba, and Geoffrey E. Hinton. Lookahead optimizer: k
+steps forward, 1 step back. In Hanna M. Wallach, Hugo Larochelle, Alina Beygelzimer, Florence
+d’Alché-Buc, Emily B. Fox, and Roman Garnett (eds.), Advances in Neural Information Processing
+Systems 32: Annual Conference on Neural Information Processing Systems 2019, NeurIPS 2019,
+8-14 December 2019, Vancouver, BC, Canada, pp. 9593–9604, 2019b.
+Martin Zinkevich, Markus Weimer, Lihong Li, and Alex J Smola. Parallelized stochastic gradient
+descent. In Advances in neural information processing systems, pp. 2595–2603, 2010.
+
+12
+
+Published as a conference paper at ICLR 2021
+
+A
+
+P ROOF OF RESULTS
+
+A.1
+
+M AIN C HALLENGES
+
+We first recap some of the central challenges to our analysis. Theoretical analyses of optimization
+methods for federated learning are much different than analyses for centralized settings. The key
+factors complicating the analysis are:
+1. Clients performing multiple local updates.
+2. Data heterogeneity.
+3. Understanding the communication complexity.
+As a result of (1), the updates from the clients to the server are not gradients, or even unbiased estimates
+of gradients, they are pseudo-gradients (see Section 2). These pseudo-gradients are challenging to
+analyze as they can have both high bias (their expectation is not the gradient of the empirical loss
+function) and high variance (due to compounding variance across client updates) and are therefore
+challenging to bound. This is exacerbated by (2), which we quantify by the parameter σg in Section 2.
+Things are further complicated by (3), as we must obtain a good trade-off between the number of
+client updates taken per round (K in Algorithms 1 and 2) and the number of communication rounds
+T . Such trade-offs do not exist in centralized optimization.
+A.2
+
+P ROOF OF T HEOREM 1
+
+Proof of Theorem 1. Recall that the server update of F EDA DAGRAD is the following
+xt+1,i = xt,i + η √
+
+∆t,i
+,
+vt,i + τ
+
+for all i ∈ [d]. Since the function f is L-smooth, we have the following:
+L
+kxt+1 − xt k2
+2
+
+
+d
+∆2t,i
+∆t
+η2 L X
+= f (xt ) + η ∇f (xt ), √
++
+√
+vt + τ
+2 i=1 ( vt,i + τ )2
+
+f (xt+1 ) ≤ f (xt ) + h∇f (xt ), xt+1 − xt i +
+
+(2)
+
+The second step follows simply from F EDA DAGRAD’s update. We take the expectation of f (xt+1 )
+(over randomness at time step t) in the above inequality:
+"
+#
+d
+∆2t,i
+η2 L X
+Et [f (xt+1 )] ≤ f (xt ) + η ∇f (xt ), Et
++
+Et √
+2 i=1
+( vt,i + τ )2
+
+
+
+∆t
+∆t
+∆t
+= f (xt ) + η ∇f (xt ), Et √
+−√
++√
+vt + τ
+vt−1 + τ
+vt−1 + τ
+"
+#
+d
+∆2t,j
+η2 L X
++
+Et √
+2 j=1
+( vt,j + τ )2
+
+
+
+
+
+
+∆t
+∆t
+∆t
+= f (xt ) + η ∇f (xt ), Et √
++η ∇f (xt ), Et √
+−√
+vt−1 + τ
+vt + τ
+vt−1 + τ
+|
+{z
+}
+|
+{z
+}
+
+
+
+
+∆t
+√
+vt + τ
+
+
+
+T1
+
+T2
+
+d
+X
+
+"
+
+∆2t,j
+
+η2 L
++
+Et √
+2 j=1
+( vt,j + τ )2
+13
+
+#
+(3)
+
+Published as a conference paper at ICLR 2021
+
+We will first bound T2 in the following manner:
+
+
+
+∆t
+∆t
+T2 = ∇f (xt ), Et √
+−√
+vt + τ
+vt−1 + τ
+
+
+d
+X
+∆t,j
+∆t,j
+= Et
+[∇f (xt )]j × √
+−√
+vt,j + τ
+vt−1,j + τ
+j=1
+= Et
+
+
+
+√
+√
+d
+X
+vt−1,j − vt,j
+,
+[∇f (xt )]j × ∆t,j × √
+√
+( vt,j + τ )( vt−1,j + τ )
+j=1
+
+√
+√
+√
+√
+and recalling vt = vt−1 + ∆2t so −∆2t,j = ( vt−1,j − vt,j )( vt−1,j + vt,j )) we have,
+"
+
+#
+−∆2t,j
+√
+√
+√
+√
+( vt,j + τ )( vt−1,j + τ )( vt−1,j + vt,j )
+j=1
+"
+#
+d
+X
+∆2t,j
+≤ Et
+|∇f (xt )]j | × |∆t,j | × √
+√
+√
+√
+( vt,j + τ )( vt−1,j + τ )( vt−1,j + vt,j )
+j=1
+"
+#
+d
+X
+∆2t,j
+≤ Et
+|∇f (xt )]j | × |∆t,j | ×
+√
+(vt,j + τ 2 )( vt−1,j + τ )
+j=1
+d
+X
+= Et
+[∇f (xt )]j × ∆t,j ×
+
+since vt−1,j ≥ τ 2 .
+
+Here vt−1,j ≥ τ since v−1 ≥ τ (see the initialization of Algorithm 2) and vt,j is increasing in t. The
+above bound can be further upper bounded in the following manner:
+#
+"
+d
+X
+∆2t,j
+2
+since [∇f (xt )]i ≤ G and ∆t,i ≤ ηl KG
+T2 ≤ Et
+ηl KG
+√
+(vt,j + τ 2 )( vt−1,j + τ )
+j=1
+"
+#
+d
+X
+∆2t,j
+ηl KG2
+√
+≤ Et
+since vt−1,j ≥ 0.
+(4)
+Pt
+2
+2
+τ
+l=0 ∆l,j + τ
+j=1
+Bounding T1 We now turn our attention to bounding the term T1 , which we need to be sufficiently
+negative. We observe the following:
+
+
+
+∆t
+T1 = ∇f (xt ), Et √
+vt−1 + τ
+
+
+∇f (xt )
+, Et [∆t − ηl K∇f (xt ) + ηl K∇f (xt )]
+= √
+vt−1 + τ
+
+
+d
+X
+[∇f (xt )]2j
+∇f (xt )
+= −ηl K
++ √
+, Et [∆t + ηl K∇f (xt )] .
+(5)
+√
+vt−1,j + τ
+vt−1 + τ
+j=1
+|
+{z
+}
+T3
+
+In order to bound T1 , we use the following upper bound on T3 (which captures the difference between
+the actual update ∆t and an appropriate scaling of −∇f (xt )):
+
+
+∇f (xt )
+T3 = √
+, Et [∆t + ηl K∇f (xt )]
+vt−1 + τ
+*
+"
+#+
+m K−1
+∇f (xt )
+1 XX
+t
+= √
+, Et −
+ηl gi,k + ηl K∇f (xt )
+vt−1 + τ
+m i=1
+k=0
+*
+"
+#+
+m K−1
+∇f (xt )
+1 XX
+= √
+, Et −
+ηl ∇Fi (xti,k ) + ηl K∇f (xt )
+.
+vt−1 + τ
+m i=1
+k=0
+
+14
+
+Published as a conference paper at ICLR 2021
+
+Pm
+1
+t
+Here we used the fact that ∇f (xt ) = m
+i=1 ∇Fi (xt ) and gi,k is an unbiased estimator of the
+t
+gradient at xi,k , we further bound T3 as follows using a simple application of the fact that ab ≤
+(a2 + b2 )/2. :
+
+
+2
+d
+m K−1
+m K−1
+t
+2
+X
+X
+X
+X
+X
+∇F
+(x
+)
+[∇f
+(x
+)]
+ηl K
+1
+ηl
+1
+∇F (x )
+i i,k
+t j
+
+p√
+p√ i t
+T3 ≤
++
+Et 
+−
+√
+2 j=1 vt−1,j + τ
+2K
+m i=1
+m i=1
+v
++
+τ
+vt−1 + τ
+t−1
+k=0
+k=0
+
+
+2
+d
+m K−1
+X
+X ∇Fi (xti,k ) − ∇Fi (xt )
+ηl K X [∇f (xt )]2j
+ηl
+
+p√
+≤
++
+Et 
+√
+2 j=1 vt−1,j + τ
+2m
+vt−1 + τ
+i=1 k=0
+" m K−1
+#
+d
+XX
+ηl K X [∇f (xt )]2j
+ηl L2
+≤
++
+Et
+kxti,k − xt k2
+using Assumption 1 and vt−1 ≥ 0.
+√
+2 j=1 vt−1,j + τ
+2mτ
+i=1
+k=0
+
+(6)
+The second inequality follows from Lemma 6. The last inequality follows from L-Lipschitz nature of
+the gradient (Assumption 1). We now prove a lemma that bounds the “drift” of the xti,k from xt :
+1
+Lemma 3. For any step-size satisfying ηl ≤ 8LK
+, we can bound the drift for any k ∈ {0, · · · , K −1}
+as
+m
+d
+X
+
+1 X
+2
+2
+Ekxti,k − xt k2 ≤ 5Kηl2 E
+(σl,j
++ 2Kσg,j
+) + 30K 2 ηl2 E[k∇f (xt )))k2 .
+(7)
+m i=1
+j=1
+
+Proof. The result trivially holds for k = 1 since xti,0 = xt for all i ∈ [m]. We now turn our attention
+to the case where k ≥ 1. To prove the above result, we observe that for any client i ∈ [m] and
+k ∈ [K],
+t
+Ekxti,k − xt k2 = E xti,k−1 − xt − ηl gi,k−1
+
+2
+2
+
+t
+≤ E xti,k−1 − xt − ηl (gi,k−1
+− ∇Fi (xti,k−1 ) + ∇Fi (xti,k−1 ) − ∇Fi (xt ) + ∇Fi (xt ) − ∇f (xt ) + ∇f (xt ))
+
+
+1
+2
+2
+t
+E xti,k−1 − xt + E ηl (gi,k−1
+− ∇Fi (xti,k−1 ))
+≤ 1+
+2K − 1
+
+
+
++ 6KE[kηl (∇Fi (xti,k−1 ) − ∇Fi (xt ))k2 + 6KE[kηl (∇Fi (xt ) − ∇f (xt ))k2 + 6KE[kηl ∇f (xt )))k2
+t
+The first inequality uses the fact that gk−1,i
+is an unbiased estimator of ∇Fi (xti,k−1 ) and Lemma 7.
+The above quantity can be further bounded by the following:
+
+
+d
+X
+1
+2
+σl,j
++ 6Kηl2 EkL(xti,k−1 − xt )k2
+Ekxti,k − xt k2 ≤ 1 +
+Ekxti,k−1 − xt k2 + ηl2 E
+2K − 1
+j=1
+
+
++ 6KE[kηl (∇Fi (xt ) − ∇f (xt ))k2 + 6KE[kηl ∇f (xt )))k2
+
+
+d
+X
+1
+2
+= 1+
++ 6Kηl2 L2 Ek(xti,k−1 − xt )k2 + ηl2 E
+σl,j
+2K − 1
+j=1
+
+
+2
++ 6KE[kηl (∇Fi (xt ) − ∇f (xt ))k + 6Kηl2 E[k∇f (xt )))k2
+Here, the first inequality follows from Assumption 1 and 2. Averaging over the clients i, we obtain
+the following:
+
+
+m
+m
+d
+X
+1 X
+1
+1 X
+t
+2
+2 2
+2
+Ekxi,k − xt k ≤ 1 +
++ 6Kηl L
+Ekxti,k−1 − xt k2 + ηl2 E
+σl,j
+m i=1
+2K − 1
+m i=1
+j=1
+m
+
+
+
+6K X
+E[kηl (∇Fi (xt ) − ∇f (xt ))k2 + 6Kηl2 E[k∇f (xt )))k2
+m i=1
+
+ X
+m
+d
+X
+1
+1
+2
+2
++ 6Kηl2 L2
+Ekxti,k−1 − xt k2 + ηl2 E
+(σl,j
++ 6Kσg,j
+)
+≤ 1+
+2K − 1
+m i=1
+j=1
+
++ 6Kηl2 E[k∇f (xt )))k2
++
+
+15
+
+Published as a conference paper at ICLR 2021
+
+From the above, we get the following inequality:
+
+ X
+m
+m
+d
+X
+1 X
+1
+1
+t
+2
+2
+2
+Ekxi,k − xt k ≤ 1 +
+Ekxti,k−1 − xt k2 + ηl2 E
+(σl,j
++ 6Kσg,j
+)
+m i=1
+K − 1 m i=1
+j=1
+
++ 6Kηl2 E[k∇f (xt )))k2
+Unrolling the recursion, we obtain the following:
+
+
+p
+
+m
+k−1
+d
+X
+X
+X
+
+1
+1
+2
+2
+ηl2 E
+Ekxti,k − xt k2 ≤
+1+
+(σl,j
++ 6Kσg,j
+) + 6Kηl2 E[k∇f (xt )))k2 
+m i=1
+K
+−
+1
+p=0
+j=1
+
+
+"
+#
+K
+d
+X
+
+1
+2
+2
+≤ (K − 1) ×
+1+
+− 1 × ηl2 E
+(σl,j
++ 6Kσg,j
+) + 6Kηl2 E[k∇f (xt )))k2 
+K −1
+j=1
+
+
+d
+X
+
+2
+2
+≤ 5Kηl2 E
+(σl,j
++ 6Kσg,j
+) + 30K 2 ηl2 E[k∇f (xt )))k2  ,
+j=1
+1
+concluding the proof of Lemma 3. The last inequality uses the fact that (1 + K−1
+)K ≤ 5 for
+K > 1.
+
+Using the above lemma in Equation 6 and Condition I, we can bound T3 in the following manner:
+
+
+d
+m K−1 d
+ηl K X [∇f (xt )]2j
+ηl L2 X X X t
+T3 ≤
++
+Et
+([xi,k ]j − [xt ]j )2 
+√
+2 j=1 vt−1,j + τ
+2mτ
+i=1 k=0 j=1
+
+
+d
+d
+X
+
+ηl K X [∇f (xt )]2j
+ηl KL2 
+2
+2
+≤
++
+5Kηl2 E
+(σl,j
++ 6Kσg,j
+) + 30K 2 ηl2 E[k∇f (xt )))k2 
+√
+2 j=1 vt−1,j + τ
+2τ
+j=1
+d
+d
+3ηl K X [∇f (xt )]2j
+5η 3 K 2 L2 X 2
+2
++ l
+E
+(σl,j + 6Kσg,j
+)
+√
+4 j=1 vt−1,j + τ
+2τ
+j=1
+√
+√
+Here we used the fact that vt−1,j ≤ ηl KG T and Condition I in Theorem 1. Using the above
+bound in Equation 5, we get
+
+≤
+
+T1 ≤ −
+
+d
+d
+5ηl3 K 2 L2 X 2
+ηl K X [∇f (xt )]2j
+2
++
+E
+(σl,j + 6Kσg,j
+)
+√
+4 j=1 vt−1,j + τ
+2τ
+j=1
+
+(8)
+
+Putting the pieces together Substituting in Equation (3), bounds T1 in Equation (8) and bound T2
+in Equation (4), we obtain
+
+
+d
+d
+2
+3 2 2 X
+X
+[∇f
+(x
+)]
+ηl K
+5η K L
+t j
+2
+2 
+Et [f (xt+1 )] ≤ f (xt ) + η × −
++ l
+E
+(σl,j
++ 6Kσg,j
+)
+√
+4 j=1 vt−1,j + τ
+2τ
+j=1
+#
+#
+"
+"
+d
+d
+X ηl KG2
+∆2t,j
+∆2t,j
+η2 X
++η×E
++
+LE Pt
+. (9)
+Pt
+2
+2
+2
+2
+τ
+2 j=1
+l=0 ∆l,j + τ
+l=0 ∆l,j + τ
+j=1
+Rearranging the above inequality and summing it from t = 0 to T − 1, we get
+T
+−1
+X
+
+d
+d
+ηl K X [∇f (xt )]2j
+f (x0 ) − E[f (xT )] 5ηl3 K 2 L2 T X 2
+2
+E√
+≤
++
+(σl,j + 6Kσg,j
+)
+4
+v
++
+τ
+η
+2τ
+t−1,j
+t=0
+j=1
+j=1
+#
+ "
+T
+−1 X
+d 
+X
+∆2t,j
+ηl KG2
+ηL
++
+E
++
+× Pt
+(10)
+2
+2
+τ
+2
+l=0 ∆l,j + τ
+t=0
+j=1
+
+16
+
+Published as a conference paper at ICLR 2021
+
+The first inequality uses simple telescoping sum. For completing the proof, we need the following
+result.
+Lemma 4. The following upper bound holds for Algorithm 2 (F EDA DAGRAD):
+"
+(
+
+
+T
+−1 X
+d
+d
+X
+X
+∆2t,j
+ηl2 K 2 G2 T
+E
+≤ min d +
+,
+log 1 +
+Pt
+2
+2
+τ2
+l=0 ∆l,j + τ
+t=0 j=1
+j=1
+d
+−1 h
+d
+2
+2
+i
+X
+) 40ηl4 K 2 L2 + 2ηl2 K 2 TX
+(σl,j
++ 6Kσg,j
+4ηl2 KT X 2
+2
+4 3 2
++
+E
+k∇f
+(x
+)k
+σ
++
+20η
+K
+L
+T
+t
+l,j
+l
+mτ 2 j=1
+τ2
+τ2
+t=0
+j=1
+
+)#
+
+Proof. We bound the desired quantity in the following manner:
+PT −1 2 !
+
+
+T
+−1 X
+d
+d
+d
+X
+X
+X
+∆2t,j
+ηl2 K 2 G2 T
+l=0 ∆l,j
+E
+.
+≤
+d
++
+E
+≤
+d
++
+log
+1
++
+log
+1
++
+Pt
+2
+2
+τ2
+τ2
+l=0 ∆l,j + τ
+t=0 j=1
+j=1
+j=1
+An alternate way of the bounding this quantity is as follows:
+E
+
+d
+T
+−1 X
+X
+
+∆2t,j
+Pt
+
+t=0 j=1
+
+2
+2
+l=0 ∆t,j + τ
+
+≤E
+
+d
+T
+−1 X
+X
+
+∆2t,j
+τ2
+t=0 j=1
+
+T
+−1
+X
+
+2
+
+∆t + ηl K∇f (xt ) − ηl K∇f (xt )
+τ
+t=0
+"
+#
+T
+−1
+2
+2
+X
+∆t + ηl K∇f (xt )
+2 2 ∇f (xt )
+≤ 2E
++ ηl K
+.
+τ
+τ
+t=0
+
+≤E
+
+(11)
+
+The first quantity in the above bound can be further bounded as follows:
+! 2
+T
+−1
+m K−1
+X
+1
+1 XX
+t
+2E
+ηl gi,k + ηl K∇f (xt )
+· −
+τ
+m i=1
+t=0
+k=0
+#
+! 2
+"
+T
+−1
+m K−1
+X
+
+1
+1 XX
+t
+t
+t
+ηl gi,k − ηl ∇Fi (xi,k ) + ηl ∇Fi (xi,k ) − ηl ∇Fi (xt ) + ηl ∇Fi (xt ) − ηl K∇f (xt )
+= 2E
+·
+τ
+m i=1
+t=0
+k=0
+
+
+2
+T −1
+m K−1
+
+2ηl2 X  X X 1
+t
+E
+· gi,k
+= 2
+− ∇Fi (xti,k ) + ∇Fi (xti,k ) − ∇Fi (xt ) 
+m t=0
+τ
+i=1 k=0
+
+
+2
+2
+T −1
+m K−1
+m
+X K−1
+X 1
+
+
+4ηl2 X  X X 1
+t
+≤ 2
+E
+· gi,k
+− ∇Fi (xti,k )
++
+· ∇Fi (xti,k ) − ∇Fi (xt ) 
+m t=0
+τ
+τ
+i=1
+i=1
+k=0
+
+k=0
+
+m K−1 T −1
+2
+σl,j
+4η 2 KT
+4ηl2 K X X X
+E
+≤ l
++
+m j=1 τ 2
+m
+i=1 k=0 t=0
+
+ 2
+1
+· ∇Fi (xti,k ) − ∇Fi (xt )
+τ
+
+d
+X
+
+≤
+
+d
+m K−1 T −1
+2
+ 2
+4ηl2 KT X σl,j
+4ηl2 K X X X L
+t
++
+E
+·
+x
+−
+x
+t
+i,k
+m j=1 τ 2
+m
+τ
+t=0
+i=1
+
+(by Assumptions 1 and 2)
+
+k=0
+
+≤
+
+d
+d
+−1 h
+2
+2
+i
+X
+(σl,j
++ 6Kσg,j
+) 40ηl4 K 4 L2 TX
+4ηl2 KT X 2
+2
+4 3 2
+σ
++
+20η
+K
+L
+T
++
+E k∇f (xt )k
+l,j
+l
+2
+2
+2
+mτ
+τ
+τ
+t=0
+j=1
+j=1
+
+(by Lemma 3).
+
+Here, the first inequality follows from simple application of the fact that ab ≤ (a2 + b2 )/2. The result
+follows.
+17
+
+Published as a conference paper at ICLR 2021
+
+Substituting the above bound in Equation (10), we obtain:
+T −1 d
+ηl K X X [∇f (xt )]2j
+E√
+4 t=0 j=1
+vt−1,j + τ
+
+≤
+
+T −1 d
+f (x0 ) − E[f (xT )] 5ηl3 K 2 L2 X X 2
+2
++
+E
+(σl,j + 6Kσg,j
+)
+η
+2τ
+t=0 j=1
+(
+
+ "
+
+
+ηL
+ηl KG2
+η 2 K 2 G2 T
+,
++
+× min d + d log 1 + l 2
++
+τ
+2
+τ
+d
+−1 h
+d
+2
+2
+i
+X
+(σl,j
++ 6Kσg,j
+) 40ηl4 K 4 L2 + 2ηl2 K 2 TX
+4ηl2 KT X 2
+2
+4 3 2
++
+σ
++
+20η
+K
+L
+T
+E
+k∇f
+(x
+)k
+t
+l,j
+l
+mτ 2 j=1
+τ2
+τ2
+t=0
+j=1
+
+)#
+
+(12)
+Note that under the conditions assumed, we have 40ηl4 K 4 L2 ≤ 2ηl2 K 2 . We observe the following:
+T
+−1 X
+d
+X
+[∇f (xt )]2j
+[∇Ef (xt )]2j
+T
+√
+√
+≥
+min Ek∇f (xt )k2 .
+≥
+E
+√
+0≤t≤T
+v
++
+τ
+η
+KG
+T
++
+τ
+η
+KG
+T
++
+τ
+t−1,j
+l
+l
+t=0 j=1
+t=0 j=1
+
+T
+−1 X
+d
+X
+
+The second part of Theorem 1 follows from using the above inequality in Equation (12). Note that
+the first part of Theorem 1 is obtain from the part of Lemma 4.
+A.2.1
+
+L IMITED PARTICIPATION
+
+For limited participation, the main changed in the proof is in Equation (11). The rest of the proof is
+similar so we mainly focus on Equation (11) here. Let S be the sampled set at the tth iteration such
+that |S| = s. In partial participation, we assume that the set S is sampled uniformly from all subsets
+of [m] with size s. In this case, for the first term in Equation (11), we have
+! 2
+K−1
+T
+−1
+X
+1 XX
+1
+t
+· −
+ηl gi,k
++ ηl K∇f (xt )
+2E
+τ
+|S|
+t=0
+i∈S k=0
+
+! 2
+T
+−1
+X
+X K−1
+X
+
+1
+1
+t
+
+
+= 2E
+·
+ηl gi,k
+− ηl ∇Fi (xti,k ) + ηl ∇Fi (xti,k ) − ηl ∇Fi (xt ) + ηl ∇Fi (xt ) − ηl K∇f (xt )
+τ
+s
+t=0
+i∈S k=0
+
+T −1
+
+"
+
+6η 2 X
+≤ 2l
+E
+s t=0
+
+X K−1
+X 1
+i∈S k=0
+
++ K2
+
+≤
+
+τ
+
+2
+
+·
+
+t
+gi,k
+− ∇Fi (xti,k )
+
+1
+·
+τ
+
+
+
++
+
+X K−1
+X 1
+i∈S k=0
+! 2#
+
+X
+
+τ
+
+2
+
+·
+
+∇Fi (xti,k ) − ∇Fi (xt )
+
+
+
+Fi (xt ) − s∇f (xt )
+
+i∈S
+
+d
+K−1 T −1
+2
+ 2 6ηl2 K 2 T σg2 
+6ηl2 KT X σl,j
+6ηl2 K X X X 1
+s
+t
++
+E
+·
+∇F
+(x
+)
+−
+∇F
+(x
+)
++
+1
+−
+i
+i
+t
+i,k
+s
+τ2
+s
+τ
+τ2
+m
+t=0
+j=1
+i∈S k=0
+
+K−1 T −1
+2
+σl,j
+6η 2 KT
+6ηl2 K X X X
+≤ l
++
+E
+s
+τ2
+s
+j=1
+i∈S k=0 t=0
+d
+X
+
+≤
+
+
+L
+· xti,k − xt
+τ
+
+2
+
++
+
+6ηl2 K 2 T σg2 
+s
+1
+−
+τ2
+m
+
+d
+d
+−1 h
+2
+2
+i
+X
+(σl,j
++ 6Kσg,j
+) 60ηl4 K 4 L2 TX
+6ηl2 KT X 2
+2
+4 3 2
+σ
++
+30η
+K
+L
+T
+E
++
+E
+k∇f
+(x
+)k
+t
+l
+τ 2 s j=1 l,j
+τ2
+τ2
+t=0
+j=1
+
++
+
+6ηl2 K 2 T σg2 
+s
+1
+−
+.
+τ2
+m
+
+Note that the expectation here also includes S. The first inequality is obtained from the fact that
+(a + b + c)2 ≤ 3(a2 + b2 + c2 ). The second inequality is obtained from the fact that set S is uniformly
+18
+
+Published as a conference paper at ICLR 2021
+
+sampled from all subsets of [m] with size s. The third and fourth inequalities are similar to the
+one used in proof of Theorem 1. Substituting the above bound in Equation (10) gives the desired
+convergence rate.
+A.3
+
+P ROOF OF T HEOREM 2
+
+Proof of Theorem 2. The proof strategy is similar to that of F EDA DAGRAD except that we need to
+handle the exponential moving average in F EDA DAM. We note that the update of F EDA DAM is the
+following
+xt+1 = xt + η √
+
+∆t
+,
+vt + τ
+
+for all i ∈ [d]. Using the L-smooth nature of function f and the above update rule, we have the
+following:
+
+
+∆t
+f (xt+1 ) ≤ f (xt ) + η ∇f (xt ), √
+vt + τ
+
+
++
+
+d
+∆2t,i
+η2 L X
+√
+2 i=1 ( vt,i + τ )2
+
+(13)
+
+The second step follows simply from F EDA DAM’s update. We take the expectation of f (xt+1 ) (over
+randomness at time step t) and rewrite the above inequality as:
+*
+
+"
+
+#+
+#
+"
+d
+∆2t,j
+∆t
+∆t
+∆t
+η2 L X
+Et [f (xt+1 )] ≤ f (xt ) + η ∇f (xt ), Et √
+−p
++p
++
+Et √
+vt + τ
+2 j=1
+( vt,j + τ )2
+β2 vt−1 + τ
+β2 vt−1 + τ
+#+
+#+
+*
+"
+*
+"
+∆t
+∆t
+∆t
+= f (xt ) + η ∇f (xt ), Et p
++η ∇f (xt ), Et √
+−p
+vt + τ
+β2 vt−1 + τ
+β2 vt−1 + τ
+|
+|
+{z
+}
+{z
+}
+R1
+
+R2
+
+d
+η LX
+
+"
+
+2
+
++
+
+2
+
+j=1
+
+Et
+
+∆2t,j
+√
+( vt,j + τ )2
+
+#
+
+(14)
+Bounding R2 .
+
+We observe the following about R2 :
+
+#
+∆t,j
+∆t,j
+R2 = Et
+[∇f (xt )]j × √
+−p
+vt,j + τ
+β2 vt−1,j + τ
+j=1
+"
+#
+p
+√
+d
+X
+β2 vt−1,j − vt,j
+p
+= Et
+[∇f (xt )]j × ∆t,j × √
+( vt,j + τ )( β2 vt−1,j + τ )
+j=1
+"
+#
+d
+X
+−(1 − β2 )∆2t,j
+p
+p
+= Et
+[∇f (xt )]j × ∆t,j × √
+√
+( vt,j + τ )( β2 vt−1,j + τ )( β2 vt−1,j + vt,j )
+j=1
+"
+#
+d
+X
+∆2t,j
+p
+p
+≤ (1 − β2 )Et
+|∇f (xt )]j | × |∆t,j | × √
+√
+( vt,j + τ )( β2 vt−1,j + τ )( β2 vt−1,j + vt,j )
+j=1
+"
+#
+d
+X
+p
+∆2t,j
+p
+≤ 1 − β2 Et
+|∇f (xt )]j | × √
+vt,j + τ )( β2 vt−1,j + τ )
+j=1
+"
+#
+d
+X
+p
+∆2t,j
+G
+≤ 1 − β2 Et
+× √
+.
+τ
+vt,j + τ
+j=1
+d
+X
+
+"
+
+19
+
+Published as a conference paper at ICLR 2021
+
+Bounding R1 .
+
+The term R1 can be bounded as follows:
+*
+#+
+"
+∆t
+R1 = ∇f (xt ), Et p
+β2 vt−1 + τ
+*
++
+∇f (xt )
+, Et [∆t − ηl K∇f (xt ) + ηl K∇f (xt )]
+= p
+β2 vt−1 + τ
+*
++
+d
+X
+[∇f (xt )]2j
+∇f (xt )
+p
++ p
+= −ηl K
+, Et [∆t + ηl K∇f (xt )] .
+β2 vt−1,j + τ
+β2 vt−1 + τ
+j=1
+|
+{z
+}
+
+(15)
+
+R3
+
+Bounding R3 .
+Theorem 1:
+
+The term R3 can be bounded in exactly the same way as term T3 in proof of
+" m K−1
+#
+d
+XX
+ηl K X [∇f (xt )]2j
+ηl L2
+t
+2
+p
+R3 ≤
++
+Et
+kxi,k − xt k
+2 j=1 β2 vt−1,j + τ
+2mτ
+i=1
+k=0
+
+Substituting the above inequality in Equation (15), we get
+" m K−1
+#
+d
+XX
+ηl L2
+ηl K X [∇f (xt )]2j
+t
+2
+p
+Et
+kxi,k − xt k
++
+R1 ≤ −
+2 j=1 β2 vt−1,j + τ
+2mτ
+i=1 k=0
+Using Lemma 3, we obtain the following bound on R1 :
+d
+d
+ηl K X [∇f (xt )]2j
+5ηl3 K 2 L2 X 2
+2
+p
+R1 ≤ −
+Et
+(σl,j + 6Kσg,j
+)
++
+4 j=1 β2 vt−1,j + τ
+2τ
+j=1
+
+Here we used the fact that
+
+√
+
+(16)
+
+vt−1,j ≤ ηl KG and conditions in Theorem 2.
+
+Putting pieces together. Substituting bounds R1 and R2 in Equation (14), we have
+d
+d
+ηηl K X [∇f (xt )]2j
+5ηηl3 K 2 L2 X 2
+2
+p
++
+E
+(σl,j + 6Kσg,j
+)
+4 j=1 β2 vt−1,j + τ
+2τ
+j=1
+"
+"
+# 
+#
+ √
+ d
+ d
+∆2t,j
+∆2t,j
+η2 L X
+η 1 − β2 G X
+Et √
+Et
++
++
+τ
+vt,j + τ
+2
+vt,j + τ 2
+j=1
+j=1
+
+Et [f (xt+1 )] ≤ f (xt ) −
+
+Summing over t = 0 to T − 1 and using telescoping sum, we have
+T −1 d
+d
+[∇f (xt )]2j
+ηηl K X X
+5ηηl3 K 2 L2 T X 2
+2
+Ep
++
+E
+(σl,j + 6Kσg,j
+)
+4 t=0 j=1
+2τ
+β2 vt−1,j + τ
+j=1
+"
+# 
+"
+#
+ √
+ T −1 d
+ T −1 d
+∆2t,j
+∆2t,j
+η 1 − β2 G X X
+η2 L X X
+E √
++
+E
+τ
+vt,j + τ
+2
+vt,j + τ 2
+t=0 j=1
+t=0 j=1
+
+E[f (xT )] ≤ f (x0 ) −
+
+(17)
+To bound this term further, we need the following result.
+Lemma 5. The following upper bound holds for Algorithm 2 (F EDA DAM):
+"
+#
+T
+−1 X
+d
+d
+d
+X
+∆2t,j
+20ηl4 K 3 L2 T X 2
+4ηl2 KT X 2
+2
+≤
+σ
++
+E
+(σl,j + 6Kσg,j
+)
+E
+l,j
+2)
+2
+2
+(v
++
+τ
+mτ
+τ
+t,j
+t=0 j=1
+j=1
+j=1
++
+
+20
+
+T −1
+i
+40ηl4 K 4 L2 + 2ηl2 K 2 X h
+2
+E
+k∇f
+(x
+)k
+t
+τ2
+t=0
+
+Published as a conference paper at ICLR 2021
+
+Proof.
+E
+
+T
+−1 X
+d
+X
+t=0 j=1 (1 − β2 )
+
+∆2t,j
+Pt
+
+t−l 2
+2
+l=0 β2 ∆t,j + τ
+
+≤E
+
+T
+−1 X
+d
+X
+
+∆2t,j
+τ2
+t=0 j=1
+
+The rest of the proof follows along the lines of proof of Lemma 4. Using the same argument, we get
+"
+#
+d
+d
+d
+X
+∆2t,j
+4ηl2 KT X 2
+20ηl4 K 3 L2 T X 2
+2
+E
+≤
+E
+σ
+(σl,j + 6Kσg,j
++
+)
+l,j
+2)
+2
+2
+(v
++
+τ
+mτ
+τ
+t,j
+j=1
+j=1
+j=1
++
+
+T −1
+i
+40ηl4 K 4 L2 + 2ηl2 K 2 X h
+2
+E
+k∇f
+(x
+)k
+,
+t
+τ2
+t=0
+
+which is the desired result.
+Substituting the bound obtained from above lemma in Equation (17) and using a similar argument for
+bounding
+"
+#
+ T −1 d
+ √
+∆2t,j
+η 1 − β2 G X X
+E √
+,
+τ
+vt,j + τ )
+t=0 j=1
+we obtain
+T −1 d
+d
+ηηl K X X [∇f (xt )]2j
+5ηηl3 K 2 L2 T X 2
+2
+p
+E
+(σl,j + 6Kσg,j
+)
++
+8 t=0 j=1 β2 vt−1,j + τ
+2τ
+j=1
+
+
+
+
+d
+d
+2
+4 4 2
+2
+X
+X
+p
+4η KT
+20ηl K L T
+η L
+2
+2
+2 
+× l 2
+σl,j
+(σl,j
++ η 1 − β2 G +
++
+E
++ 6Kσg,j
+)
+2
+2
+mτ
+τ
+j=1
+j=1
+
+Et [f (xT )] ≤ f (x0 ) −
+
+The above inequality is obtained due to the fact that:
+
+
+
+
+p
+ηl K
+ηL 40ηl4 K 4 L2 + 2ηl2 K 2
+1
+√
+≤
+1 − β2 G +
+.
+2
+τ2
+8
+β2 ηl KG + τ
+The above inequality is due to the condition on ηl in Theorem 2. Here, we used the fact that under the
+conditions assumed, we have 40ηl4 K 4 L2 ≤ 2ηl2 K 2 . We also observe the following:
+T
+−1 X
+d
+X
+
+T
+−1 X
+d
+X
+[∇f (xt )]2j
+[∇f (xt )]2j
+T
+p
+√
+≥
+≥√
+min k∇f (xt )k2 .
+0≤t≤T
+β
+η
+KG
++
+τ
+β
+η
+KG
++
+τ
+β
+v
++
+τ
+2
+l
+2
+l
+2 t−1,j
+t=0 j=1
+t=0 j=1
+
+Substituting this bound in the above equation yields the desired result.
+A.4
+
+AUXILIARY L EMMATTA
+
+Lemma 6. For random variables z1 , . . . , zr , we have
+
+
+
+
+E kz1 + ... + zr k2 ≤ rE kz1 k2 + ... + kzr k2 .
+Lemma 7. For independent, mean 0 random variables z1 , . . . , zr , we have
+
+
+
+
+E kz1 + ... + zr k2 = E kz1 k2 + ... + kzr k2 .
+
+B
+
+F EDERATED A LGORITHMS : I MPLEMENTATIONS AND P RACTICAL
+C ONSIDERATIONS
+
+B.1
+
+F EDAVG AND F ED O PT
+
+In Algorithm 3, we give a simplified version of the F EDAVG algorithm by McMahan et al. (2017), that
+applies to the setup given in Section 2. We write S GDK (xt , ηl , fi ) to denote K steps of S GD using
+21
+
+Published as a conference paper at ICLR 2021
+
+Algorithm 3 Simplified F EDAVG
+Input: x0
+for t = 0, · · · , T − 1 do
+Sample a subset S of clients
+xti = xt
+for each client i ∈ S in parallel do
+xti = S GDK (xt , ηl , fi ) for i ∈ S (in parallel)
+P
+1
+t
+xt+1 = |S|
+i∈S xi
+
+gradients ∇fi (x, z) for z ∼ Di with (local) learning rate ηl , starting from xt . As noted in Section 2,
+Algorithm 3 is the special case of Algorithm 1 where C LIENT O PT is S GD, and S ERVERO PT is S GD
+with learning rate 1.
+While Algorithms 1, 2, and 3 are useful for understanding relations between federated optimization
+methods, we are also interested in practical versions of these algorithms. In particular, Algorithms
+1, 2, and 3 are stated in terms of a kind of ‘gradient oracle’, where we compute unbiased estimates
+of the client’s gradient. In practical scenarios, we often only have access to finite data samples, the
+number of which may vary between clients.
+Instead, we assume that in (1), each client distribution Di is the uniform distribution over some
+finite set Di of size ni . The ni may vary significantly between clients, requiring extra care when
+implementing federated optimization methods. We assume the set Di is partitioned into a collection
+of batches Bi , each of size B. For b ∈ Bi , we let fi (x; b) denote the average loss on this batch at x
+with corresponding gradient ∇fi (x; b). Thus, if b is sampled uniformly at random from Bi , ∇fi (x; b)
+is an unbiased estimate of ∇Fi (x).
+When training, instead of uniformly using K gradient steps, as in Algorithm 1, we will instead
+perform E epochs of training over each client’s dataset. Additionally, we will take a weighted average
+of the client updates, where we weight according to the number of examples ni in each client’s
+dataset. This leads to a batched data version of F ED O PT in Algorithm 4, and a batched data version
+of F EDA DAGRAD, F EDA DAM, and F EDYOGI given in Algorithm 5.
+Algorithm 4 F ED O PT - Batched data
+Input: x0 , C LIENT O PT, S ERVERO PT
+for t = 0, · · · , T − 1 do
+Sample a subset S of clients
+xti = xt
+for each client i ∈ S in parallel do
+for e = 1, . . . , E do
+for b ∈ Bi do
+git = ∇fi (xti ; b)
+xti = C LIENT O PT(xti , git , ηl , t)
+t
+∆i = xti − xt
+P
+P
+n = i∈S ni , ∆t = i∈S nni ∆ti
+xt+1 = S ERVERO PT(xt , −∆t , η, t)
+In Section 5, we use Algorithm 4 when implementing F EDAVG and F EDAVG M. In particular,
+F EDAVG and F EDAVG M correspond to Algorithm 4 where C LIENT O PT and S ERVERO PT are S GD.
+F EDAVG uses vanilla S GD on the server, while F EDAVG M uses S GD with a momentum parameter
+of 0.9. In both methods, we tune both client learning rate ηl and server learning rate η. This means
+that the version of F EDAVG used in all experiments is strictly more general than that in (McMahan
+et al., 2017), which corresponds to F ED O PT where C LIENT O PT and S ERVERO PT are S GD, and
+S ERVERO PT has a learning rate of 1.
+We use Algorithm 5 for all implementations F EDA DAGRAD, F EDA DAM, and F EDYOGI in Section 5.
+For F EDA DAGRAD, we set β1 = β2 = 0 (as typical versions of A DAGRAD do not use momentum).
+For F EDA DAM and F EDYOGI we set β1 = 0.9, β2 = 0.99. While these parameters are generally
+22
+
+Published as a conference paper at ICLR 2021
+
+Algorithm 5 F EDA DAGRAD , F EDYOGI , and F EDA DAM - Batched data
+Input: x0 , v−1 ≥ τ 2 , optional β1 , β2 ∈ [0, 1) for F EDYOGI and F EDA DAM
+for t = 0, · · · , T − 1 do
+Sample a subset S of clients
+xti = xt
+for each client i ∈ S in parallel do
+for e = 1, . . . , E do
+for b ∈ Bi do
+xti = xti − ηl ∇fi (xti ; b)
+t
+∆i = xti − xt
+P
+P
+n = i∈S ni , ∆t = i∈S nni ∆ti
+mt = β1 mt−1 + (1 − β1 )∆t
+vt = vt−1 + ∆2t (F EDA DAGRAD)
+vt = vt−1 − (1 − β2 )∆2t sign(vt−1 − ∆2t ) (F EDYOGI)
+vt = β2 vt−1 + (1 − β2 )∆2t (F EDA DAM)
+t
+xt+1 = xt + η √vmt +τ
+
+good choices (Zaheer et al., 2018), we emphasize that better results may be obtainable by tuning
+these parameters.
+B.2
+
+SCAFFOLD
+
+As discussed in Section 5, we compare all five optimizers above to SCAFFOLD (Karimireddy et al.,
+2019) on our various tasks. There are a few important notes about the validity of this comparison.
+1. In cross-device settings, this is not a fair comparison. In particular, SCAFFOLD does not
+work in settings where clients cannot maintain state across rounds, as may be the case for
+federated learning systems on edge devices, such as cell phones.
+2. SCAFFOLD has two variants described by Karimireddy et al. (2019). In Option I, the
+control variate of a client is updated using a full gradient computation. This effectively
+requires performing an extra pass over each client’s dataset, as compared to Algorithm 1. In
+order to normalize the amount of client work, we instead use Option II, in which the clients’
+control variates are updated using the difference between the server model and the client’s
+learned model. This requires the same amount of client work as F EDAVG and Algorithm 2.
+For practical reasons, we implement a version of SCAFFOLD mirroring Algorithm 4, in which we
+perform E epochs over the client’s dataset, and perform weighted averaging of client models. For
+posterity, we give the full pseudo-code of the version of SCAFFOLD used in our experiments in
+Algorithm 6. This is a simple adaptiation of Option II of the SCAFFOLD algorithm in (Karimireddy
+et al., 2019) to the same setting as Algorithm 4. In particular, we let ni denote the number of examples
+in client i’s local dataset.
+In this algorithm, ci is the control variate of client i, and c is the running average of these control
+variates. In practice, we must initialize the control variates ci in some way when sampling a client i
+for the first time. In our implementation, we set ci = c the first time we sample a client i. This has
+the advantage of exactly recovering F EDAVG when each client is sampled at most once. To initialize
+c, we use the all zeros vector.
+We compare this version of SCAFFOLD to F EDA DAGRAD, F EDA DAM, F EDYOGI, F EDAVG M,
+and F EDAVG on our tasks, tuning the learning rates in the same way (using the same grids as in
+Appendix D.2). In particular, ηl , η are tuned to obtain the best training performance over the last 100
+communication rounds. We use the same federated hyperparameters for SCAFFOLD as discussed in
+Section 4. Namely, we set E = 1, and sample 10 clients per round for all tasks except Stack Overflow
+NWP, where we sample 50. The results are given in Figure 1 in Section 5.
+23
+
+Published as a conference paper at ICLR 2021
+
+Algorithm 6 SCAFFOLD, Option II - Batched data
+Input: x0 , c, ηl , η
+for t = 0, · · · , T − 1 do
+Sample a subset S of clients
+xti = xt
+for each client i ∈ S in parallel do
+for e = 1, . . . , E do
+for b ∈ Bi do
+git = ∇fi (xti ; b)
+xti = xti − ηl (git − ci + c)
++
+ci = ci − c + (E|Bi |ηl )−1 (xti − xi )
+∆xi = xti − xt , ∆ci = c+
+i − ci
+ci = c+
+i
+P
+P
+P
+n = i∈S ni , ∆x = i∈S nni ∆xi , ∆c = i∈S nni ∆ci
+xt+1 = xt + η∆x, c = c + |S|
+N ∆c
+
+B.3
+
+L OOKAHEAD , A DA A LTER , AND CLIENT ADAPTIVITY
+
+The L OOKAHEAD optimizer (Zhang et al., 2019b) is primarily designed for non-FL settings. L OOKA HEAD uses a generic optimizer in the inner loop and updates its parameters using a “outer” learning
+rate. Thus, unlike F ED O PT, L OOKAHEAD uses a single generic optimizer and is thus conceptually different. In fact, L OOKAHEAD can be seen as a special case of F ED O PT in non-FL settings which uses a
+generic optimizer C LIENT O PT as a client optimizer, and S GD as the server optimizer. While there are
+multiple ways L OOKAHEAD could be generalized to a federated setting, one straightforward version
+would simply use an adaptive method as the C LIENT O PT. On the other hand, A DA A LTER (Xie et al.,
+2019) is designed specifically for distributed settings. In A DA A LTER, clients use a local optimizer
+similar to A DAGRAD (McMahan & Streeter, 2010a; Duchi et al., 2011) to perform multiple epochs
+of training on their local datasets. Both L OOKAHEAD and A DA A LTER use client adaptivity, which is
+fundamentally different from the adaptive server optimizers proposed in Algorithm 2.
+To illustrate the differences, consider the client-to-server communication in A DA A LTER. This requires
+communicating both the model weights and the client accumulators (used to perform the adaptive
+optimization, analogous to vt in Algorithm 2). In the case of A DA A LTER, the client accumulator is
+the same size as the model’s trainable weights. Thus, the client-to-server communication doubles for
+this method, relative to F EDAVG. In A DA A LTER, the server averages the client accumulators and
+broadcasts the average to the next set of clients, who use this to initialize their adaptive optimizers.
+This means that the server-to-client communication also doubles relative to F EDAVG. The same
+would occur for any adaptive client optimizer in the distributed version of L OOKAHEAD described
+above. For similar reasons, we see that client adaptive methods also increase the amount of memory
+needed on the client (as they must store the current accumulator). By contrast, our adaptive server
+methods (Algorithm 2) do not require extra communication or client memory relative to F EDAVG.
+Thus, we see that server-side adaptive optimization benefits from lower per-round communication
+and client memory requirements, which are of paramount importance for FL applications (Bonawitz
+et al., 2019).
+
+C
+
+DATASET & M ODELS
+
+Here we provide detailed description of the datasets and models used in the paper. We use federated
+versions of vision datasets EMNIST (Cohen et al., 2017), CIFAR-10 (Krizhevsky & Hinton, 2009),
+and CIFAR-100 (Krizhevsky & Hinton, 2009), and language modeling datasets Shakespeare (McMahan et al., 2017) and StackOverflow (Authors, 2019). Statistics for the training datasets can be found
+in Table 2. We give descriptions of the datasets, models, and tasks below. Statistics on the number of
+clients and examples in both the training and test splits of the datasets are given in Table 2.
+24
+
+Published as a conference paper at ICLR 2021
+
+Table 2: Dataset statistics.
+DATASET
+CIFAR-10
+CIFAR-100
+EMNIST-62
+S HAKESPEARE
+S TACKOVERFLOW
+
+C.1
+
+T RAIN C LIENTS
+
+T RAIN E XAMPLES
+
+T EST C LIENTS
+
+T EST E XAMPLES
+
+500
+500
+3,400
+715
+342,477
+
+50,000
+50,000
+671,585
+16,068
+135,818,730
+
+100
+100
+3,400
+715
+204,088
+
+10,000
+10,000
+77,483
+2,356
+16,586,035
+
+CIFAR-10/CIFAR-100
+
+We create a federated version of CIFAR-10 by randomly partitioning the training data among 500
+clients, with each client receiving 100 examples. We use the same approach as Hsu et al. (2019),
+where we apply latent Dirichlet allocation (LDA) over the labels of CIFAR-10 to create a federated
+dataset. Each client has an associated multinomial distribution over labels from which its examples
+are drawn. The multinomial is drawn from a symmetric Dirichlet distribution with parameter 0.1.
+For CIFAR-100, we perform a similar partitioning of 100 examples to 500 clients, but using a more
+sophisticated approach. We use a two step LDA process over the coarse and fine labels. We randomly
+partition the data to reflect the "coarse" and "fine" label structure of CIFAR-100 by using the Pachinko
+Allocation Method (PAM) (Li & McCallum, 2006). This creates more realistic client datasets, whose
+label distributions better resemble practical heterogeneous client datasets. We have made publicly
+available the specific federated version of CIFAR-100 we used for all experiments, though we avoid
+giving a link in this work in order to avoid de-anonymization. For complete details on how the dataset
+was created, see Appendix F.
+We train a modified ResNet-18 on both datasets, where the batch normalization layers are replaced
+by group normalization layers (Wu & He, 2018). We use two groups in each group normalization
+layer. As shown by Hsieh et al. (2019), group normalization can lead to significant gains in accuracy
+over batch normalization in federated settings.
+Preprocessing CIFAR-10 and CIFAR-100 consist of images with 3 channels of 32 × 32 pixels
+each. Each pixel is represented by an unsigned int8. As is standard with CIFAR datasets, we perform
+preprocessing on both training and test images. For training images, we perform a random crop
+to shape (24, 24, 3), followed by a random horizontal flip. For testing images, we centrally crop
+the image to (24, 24, 3). For both training and testing images, we then normalize the pixel values
+according to their mean and standard deviation. Namely, given an image x, we compute (x − µ)/σ
+where µ is the average of the pixel values in x, and σ is the standard deviation.
+C.2
+
+EMNIST
+
+EMNIST consists of images of digits and upper and lower case English characters, with 62 total
+classes. The federated version of EMNIST (Caldas et al., 2018) partitions the digits by their author.
+The dataset has natural heterogeneity stemming from the writing style of each person. We perform two
+distinct tasks on EMNIST, autoencoder training (EMNIST AE) and character recognition (EMNIST
+CR). For EMNIST AE, we train the “MNIST” autoencoder (Zaheer et al., 2018). This is a densely
+connected autoencoder with layers of size (28 × 28) − 1000 − 500 − 250 − 30 and a symmetric
+decoder. A full description of the model is in Table 3. For EMNIST CR, we use a convolutional
+network. The network has two convolutional layers (with 3 × 3 kernels), max pooling, and dropout,
+followed by a 128 unit dense layer. A full description of the model is in Table 4.
+C.3
+
+S HAKESPEARE
+
+Shakespeare is a language modeling dataset built from the collective works of William Shakespeare.
+In this dataset, each client corresponds to a speaking role with at least two lines. The dataset consists
+of 715 clients. Each client’s lines are partitioned into training and test sets. Here, the task is to do
+next character prediction. We use an RNN that first takes a series of characters as input and embeds
+each of them into a learned 8-dimensional space. The embedded characters are then passed through
+25
+
+Published as a conference paper at ICLR 2021
+
+Table 3: EMNIST autoencoder model architecture. We use a sigmoid activation at all dense layers.
+Layer
+
+Output Shape
+
+# of Trainable Parameters
+
+Input
+Dense
+Dense
+Dense
+Dense
+Dense
+Dense
+Dense
+Dense
+
+784
+1000
+500
+250
+30
+250
+500
+1000
+784
+
+0
+785000
+500500
+125250
+7530
+7750
+125500
+501000
+784784
+
+Table 4: EMNIST character recognition model architecture.
+Layer
+
+Output Shape
+
+# of Trainable Parameters
+
+Input
+Conv2d
+Conv2d
+MaxPool2d
+Dropout
+Flatten
+Dense
+Dropout
+Dense
+
+(28, 28, 1)
+(26, 26, 32)
+(24, 24, 64)
+(12, 12, 64)
+(12, 12, 64)
+9216
+128
+128
+62
+
+0
+320
+18496
+0
+0
+0
+1179776
+0
+7998
+
+Activation
+
+ReLU
+
+Hyperparameters
+kernel size = 3; strides=(1, 1)
+kernel size = 3; strides=(1, 1)
+pool size= (2, 2)
+p = 0.25
+p = 0.5
+
+softmax
+
+2 LSTM layers, each with 256 nodes, followed by a densely connected softmax output layer. We
+split the lines of each speaking role into into sequences of 80 characters, padding if necessary. We
+use a vocabulary size of 90; 86 for the characters contained in the Shakespeare dataset, and 4 extra
+characters for padding, out-of-vocabulary, beginning of line and end of line tokens. We train our
+model to take a sequence of 80 characters, and predict a sequence of 80 characters formed by shifting
+the input sequence by one (so that its last character is the new character we are actually trying to
+predict). Therefore, our output dimension is 80 × 90. A full description of the model is in Table 5.
+Table 5: Shakespeare model architecture.
+
+C.4
+
+Layer
+
+Output Shape
+
+# of Trainable Parameters
+
+Input
+Embedding
+LSTM
+LSTM
+Dense
+
+80
+(80, 8)
+(80, 256)
+(80, 256)
+(80, 90)
+
+0
+720
+271360
+525312
+23130
+
+S TACK OVERFLOW
+
+Stack Overflow is a language modeling dataset consisting of question and answers from the question
+and answer site, Stack Overflow. The questions and answers also have associated metadata, including
+tags. The dataset contains 342,477 unique users which we use as clients. We perform two tasks on this
+dataset: tag prediction via logistic regression (Stack Overflow LR, SO LR for short), and next-word
+prediction (Stack Overflow NWP, SO NWP for short). For both tasks, we restrict to the 10,000 most
+frequently used words. For Stack Overflow LR, we restrict to the 500 most frequent tags and adopt a
+26
+
+Published as a conference paper at ICLR 2021
+
+one-versus-rest classification strategy, where each question/answer is represented as a bag-of-words
+vector (normalized to have sum 1).
+For Stack Overflow NWP, we restrict each client to the first 1000 sentences in their dataset (if
+they contain this many, otherwise we use the full dataset). We also perform padding and truncation
+to ensure that sentences have 20 words. We then represent the sentence as a sequence of indices
+corresponding to the 10,000 frequently used words, as well as indices representing padding, out-ofvocabulary words, beginning of sentence, and end of sentence. We perform next-word-prediction on
+these sequences using an RNN that embeds each word in a sentence into a learned 96-dimensional
+space. It then feeds the embedded words into a single LSTM layer of hidden dimension 670, followed
+by a densely connected softmax output layer. A full description of the model is in Table 6. The metric
+used in the main body is the top-1 accuracy over the proper 10,000-word vocabulary; it does not
+include padding, out-of-vocab, or beginning or end of sentence tokens when computing the accuracy.
+Table 6: Stack Overflow next word prediction model architecture.
+Layer
+
+Output Shape
+
+# of Trainable Parameters
+
+Input
+Embedding
+LSTM
+Dense
+Dense
+
+20
+(20, 96)
+(20, 670)
+(20, 96)
+(20, 10004)
+
+0
+960384
+2055560
+64416
+970388
+
+D
+
+E XPERIMENT H YPERPARAMETERS
+
+D.1
+
+H YPERPARAMETER TUNING
+
+Throughout our experiments, we compare the performance of different instantiations of Algorithm 1
+that use different server optimizers. We use S GD, S GD with momentum (denoted S GDM), A DAGRAD,
+A DAM, and YOGI. For the client optimizer, we use mini-batch S GD throughout. For all tasks, we tune
+the client learning rate ηl and server learning rate η by using a large grid search. Full descriptions of
+the per-task server and client learning rate grids are given in Appendix D.2.
+We use the version of F EDA DAGRAD, F EDA DAM, and F EDYOGI in Algorithm 5. We let β1 = 0
+for F EDA DAGRAD, and we let β1 = 0.9, β2 = 0.99 for F EDA DAM, and F EDYOGI. For F EDAVG
+and F EDAVG M, we use Algorithm 4, where C LIENT O PT, S ERVERO PT are S GD. For F EDAVG M,
+the server S GD optimizer uses a momentum parameter of 0.9. For F EDA DAGRAD, F EDA DAM, and
+F EDYOGI, we tune the parameter τ in Algorithm 5.
+When tuning parameters, we select the best hyperparameters (ηl , η, τ ) based on the average training
+loss over the last 100 communication rounds. Note that at each round, we only see a fraction of the
+total users (10 for each task except Stack Overflow NWP, which uses 50). Thus, the training loss at a
+given round is a noisy estimate of the population-level training loss, which is why we averave over a
+window of communication rounds.
+D.2
+
+H YPERPARAMETER GRIDS
+
+Below, we give the client learning rate (ηl in Algorithm 1) and server learning rate (η in Algorithm 1)
+grids used for each task. These grids were chosen based on an initial evaluation over the grids
+ηl ∈ {10−3 , 10−2.5 , 10−2 , . . . , 100.5 }
+η ∈ {10−3 , 10−2.5 , 10−2 , . . . , 101 }
+These grids were then refined for Stack Overflow LR and EMNIST AE in an attempt to ensure that
+the best client/server learning rate combinations for each optimizer was contained in the interior of
+the learning rate grids. We generally found that these two tasks required searching larger learning
+rates than the other two tasks. The final grids were as follows:
+27
+
+Published as a conference paper at ICLR 2021
+
+CIFAR-10:
+
+ηl ∈ {10−3 , 10−2.5 , . . . , 100.5 }
+η ∈ {10−3 , 10−2.5 , . . . , 101 }
+
+CIFAR-100:
+
+ηl ∈ {10−3 , 10−2.5 , . . . , 100.5 }
+η ∈ {10−3 , 10−2.5 , . . . , 101 }
+
+EMNIST AE:
+
+ηl ∈ {10−1.5 , 10−1 , . . . , 102 }
+η ∈ {10−2 , 10−1.5 , . . . , 101 }
+
+EMNIST CR:
+
+ηl ∈ {10−3 , 10−2.5 , . . . , 100.5 }
+η ∈ {10−3 , 10−2.5 , . . . , 101 }
+
+Shakespeare:
+
+ηl ∈ {10−3 , 10−2.5 , . . . , 100.5 }
+η ∈ {10−3 , 10−2.5 , . . . , 101 }
+
+StackOverflow LR:
+
+ηl ∈ {10−1 , 10−0.5 , . . . , 103 }
+η ∈ {10−2 , 10−1.5 , . . . , 101.5 }
+
+StackOverflow NWP:
+
+ηl ∈ {10−3 , 10−2.5 , . . . , 100.5 }
+η ∈ {10−3 , 10−2.5 , . . . , 101 }
+
+For all tasks, we tune τ over the grid:
+τ ∈ {10−5 , . . . , 10−1 }.
+D.3
+
+P ER - TASK BATCH SIZES
+
+Given the large number of hyperparameters to tune, and to avoid conflating variables, we fix the batch
+size at a per-task level. When comparing centralized training to federated training in Section 5, we
+use the same batch size in both federated and centralized training. A full summary of the batch sizes
+is given in Table 7.
+Table 7: Client batch sizes used for each task.
+TASK
+
+BATCH SIZE
+
+CIFAR-10
+CIFAR-100
+EMNIST AE
+EMNIST CR
+S HAKESPEARE
+S TACKOVERFLOW LR
+S TACKOVERFLOW NWP
+D.4
+
+20
+20
+20
+20
+4
+100
+16
+
+B EST PERFORMING HYPERPARAMETERS
+
+In this section, we present, for each optimizer, the best client and server learning rates and values
+of τ found for the tasks discussed in Section 5. Specifically, these are the hyperparameters used in
+Figure Figure 1 and table Table 1. The validation metrics in Table 1 are obtained using the learning
+rates in Table 8 and the values of τ in Table 9. As discussed in Section 4, we choose η, ηl and τ to be
+the parameters that minimizer the average training loss over the last 100 communication rounds.
+28
+
+Published as a conference paper at ICLR 2021
+
+Table 8: The base-10 logarithm of the client (ηl ) and server (η) learning rate combinations that achieve
+the accuracies from Table 1. See Appendix D.2 for a full description of the grids.
+F EDA DAGRAD F EDA DAM F EDYOGI F EDAVG M F EDAVG
+ηl
+η
+ηl
+η
+ηl
+η
+ηl
+η
+ηl
+η
+CIFAR-10
+CIFAR-100
+EMNIST AE
+EMNIST CR
+S HAKESPEARE
+S TACKOVERFLOW LR
+S TACKOVERFLOW NWP
+
+- 3⁄2
+-1
+3
+⁄2
+- 3⁄2
+0
+2
+- 1⁄2
+
+-1
+-1
+- 3⁄2
+-1
+- 1⁄2
+1
+- 3⁄2
+
+- 3⁄2
+- 3⁄2
+1
+- 3⁄2
+0
+2
+- 1⁄2
+
+-2
+0
+- 3⁄2
+- 5⁄2
+-2
+- 1⁄2
+-2
+
+- 3⁄2
+- 3⁄2
+1
+- 3⁄2
+0
+2
+- 1⁄2
+
+-2
+0
+- 3⁄2
+- 5⁄2
+-2
+- 1⁄2
+-2
+
+- 3⁄2
+- 3⁄2
+1
+⁄2
+- 3⁄2
+0
+2
+- 1⁄2
+
+- 1⁄2
+0
+0
+- 1⁄2
+- 1⁄2
+0
+0
+
+- 1⁄2
+-1
+1
+-1
+0
+2
+- 1⁄2
+
+0
+⁄2
+0
+0
+0
+0
+0
+
+1
+
+Table 9: The base-10 logarithm of the parameter τ (as defined in Algorithm 2) that achieve the
+validation metrics in Table 1.
+F EDA DAGRAD F EDA DAM F EDYOGI
+CIFAR-10
+CIFAR-100
+EMNIST AE
+EMNIST CR
+S HAKESPEARE
+S TACKOVERFLOW LR
+S TACKOVERFLOW NWP
+
+-2
+-2
+-3
+-2
+-1
+-2
+-4
+
+29
+
+-3
+-1
+-3
+-4
+-3
+-5
+-5
+
+-3
+-1
+-3
+-4
+-3
+-5
+-5
+
+Published as a conference paper at ICLR 2021
+
+EMNIST CR
+
+Accuracy
+
+0.9
+
+0.8
+
+0.70
+
+500
+1000
+Number of Rounds
+
+1500
+
+Figure 4: Validation accuracy on EMNIST CR using constant learning rates η, ηl , and τ tuned to
+achieve the best training performance on the last 100 communication rounds; see Appendix D for
+hyperparameter grids.
+
+Table 10: Test set performance for Stack Overflow tasks after training: Accuracy for NWP and
+Recall@5 (×100) for LR. Performance within within 0.5% of the best result are shown in bold.
+F ED ...
+
+A DAGRAD A DAM YOGI AVG M
+
+AVG
+
+S TACK OVERFLOW NWP 24.4
+
+25.7
+
+25.7
+
+24.5 20.5
+
+66.8
+
+65.2
+
+66.5
+
+46.5 40.6
+
+S TACK OVERFLOW LR
+
+E
+
+A DDITIONAL E XPERIMENTAL R ESULTS
+
+E.1
+
+R ESULTS ON EMNIST CR
+
+We plot the validation accuracy of F EDA DAGRAD, F EDA DAM, F EDYOGI, F EDAVG M, F EDAVG,
+and SCAFFOLD on EMNIST CR. As in Figure 1, we tune the learning rates ηl , η and adaptivity τ
+by selecting the parameters obtaining the smallest training loss, averaged over the last 100 training
+rounds. The results are given in Figure 4.
+We see that all methods are roughly comparably throughout the duration of training. This reflects the
+fact that the dataset is quite simple, and most clients have all classes in their local datasets, reducing
+any heterogeneity among classes. Note that SCAFFOLD performs slightly worse than F EDAVG
+and all other methods here. As discussed in Section 5, this may be due to the presence of stale client
+control variates, and the communication-limited regime of our experiments.
+E.2
+
+S TACK OVERFLOW TEST SET PERFORMANCE
+
+As discussed in Section 5, in order to compute a measure of performance for the Stack Overflow
+tasks as training progresses, we use a subsampled version of the test dataset, due to its prohibitively
+large number of clients and examples. In particular, at each round of training, we sample 10,000
+random test samples, and use this as a measure of performance over time. However, once training is
+completed, we also evaluate on the full test dataset. For the Stack Overflow experiments described in
+Section 5, the final test accuracy is given in Table 10.
+E.3
+
+L EARNING RATE ROBUSTNESS
+
+In this section, we showcase what combinations of client learning rate ηl and server learning rate η
+performed well for each optimizer and task. As in Figure 2, we plot, for each optimizer, task, and
+pair (ηl , η), the validation set performance (averaged over the last 100 rounds). As in Section 5, we
+fix τ = 10−3 throughout. The results, for the CIFAR-10, CIFAR-100, EMNIST AE, EMNIST CR,
+30
+
+Published as a conference paper at ICLR 2021
+
+Shakespeare, Stack Overflow LR, and Stack Overflow NWP tasks are given in Figures 5, 6, 7, 8, 9,
+10, and 11, respectively.
+While the general trends depend on the optimizer and task, we see that in many cases, the adaptive
+methods have rectangular regions that perform well. This implies a kind of robustness to fixing one
+of η, ηl , and varying the other. On the other hand, F EDAVG M and F EDAVG often have triangular
+regions that perform well, suggesting that η and ηl should be tuned simultaneously.
+
+CIFAR10, FedAvg
+1.0 59.0 63.6 65.9 56.8 18.3 10.2 10.1 12.3
+0.5 50.8 57.1 62.1 64.6 62.6 51.0 10.2 10.1
+0.0 48.7 57.2 63.5 68.8 71.6 72.8 64.5 10.1
+-0.5 40.3 47.3 51.7 57.5 58.7 62.1 55.2 10.0
+-1.0 23.1 34.1 41.6 43.7 43.5 41.5 39.8 11.4
+-1.5 16.5 19.1 29.4 33.5 31.9 28.6 25.9 10.7
+-2.0 11.9 14.7 21.3 26.4 25.0 20.9 16.8 11.4
+-2.5 14.1 11.9 13.5 17.4 16.4 11.4 9.9 10.2
+-3.0 8.3 7.5 13.4 15.3 13.1 6.2 9.4 7.0
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+Server Learning Rate (log10)
+
+Server Learning Rate (log10)
+
+Server Learning Rate (log10)
+
+Server Learning Rate (log10)
+
+Server Learning Rate (log10)
+
+CIFAR10, FedYogi
+1.0 10.1 10.0 10.0 10.0 10.0 9.7 9.8 9.7
+0.5 9.7 17.6 10.0 9.8 9.9 10.0 9.9 10.5
+0.0 63.1 27.3 9.8 10.0 10.0 10.1 10.0 14.7
+-0.5 75.2 55.9 10.2 10.2 22.2 10.3 18.7 10.1
+-1.0 75.0 74.0 72.5 63.9 49.1 43.9 19.4 10.5
+-1.5 72.3 75.1 76.7 75.2 69.6 63.1 55.3 18.5
+-2.0 63.0 70.8 75.7 78.0 77.0 74.1 67.8 21.3
+-2.5 55.6 65.1 69.7 75.7 77.0 76.2 68.7 26.8
+-3.0 47.1 55.8 61.5 66.9 69.3 68.0 58.2 15.1
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+80
+70
+60
+50
+40
+30
+20
+10
+0
+
+80
+70
+60
+50
+40
+30
+20
+10
+0
+
+Accuracy
+
+80
+70
+60
+50
+40
+30
+20
+10
+0
+
+Accuracy
+
+CIFAR10, FedAvgM
+1.0 74.6 70.9 10.0 10.5 9.9 11.2 14.4 6.2
+0.5 72.3 74.7 73.3 65.7 10.5 9.9 10.2 11.2
+0.0 65.7 71.2 75.6 75.9 69.5 52.6 9.9 9.1
+-0.5 58.2 67.4 73.5 77.4 76.7 73.1 62.0 10.5
+-1.0 49.6 58.4 65.1 70.6 72.6 72.6 64.4 17.7
+-1.5 38.8 47.2 53.0 57.4 59.1 61.4 46.7 10.2
+-2.0 24.0 36.4 42.0 43.3 43.6 42.0 38.8 11.2
+-2.5 15.9 25.0 29.8 33.7 31.0 28.0 20.3 10.3
+-3.0 10.9 12.9 21.3 26.2 23.7 15.3 10.2 10.2
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+80
+70
+60
+50
+40
+30
+20
+10
+0
+
+Accuracy
+
+CIFAR10, FedAdam
+1.0 10.3 10.0 9.8 9.8 9.6 9.8 10.1 9.9
+0.5 9.9 10.0 9.8 9.9 10.1 10.1 10.4 10.3
+0.0 53.8 9.9 9.8 10.0 10.1 10.1 10.3 10.5
+-0.5 74.7 69.1 10.1 18.1 10.2 17.5 10.2 10.0
+-1.0 74.9 75.4 71.2 56.9 38.7 31.8 16.9 11.1
+-1.5 72.0 75.3 76.9 75.4 67.0 58.6 50.0 34.0
+-2.0 62.1 71.5 76.4 77.4 77.3 74.2 66.6 41.6
+-2.5 56.1 65.2 71.1 75.7 76.7 76.3 69.5 51.3
+-3.0 47.5 56.8 61.2 67.0 70.2 70.2 58.6 17.6
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+Accuracy
+
+80
+70
+60
+50
+40
+30
+20
+10
+0
+
+Accuracy
+
+CIFAR10, FedAdagrad
+1.0 10.1 10.1 10.0 10.0 10.0 10.1 10.1 10.0
+0.5 10.3 10.3 10.3 10.3 10.3 10.3 10.3 10.5
+0.0 52.6 10.4 10.4 10.4 19.8 10.4 18.5 10.5
+-0.5 62.5 61.8 53.8 50.0 49.3 44.3 38.3 20.2
+-1.0 65.9 70.4 63.1 67.8 66.9 67.4 61.2 23.5
+-1.5 61.7 66.9 69.9 72.2 72.8 68.8 61.0 22.3
+-2.0 55.6 61.1 67.8 72.7 73.1 69.8 56.3 16.1
+-2.5 52.2 59.0 63.0 67.0 65.7 58.2 38.6 6.2
+-3.0 43.0 49.5 52.6 54.6 50.7 40.2 16.5 6.2
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+Figure 5: Validation accuracy (averaged over the last 100 rounds) of F EDA DAGRAD, F EDA DAM,
+F EDYOGI, F EDAVG M, and F EDAVG for various client/server learning rates combination on the
+CIFAR-10 task. For F EDA DAGRAD, F EDA DAM, and F EDYOGI, we set τ = 10−3 .
+
+31
+
+Published as a conference paper at ICLR 2021
+
+10
+0
+
+40
+30
+20
+10
+
+10
+0
+
+0
+
+60
+50
+40
+30
+20
+10
+0
+
+60
+50
+40
+Accuracy
+
+Server Learning Rate (log10)
+
+50
+
+20
+
+CIFAR-100, FedAvg
+1.0 28.1 34.5 35.8 36.5 20.1 1.0 1.0 1.0
+0.5 17.2 26.5 34.1 40.6 44.7 41.0 18.5 1.0
+0.0 9.8 20.1 31.1 38.8 42.6 45.7 42.1 1.0
+-0.5 4.4 8.8 16.7 25.4 27.2 24.9 24.4 1.7
+-1.0 3.8 4.4 6.6 13.6 15.2 12.3 12.2 1.0
+-1.5 1.1 2.8 2.9 7.1 9.6 5.8 4.9 1.4
+-2.0 0.9 1.5 1.8 3.4 5.4 2.9 2.2 1.3
+-2.5 1.1 1.0 1.1 2.3 3.5 2.9 1.2 1.0
+-3.0 0.9 1.0 0.9 1.3 2.2 1.1 1.0 1.0
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+60
+
+Accuracy
+
+CIFAR-100, FedAvgM
+1.0 48.3 50.3 41.7 1.0 1.0 1.0 1.0 1.0
+0.5 44.2 48.5 48.0 37.0 17.2 1.0 1.0 1.0
+0.0 31.4 43.7 49.6 52.4 51.4 25.9 1.0 1.0
+-0.5 20.4 33.9 44.9 51.3 53.6 52.5 34.2 1.0
+-1.0 10.5 20.8 31.4 39.1 43.1 45.8 29.1 1.0
+-1.5 3.7 9.7 16.9 24.8 26.6 24.5 20.6 2.3
+-2.0 3.1 3.8 6.9 13.6 14.6 11.8 10.6 1.0
+-2.5 1.3 3.0 2.7 7.1 9.5 4.6 6.5 1.0
+-3.0 0.9 1.1 1.4 3.2 5.6 3.4 2.2 1.0
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+30
+
+Server Learning Rate (log10)
+
+20
+
+40
+
+Server Learning Rate (log10)
+
+30
+
+Server Learning Rate (log10)
+
+40
+
+50
+
+Accuracy
+
+Server Learning Rate (log10)
+
+50
+
+CIFAR-100, FedYogi
+1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0
+0.5 30.6 1.0 1.0 1.0 1.0 1.0 1.0 1.0
+0.0 50.1 31.4 1.0 1.0 1.0 1.0 1.0 1.0
+-0.5 52.1 50.0 16.8 1.0 1.0 1.0 1.0 1.0
+-1.0 48.3 51.5 49.7 41.1 26.4 7.4 5.2 1.0
+-1.5 41.3 47.2 52.0 51.6 49.3 37.7 25.3 10.5
+-2.0 28.6 41.4 48.3 51.7 53.9 52.4 46.9 1.8
+-2.5 17.4 30.7 41.3 48.3 51.4 51.6 45.1 12.7
+-3.0 9.3 17.8 27.4 35.2 37.5 35.7 28.6 1.8
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+60
+
+Accuracy
+
+CIFAR-100, FedAdam
+1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0
+0.5 29.4 1.0 1.0 1.0 1.0 1.0 1.0 1.0
+0.0 49.4 32.1 1.0 1.0 1.0 1.0 1.0 1.0
+-0.5 51.3 49.9 34.1 4.3 1.0 1.0 1.0 1.0
+-1.0 48.6 51.8 48.6 40.0 22.9 8.7 4.9 1.0
+-1.5 41.1 46.6 51.9 51.8 47.8 36.3 21.1 10.5
+-2.0 29.4 40.3 48.1 52.3 53.7 52.4 46.4 10.4
+-2.5 17.4 31.1 42.1 47.9 51.8 52.0 46.4 15.7
+-3.0 10.1 18.2 27.7 35.2 38.0 36.8 30.6 3.4
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+60
+
+Accuracy
+
+CIFAR-100, FedAdagrad
+1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0
+0.5 2.9 1.0 1.0 1.0 1.0 1.0 1.0 0.9
+0.0 19.7 15.8 1.0 1.0 1.0 1.0 1.0 3.7
+-0.5 38.0 31.7 16.3 2.8 9.6 24.3 4.0 1.7
+-1.0 35.8 40.3 39.7 37.6 40.8 39.8 39.4 3.2
+-1.5 33.0 35.8 40.8 44.1 48.1 33.8 37.7 10.6
+-2.0 23.4 29.6 36.2 42.4 43.4 38.3 24.7 8.0
+-2.5 14.3 23.2 30.1 33.6 31.5 23.3 13.0 2.6
+-3.0 7.0 11.6 15.6 21.3 20.1 12.2 5.2 1.0
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+30
+20
+10
+0
+
+Figure 6: Validation accuracy (averaged over the last 100 rounds) of F EDA DAGRAD, F EDA DAM,
+F EDYOGI, F EDAVG M, and F EDAVG for various client/server learning rates combination on the
+CIFAR-100 task. For F EDA DAGRAD, F EDA DAM, and F EDYOGI, we set τ = 10−3 .
+
+EMNIST AE, FedAvg
+1.0 1.7 1.7 3.1 3.5 3.0 2.7 2.8 3.0
+1.7
+1.7
+1.7 1.5 1.2 1.4 2.8 2.9
+0.5
+0.0 1.7 1.7 1.7 1.7 1.3 0.6 2.7 2.9
+-0.5 1.7 1.7 1.7 1.7 1.7 1.5 1.1 2.7
+-1.0 1.7 1.7 1.7 1.7 1.7 1.7 1.7 1.7
+-1.5 1.7 1.7 1.7 1.7 1.7 1.7 1.7 1.7
+-2.0 1.9 1.7 1.7 1.7 1.7 1.7 1.7 1.7
+-1.5-1.0-0.5 0.0 0.5 1.0 1.5 2.0
+Client Learning Rate (log10)
+
+Server Learning Rate (log10)
+
+Server Learning Rate (log10)
+
+Server Learning Rate (log10)
+
+Server Learning Rate (log10)
+
+Server Learning Rate (log10)
+
+EMNIST AE, FedYogi
+1.0 3.0 2.9 2.9 2.9 2.8 2.7 2.9 2.8
+0.5 2.9 2.9 3.0 2.9 2.8 2.7 2.8 2.8
+0.0 2.9 2.8 2.9 2.9 2.9 2.7 2.7 3.0
+-0.5 1.7 2.9 3.0 3.0 3.4 2.7 2.8 3.0
+-1.0 1.6 1.7 1.7 1.7 1.7 2.7 2.8 2.8
+-1.5 1.7 1.5 1.4 0.3 0.1 0.1 2.7 2.8
+-2.0 1.7 1.7 1.7 1.0 0.2 0.2 1.7 1.0
+-1.5-1.0-0.5 0.0 0.5 1.0 1.5 2.0
+Client Learning Rate (log10)
+
+3.0
+2.5
+2.0
+1.5
+1.0
+0.5
+0.0
+
+3.0
+2.5
+2.0
+1.5
+1.0
+0.5
+0.0
+
+Mean Squared Error (×100)
+
+3.0
+2.5
+2.0
+1.5
+1.0
+0.5
+0.0
+
+Mean Squared Error (×100)
+
+EMNIST AE, FedAvgM
+1.0 1.7 3.0 3.1 3.2 3.6 2.7 2.8 2.8
+1.7
+1.7
+2.9 3.1 1.8 2.8 2.7 2.8
+0.5
+0.0 1.7 1.8 1.7 1.2 0.2 1.8 2.8 2.9
+-0.5 1.7 1.7 1.7 1.3 0.5 0.2 2.7 2.8
+-1.0 1.7 1.7 1.7 1.7 1.3 0.7 0.6 2.8
+-1.5 1.7 1.7 1.7 1.7 1.7 1.4 1.1 1.7
+-2.0 1.7 1.7 1.7 1.7 1.7 1.7 1.7 1.7
+-1.5-1.0-0.5 0.0 0.5 1.0 1.5 2.0
+Client Learning Rate (log10)
+
+3.0
+2.5
+2.0
+1.5
+1.0
+0.5
+0.0
+
+Mean Squared Error (×100)
+
+EMNIST AE, FedAdam
+1.0 3.0 2.9 3.0 2.9 2.8 2.7 2.8 2.8
+0.5 2.8 2.9 3.0 2.9 2.8 2.7 2.8 2.9
+0.0 2.8 3.0 2.9 3.0 2.8 2.7 2.8 2.9
+-0.5 1.5 2.9 3.0 3.0 3.2 2.7 2.8 2.8
+-1.0 1.7 1.6 1.7 1.7 1.7 2.7 2.8 2.7
+-1.5 1.7 1.5 1.2 0.3 0.1 0.1 2.7 2.7
+-2.0 1.7 1.7 1.7 1.0 0.2 0.2 1.7 0.7
+-1.5-1.0-0.5 0.0 0.5 1.0 1.5 2.0
+Client Learning Rate (log10)
+
+Mean Squared Error (×100)
+
+3.0
+2.5
+2.0
+1.5
+1.0
+0.5
+0.0
+
+Mean Squared Error (×100)
+
+EMNIST AE, FedAdagrad
+1.0 2.9 3.1 2.9 2.9 2.8 2.7 2.8 2.8
+0.5 2.9 2.8 2.9 2.8 2.8 2.7 2.7 2.9
+0.0 2.8 2.9 3.0 2.9 2.9 2.7 2.8 2.9
+-0.5 3.0 3.0 2.9 2.8 2.7 2.8 2.8 2.8
+-1.0 2.9 2.9 2.9 3.0 2.9 2.7 2.8 2.9
+-1.5 1.7 1.7 2.7 1.7 0.7 0.5 0.4 1.2
+-2.0 1.7 1.7 1.7 1.3 0.9 0.7 0.7 1.7
+-1.5-1.0-0.5 0.0 0.5 1.0 1.5 2.0
+Client Learning Rate (log10)
+
+Figure 7: Validation MSE (averaged over the last 100 rounds) of F EDA DAGRAD, F EDA DAM,
+F EDYOGI, F EDAVG M, and F EDAVG for various client/server learning rates combination on the
+EMNIST AE task. For F EDA DAGRAD, F EDA DAM, and F EDYOGI, we set τ = 10−3 .
+
+32
+
+Published as a conference paper at ICLR 2021
+
+EMNIST CR, FedAvg
+1.0 82.0 83.9 83.7 4.9 5.0 4.4 4.9 4.7
+0.5 75.5 81.6 83.6 84.7 83.3 5.1 5.1 4.7
+0.0 53.6 76.3 81.1 83.5 84.9 4.9 5.1 5.2
+-0.5 15.2 53.7 75.4 81.4 83.4 5.6 5.6 5.5
+-1.0 7.7 27.5 52.1 74.2 79.9 5.1 5.6 5.6
+-1.5 5.0 5.6 15.3 45.5 70.3 5.6 5.6 5.6
+-2.0 4.8 4.7 5.1 10.7 39.8 60.3 5.1 5.2
+-2.5 3.8 6.0 5.2 5.3 5.2 7.0 5.1 5.1
+-3.0 2.3 1.1 1.4 5.3 5.2 5.6 5.6 5.6
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+Server Learning Rate (log10)
+
+Server Learning Rate (log10)
+
+Server Learning Rate (log10)
+
+Server Learning Rate (log10)
+
+Server Learning Rate (log10)
+
+EMNIST CR, FedYogi
+1.0 4.2 4.7 4.5 4.2 4.5 4.0 4.4 4.5
+0.5 4.9 4.7 4.4 4.8 4.9 4.8 4.8 4.7
+0.0 4.7 4.8 5.0 4.7 4.7 5.1 4.8 5.0
+-0.5 4.9 4.9 75.3 4.8 4.9 4.8 4.9 4.5
+-1.0 84.9 85.7 83.9 81.4 74.6 5.3 5.6 5.5
+-1.5 83.3 84.9 84.9 85.1 5.6 76.1 5.6 5.5
+-2.0 79.2 82.1 84.2 85.3 5.5 68.7 5.6 5.1
+-2.5 68.7 79.3 82.2 84.2 85.0 81.5 5.6 5.6
+-3.0 35.4 66.0 78.7 81.7 83.6 70.3 4.9 2.1
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+90
+80
+70
+60
+50
+40
+30
+20
+10
+0
+
+90
+80
+70
+60
+50
+40
+30
+20
+10
+0
+
+Accuracy
+
+90
+80
+70
+60
+50
+40
+30
+20
+10
+0
+
+Accuracy
+
+EMNIST CR, FedAvgM
+1.0 85.6 83.1 4.8 4.8 4.6 2.8 5.1 3.4
+0.5 84.3 85.5 84.6 72.7 4.8 4.5 4.6 4.6
+0.0 81.2 83.7 84.2 84.6 4.9 4.8 4.2 4.8
+-0.5 74.9 80.5 83.5 85.2 84.9 4.9 5.0 5.2
+-1.0 45.7 75.1 81.0 83.6 85.1 5.3 5.1 5.3
+-1.5 23.0 46.8 74.9 80.7 83.4 5.6 5.1 5.5
+-2.0 9.3 15.7 48.9 73.6 79.9 81.7 5.1 5.1
+-2.5 5.2 5.1 13.4 30.6 69.2 5.6 5.3 5.1
+-3.0 5.6 5.3 7.9 10.0 33.0 5.1 5.1 5.1
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+90
+80
+70
+60
+50
+40
+30
+20
+10
+0
+
+Accuracy
+
+EMNIST CR, FedAdam
+1.0 4.4 4.5 4.8 3.3 4.4 3.6 5.1 0.4
+0.5 4.9 4.7 4.6 4.8 0.7 2.0 4.7 5.1
+0.0 4.7 4.8 5.0 4.8 4.7 4.7 4.6 5.1
+-0.5 5.3 4.9 77.6 4.9 4.8 4.6 5.1 5.0
+-1.0 85.1 85.6 83.4 4.6 74.1 5.3 5.1 5.1
+-1.5 83.1 85.0 84.5 85.0 5.3 67.2 5.6 5.6
+-2.0 79.1 82.0 84.0 85.3 85.4 34.7 5.1 5.1
+-2.5 69.9 79.0 82.3 84.2 85.2 5.1 5.1 1.4
+-3.0 29.9 67.9 78.4 82.0 83.3 57.1 0.5 0.7
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+Accuracy
+
+90
+80
+70
+60
+50
+40
+30
+20
+10
+0
+
+Accuracy
+
+EMNIST CR, FedAdagrad
+1.0 5.0 5.0 5.0 5.1 0.8 0.9 4.9 2.6
+0.5 4.9 4.9 3.1 4.9 5.1 5.1 5.5 5.4
+0.0 5.3 5.3 5.3 5.3 5.3 5.3 5.1 5.6
+-0.5 66.9 5.6 5.6 5.6 5.6 5.6 4.9 5.1
+-1.0 84.5 84.3 84.9 83.8 5.6 5.6 5.6 5.6
+-1.5 83.1 83.9 84.6 85.1 85.1 78.9 5.6 5.2
+-2.0 77.9 81.2 82.7 83.8 83.8 52.0 5.6 5.2
+-2.5 65.8 74.9 78.8 79.9 80.5 30.2 10.0 5.2
+-3.0 40.2 53.1 65.1 70.0 71.1 14.5 5.7 5.6
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+Figure 8: Validation accuracy (averaged over the last 100 rounds) of F EDA DAGRAD, F EDA DAM,
+F EDYOGI, F EDAVG M, and F EDAVG for various client/server learning rates combination on the
+EMNIST CR task. For F EDA DAGRAD, F EDA DAM, and F EDYOGI, we set τ = 10−3 .
+
+10
+0
+
+40
+30
+20
+10
+
+30
+20
+10
+0
+
+0
+
+60
+50
+40
+30
+20
+10
+0
+
+60
+50
+40
+Accuracy
+
+Server Learning Rate (log10)
+
+50
+
+40
+
+Shakespeare, FedAvg
+1.0 34.4 39.2 45.5 47.5 9.5 11.6 0.0 0.0
+0.5 29.0 36.0 44.1 50.1 53.4 55.6 54.2 13.9
+0.0 18.1 29.7 37.7 45.2 52.0 55.8 56.9 52.7
+-0.5 12.8 21.2 29.2 37.5 45.6 52.3 56.0 56.9
+-1.0 1.7 11.7 18.9 29.1 37.1 45.2 51.8 54.7
+-1.5 0.0 2.7 12.1 18.9 29.0 36.8 44.3 48.6
+-2.0 0.0 0.0 2.1 15.1 20.0 28.7 34.9 40.5
+-2.5 4.8 0.0 0.0 0.0 8.9 18.4 25.1 5.6
+-3.0 4.9 0.0 0.0 0.0 0.0 7.3 18.4 19.5
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+60
+
+Accuracy
+
+Shakespeare, FedAvgM
+1.0 44.4 38.8 7.8 7.5 7.7 0.0 0.1 0.1
+0.5 40.3 47.9 51.6 52.5 50.1 24.8 10.9 9.5
+0.0 36.9 43.6 49.4 53.4 55.1 56.3 53.6 37.2
+-0.5 29.0 36.2 43.7 50.1 54.1 56.5 56.7 52.3
+-1.0 18.2 27.8 36.8 44.3 51.2 55.6 57.3 52.5
+-1.5 14.1 18.9 27.6 37.0 44.5 52.0 56.0 55.3
+-2.0 0.7 12.8 19.6 28.8 37.4 44.9 51.4 48.6
+-2.5 0.0 1.5 12.4 19.9 28.4 35.9 43.5 5.4
+-3.0 0.0 1.2 1.6 3.4 20.1 27.8 34.4 18.1
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+50
+
+Shakespeare, FedYogi
+1.0 0.0 0.0 6.2 7.7 5.0 5.4 0.0 1.7
+0.5 9.5 0.0 6.9 8.8 4.3 0.0 0.0 2.3
+0.0 0.0 8.1 6.4 4.3 11.8 0.0 3.6 0.0
+-0.5 6.9 0.5 9.2 0.0 8.9 28.8 35.3 0.0
+-1.0 15.9 30.1 26.9 36.8 0.0 42.9 49.9 0.0
+-1.5 54.8 53.4 53.4 47.2 47.0 55.0 55.8 56.6
+-2.0 52.6 54.3 54.3 54.6 55.9 56.5 56.7 57.2
+-2.5 44.5 46.8 50.7 53.1 55.6 56.5 56.8 0.0
+-3.0 37.8 39.7 43.0 46.5 51.5 54.4 55.5 0.0
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+Server Learning Rate (log10)
+
+20
+
+60
+
+Accuracy
+
+30
+
+Server Learning Rate (log10)
+
+40
+
+Server Learning Rate (log10)
+
+50
+
+Shakespeare, FedAdam
+1.0 0.0 0.2 9.2 8.7 12.0 0.3 0.0 0.0
+0.5 0.0 8.0 11.2 5.0 8.3 0.0 0.0 0.0
+0.0 0.0 9.7 10.2 6.6 6.6 11.0 0.0 0.0
+-0.5 16.9 7.3 4.6 8.2 21.8 24.8 24.8 34.3
+-1.0 39.4 18.2 31.0 31.8 41.6 42.6 38.6 0.0
+-1.5 53.6 54.5 53.5 51.2 46.9 54.2 54.6 56.4
+-2.0 50.9 54.8 54.5 54.4 55.5 56.3 56.6 57.0
+-2.5 43.1 47.6 50.6 53.5 55.2 56.5 57.0 0.0
+-3.0 39.0 40.5 45.2 48.0 52.3 54.9 55.4 0.0
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+Accuracy
+
+Server Learning Rate (log10)
+
+60
+
+Accuracy
+
+Shakespeare, FedAdagrad
+1.0 8.4 10.2 8.9 3.8 3.2 11.0 9.3 10.0
+0.5 5.5 7.3 11.7 4.9 7.2 9.3 9.9 11.6
+0.0 20.6 9.7 6.1 17.5 4.7 18.7 14.5 7.9
+-0.5 17.9 21.6 15.3 4.9 41.9 6.0 29.8 3.3
+-1.0 19.5 50.2 50.7 53.0 54.6 55.8 56.6 57.5
+-1.5 44.7 48.4 49.4 52.6 52.8 56.5 56.3 53.2
+-2.0 38.1 41.7 46.0 45.4 50.4 53.2 53.3 8.4
+-2.5 30.8 32.4 32.2 36.1 39.0 42.8 40.8 0.0
+-3.0 17.6 16.9 18.9 21.8 21.8 22.9 20.8 0.0
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+30
+20
+10
+0
+
+Figure 9: Validation accuracy (averaged over the last 100 rounds) of F EDA DAGRAD, F EDA DAM,
+F EDYOGI, F EDAVG M, and F EDAVG for various client/server learning rates combination on the
+Shakespeare task. For F EDA DAGRAD, F EDA DAM, and F EDYOGI, we set τ = 10−3 .
+
+33
+
+Published as a conference paper at ICLR 2021
+
+Stack Overflow LR, FedAvg
+1.5 18.3 18.1 15.0 14.1 11.7 10.6 7.6 10.8 9.3
+1.0 18.3 18.3 18.3 15.4 12.5 10.8 12.8 10.4 13.4
+0.5 17.2 18.3 18.3 18.6 20.9 21.1 23.6 23.3 23.5
+0.0 15.4 17.2 18.3 18.4 19.3 24.5 30.0 30.7 16.4
+-0.5 15.3 15.4 17.2 18.1 18.3 19.8 23.6 22.3 5.5
+-1.0 15.2 15.3 15.4 17.0 16.7 17.2 19.1 15.5 1.3
+-1.5 15.3 15.2 15.3 15.4 15.4 15.4 15.0 11.7 0.0
+-2.0 15.3 15.2 15.2 15.4 15.4 15.4 14.7 9.3 0.2
+-1.0-0.5 0.0 0.5 1.0 1.5 2.0 2.5 3.0
+Client Learning Rate (log10)
+
+Server Learning Rate (log10)
+
+Server Learning Rate (log10)
+
+Server Learning Rate (log10)
+
+Server Learning Rate (log10)
+
+Server Learning Rate (log10)
+
+Stack Overflow LR, FedYogi
+1.5 38.9 44.3 45.5 43.7 47.7 49.3 50.3 50.9 51.5
+1.0 34.9 45.8 51.3 52.0 49.1 49.0 49.6 51.2 53.0
+0.5 31.0 40.8 50.8 56.3 57.0 56.2 55.2 55.2 55.3
+0.0 27.4 35.5 45.2 54.9 60.6 62.8 63.2 62.1 54.4
+-0.5 22.9 28.8 36.0 44.4 53.4 60.1 63.6 63.4 38.1
+-1.0 21.1 23.6 28.6 34.4 39.6 45.7 50.5 52.0 4.4
+-1.5 18.9 20.7 23.0 25.9 29.6 32.9 34.8 35.4 1.7
+-2.0 15.6 16.8 18.9 20.7 22.2 23.3 25.1 34.2 5.2
+-1.0-0.5 0.0 0.5 1.0 1.5 2.0 2.5 3.0
+Client Learning Rate (log10)
+
+70
+60
+50
+40
+30
+20
+10
+0
+
+70
+60
+50
+40
+30
+20
+10
+0
+
+Recall@5 (×100)
+
+70
+60
+50
+40
+30
+20
+10
+0
+
+Recall@5 (×100)
+
+Stack Overflow LR, FedAvgM
+1.5 16.1 19.7 20.0 15.2 13.3 13.3 12.4 15.1 17.3
+1.0 17.4 16.1 19.7 22.0 20.0 18.0 13.8 16.3 14.2
+0.5 18.1 17.4 17.0 21.6 24.8 25.5 23.9 20.4 19.7
+0.0 18.4 18.1 17.5 18.6 22.5 29.0 36.9 31.1 25.4
+-0.5 17.8 18.4 18.4 18.2 21.0 25.8 34.0 36.6 23.5
+-1.0 15.4 17.8 18.3 18.2 18.9 23.7 29.1 29.0 16.6
+-1.5 15.3 15.4 17.8 18.2 17.8 19.4 24.0 21.2 6.1
+-2.0 15.2 15.3 15.4 16.7 17.4 17.5 19.4 14.4 0.8
+-1.0-0.5 0.0 0.5 1.0 1.5 2.0 2.5 3.0
+Client Learning Rate (log10)
+
+70
+60
+50
+40
+30
+20
+10
+0
+
+Recall@5 (×100)
+
+Stack Overflow LR, FedAdam
+1.5 34.5 38.4 40.5 42.5 46.1 47.8 48.9 49.4 50.3
+1.0 33.8 41.7 47.5 49.5 48.9 47.3 48.3 49.6 51.5
+0.5 29.6 38.7 48.1 53.4 54.4 53.4 52.8 53.3 54.6
+0.0 27.0 34.6 43.9 53.8 59.4 61.8 61.8 60.7 54.8
+-0.5 22.5 28.6 36.1 44.7 54.2 60.7 64.0 63.6 39.5
+-1.0 21.0 23.6 28.7 34.7 40.6 47.5 52.7 54.2 7.0
+-1.5 19.2 21.0 23.2 26.4 30.5 33.9 36.2 36.5 1.2
+-2.0 15.6 17.2 19.2 21.1 22.7 24.1 25.2 32.1 3.8
+-1.0-0.5 0.0 0.5 1.0 1.5 2.0 2.5 3.0
+Client Learning Rate (log10)
+
+Recall@5 (×100)
+
+70
+60
+50
+40
+30
+20
+10
+0
+
+Recall@5 (×100)
+
+Stack Overflow LR, FedAdagrad
+1.5 60.4 64.3 65.6 65.3 64.2 62.9 61.9 61.3 58.3
+1.0 50.5 58.4 63.3 65.8 67.1 67.6 67.3 65.5 54.8
+0.5 38.2 45.0 51.7 57.0 61.7 64.6 65.6 63.4 23.7
+0.0 29.0 33.9 37.9 41.2 44.9 48.8 50.6 48.8 2.0
+-0.5 22.5 24.7 27.0 29.3 31.3 32.7 33.1 31.1 2.5
+-1.0 17.6 19.3 20.8 22.0 22.7 22.7 23.7 35.9 10.2
+-1.5 16.6 17.5 18.6 19.8 21.2 22.3 25.1 37.6 45.8
+-2.0 18.0 19.7 21.2 23.2 26.0 26.7 27.1 29.5 31.3
+-1.0-0.5 0.0 0.5 1.0 1.5 2.0 2.5 3.0
+Client Learning Rate (log10)
+
+Figure 10: Validation recall@5 (averaged over the last 100 rounds) of F EDA DAGRAD, F EDA DAM,
+F EDYOGI, F EDAVG M, and F EDAVG for various client/server learning rates combination on the Stack
+Overflow LR task. For F EDA DAGRAD, F EDA DAM, and F EDYOGI, we set τ = 10−3 .
+
+5
+0
+
+20
+15
+10
+5
+
+15
+10
+5
+0
+
+0
+
+30
+25
+20
+15
+10
+5
+0
+
+30
+25
+20
+Accuracy
+
+Server Learning Rate (log10)
+
+25
+
+20
+
+Stack Overflow NWP, FedAvg
+1.0 5.8 8.9 0.3 1.2 1.6 0.3 2.4 1.0
+0.5 5.7 5.2 8.1 12.4 16.5 0.0 2.7 0.0
+0.0 1.0 5.6 7.2 11.1 16.1 19.5 0.5 2.2
+-0.5 0.0 1.2 5.5 7.1 10.7 15.1 1.0 0.5
+-1.0 0.0 0.0 0.9 5.5 7.0 10.3 1.1 1.3
+-1.5 0.0 0.0 0.0 1.6 5.5 7.0 1.7 0.0
+-2.0 0.0 0.0 0.0 0.0 0.8 5.2 0.7 0.0
+-2.5 0.0 0.0 0.0 0.0 0.0 1.2 5.4 0.0
+-3.0 0.0 0.0 0.0 0.0 0.0 0.0 1.9 0.2
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+30
+
+Accuracy
+
+Stack Overflow NWP, FedAvgM
+1.0 15.0 1.6 0.6 0.0 2.3 1.7 0.7 1.4
+0.5 10.3 15.3 19.2 21.6 22.9 0.0 0.7 0.0
+0.0 7.0 10.5 16.2 20.0 22.3 23.8 0.4 0.0
+-0.5 5.6 7.0 10.7 16.1 19.9 19.2 0.2 1.6
+-1.0 0.5 5.6 7.1 10.5 15.5 19.4 0.1 0.0
+-1.5 0.0 0.5 5.5 7.2 10.2 14.6 2.4 2.2
+-2.0 0.0 0.0 0.9 5.5 7.0 10.1 0.0 1.4
+-2.5 0.0 0.0 0.0 1.2 5.4 6.9 1.1 0.0
+-3.0 0.0 0.0 0.0 0.0 0.6 5.0 1.3 0.0
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+25
+
+Stack Overflow NWP, FedYogi
+1.0 2.3 1.9 1.3 0.3 0.4 0.0 0.0 0.0
+0.5 1.9 0.9 0.8 0.4 1.2 1.0 0.0 0.0
+0.0 1.4 1.4 0.7 0.6 2.2 0.9 0.0 0.0
+-0.5 2.1 0.3 1.5 2.3 8.0 1.6 0.0 0.0
+-1.0 21.6 22.4 14.3 17.8 19.3 7.5 0.0 0.0
+-1.5 22.9 23.1 23.3 22.0 23.7 24.5 0.0 0.0
+-2.0 20.3 21.4 22.2 23.6 24.7 25.2 0.0 0.0
+-2.5 16.8 18.5 19.5 21.9 23.9 24.5 0.0 0.0
+-3.0 12.1 14.3 16.5 18.9 21.1 22.2 0.2 0.0
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+Server Learning Rate (log10)
+
+10
+
+30
+
+Accuracy
+
+15
+
+Server Learning Rate (log10)
+
+20
+
+Server Learning Rate (log10)
+
+25
+
+Stack Overflow NWP, FedAdam
+1.0 2.1 2.1 1.2 0.1 0.3 0.0 0.0 0.0
+0.5 2.2 1.6 1.2 0.6 0.5 0.0 0.0 0.0
+0.0 1.6 1.7 1.1 1.7 2.1 0.6 0.0 0.0
+-0.5 0.6 1.7 5.6 4.0 5.8 3.2 0.0 0.0
+-1.0 3.8 19.7 13.2 15.0 17.4 6.2 0.0 0.0
+-1.5 23.0 22.9 23.3 22.7 23.2 23.1 0.0 0.0
+-2.0 20.3 21.4 22.4 23.5 24.7 25.2 0.0 0.0
+-2.5 17.1 18.7 20.1 22.2 23.8 24.7 0.0 0.0
+-3.0 11.9 14.6 16.7 19.3 21.7 20.3 0.0 0.0
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+Accuracy
+
+Server Learning Rate (log10)
+
+30
+
+Accuracy
+
+Stack Overflow NWP, FedAdagrad
+1.0 2.6 1.6 0.8 1.7 3.1 0.4 0.1 0.1
+0.5 3.6 3.2 3.9 5.1 9.9 1.0 0.0 0.1
+0.0 6.0 9.1 10.0 10.4 12.1 9.6 0.2 0.6
+-0.5 11.6 13.6 15.3 15.8 18.0 13.2 0.0 0.3
+-1.0 17.0 16.1 11.4 17.8 22.1 7.5 1.1 0.0
+-1.5 13.9 17.0 19.4 19.8 21.5 23.8 0.1 0.1
+-2.0 11.4 13.3 16.2 18.3 19.6 21.4 0.2 0.3
+-2.5 5.8 7.8 10.7 11.6 13.8 1.9 0.7 0.2
+-3.0 0.0 1.0 2.2 4.1 5.1 1.4 0.3 0.7
+-3.0-2.5-2.0-1.5-1.0-0.5 0.0 0.5
+Client Learning Rate (log10)
+
+15
+10
+5
+0
+
+Figure 11: Validation accuracy (averaged over the last 100 rounds) of F EDA DAGRAD, F EDA DAM,
+F EDYOGI, F EDAVG M, and F EDAVG for various client/server learning rates combination on the Stack
+Overflow NWP task. For F EDA DAGRAD, F EDA DAM, and F EDYOGI, we set τ = 10−3 .
+
+34
+
+Published as a conference paper at ICLR 2021
+
+E.4
+
+O N THE RELATION BETWEEN CLIENT AND SERVER LEARNING RATES
+
+100
+
+10 1
+10 1
+10 2
+Client Learning Rate
+
+100
+
+10 3
+
+EMNIST CR
+
+100
+
+10 1
+
+101
+
+10 2 10 1
+100
+Client Learning Rate
+
+Server Learning Rate
+
+101
+100
+
+10 1
+10 2
+10 3
+
+10 2
+
+10 1
+101
+100
+Client Learning Rate
+
+102
+
+Stack Overflow LR
+101
+100
+
+10 2
+10 3
+
+100
+
+Shakespeare
+
+100
+
+10 1
+10 2
+Client Learning Rate
+
+EMNIST AE
+
+10 1
+
+10 1
+
+10 2
+10 3
+
+100
+
+10 2
+
+Server Learning Rate
+
+Server Learning Rate
+
+101
+
+CIFAR-100
+
+10 1
+
+10 2
+10 3
+
+101
+
+Server Learning Rate
+
+CIFAR-10
+
+Server Learning Rate
+
+101
+
+Server Learning Rate
+
+Server Learning Rate
+
+In order to better understand the results in Appendix E.3, we plot the relation between optimal choices
+of client and server learning rates. For each optimizer, task, and client learning rate ηl , we find the
+best corresponding server learning rate η among the grids listed in Appendix D.2. Throughout, we
+fix τ = 10−3 for the adaptive methods. We omit any points for which the final validation loss is
+within 10% of the worst-recorded validation loss over all hyperparameters. Essentially, we omit client
+learning rates that did not lead to any training of the model. The results are given in Figure 12.
+
+10 2 10 1
+100
+Client Learning Rate
+
+10 1
+
+101
+100
+102
+Client Learning Rate
+
+Stack Overflow NWP
+FedAdagrad
+FedAdam
+FedYogi
+FedAvgM
+FedAvg
+
+10 1
+10 2
+Client Learning Rate
+
+Figure 12: The best server learning rate in our hyperparameter tuning grids for each client learning rate,
+optimizers, and task. We select the server learning rates based on the average validation performance
+over the last 100 communication rounds. For F EDA DAGRAD, F EDA DAM, and F EDYOGI, we fix
+τ = 10−3 . We omit all client learning rates for which all server learning rates did not change the
+initial validation loss by more than 10%.
+
+In virtually all tasks, we see a clear inverse relationship between client learning rate ηl and server
+learning rate η for F EDAVG and F EDAVG M. As discussed in Section 5, this supports the observation
+that for the non-adaptive methods, ηl and η must in some sense be tuned simultaneously. On the other
+hand, for adaptive optimizers on most tasks we see much more stability in the best server learning
+rate η as the client learning rate ηl varies. This supports our observation in Section 5 that for adaptive
+methods, tuning the client learning rate is more important.
+Notably, we see a clear exception to this on the Stack Overflow LR task, where there is a definitive
+inverse relationship between learning rates among all optimizers. The EMNIST AE task also displays
+somewhat different behavior. While there are still noticeable inverse relationships between learning
+rates for F EDAVG and F EDAVG M, the range of good client learning rates is relatively small. We
+emphasize that this task is fundamentally different than the remaining tasks. As noted by Zaheer et al.
+(2018), the primary obstacle in training bottleneck autoencoders is escaping saddle points, not in
+converging to critical points. Thus, we expect there to be qualitative differences between EMNIST
+AE and other tasks, even EMNIST CR (which uses the same dataset).
+35
+
+Published as a conference paper at ICLR 2021
+
+E.5
+
+ROBUSTNESS OF THE ADAPTIVITY PARAMETER
+
+As discussed in Section 5, we plot, for each adaptive optimizer and task, the validation accuracy
+as a function of the adaptivity parameter τ . In particular, for each value of τ (which we vary
+over {10−5 , . . . , 10−1 }, see Appendix D), we plot the best possible last-100-rounds validation set
+performance. Specifically, we plot the average validation performance over the last 100 rounds using
+the best a posteriori values of client and server learning rates. The results are given in Figure 13.
+0.6
+
+0.75
+
+0.020
+
+Accuracy
+
+Accuracy
+
+0.010
+
+0.4
+
+0.65
+0.6010 5
+
+10 4 10 3 10 2
+Adaptivity ( )
+
+0.90
+
+EMNIST CR
+
+0.310 5
+
+10 1
+
+0.005
+
+10 4 10 3 10 2
+Adaptivity ( )
+
+Shakespeare
+0.60
+0.58
+0.56
+0.54
+FedAdagrad
+FedAdam
+0.52
+FedYogi
+0.5010 5 10 4 10 3 10 2
+Adaptivity ( )
+
+0.80
+0.75
+10 4 10 3 10 2
+Adaptivity ( )
+
+10 1
+
+0.30
+
+0.00010 5 10 4 10 3 10 2 10 1
+Adaptivity ( )
+
+10 1
+
+0.70
+
+Stack Overflow LR
+
+0.65
+
+Accuracy
+
+Accuracy
+
+0.85
+
+EMNIST AE
+
+0.015
+
+0.5
+
+0.70
+
+0.7010 5
+
+CIFAR-100
+
+Mean Squared Error
+
+CIFAR-10
+
+Recall@5
+
+0.80
+
+0.60
+0.55
+
+10 1
+
+0.5010 5
+
+10 4 10 3 10 2
+Adaptivity ( )
+
+10 1
+
+Stack Overflow NWP
+
+Accuracy
+
+0.25
+0.20
+0.15
+0.1010 5
+
+10 4 10 3 10 2
+Adaptivity ( )
+
+10 1
+
+Figure 13: Validation performance of F EDA DAGRAD, F EDA DAM, and F EDYOGI for varying τ on
+various tasks. The learning rates η and ηl are tuned for each τ to achieve the best training performance
+on the last 100 communication rounds.
+
+E.6
+
+I MPROVING PERFORMANCE WITH LEARNING RATE DECAY
+
+Despite the success of adaptive methods, it is natural to ask if there is still more to be gained. To test
+this, we trained the EMNIST CR model in a centralized fashion on a shuffled version of the dataset.
+We trained for 100 epochs and used tuned learning rates for each (centralized) optimizer, achieving
+an accuracy of 88% (see Table 11, C ENTRALIZED row), significantly above the best EMNIST CR
+results from Table 1. The theoretical results in Section 3 point to a partial explanation, as they only
+hold when the client learning rate is small or is decayed over time.
+To validate this, we ran the same hyperparameter grids on the federated EMNIST CR task, but using
+a client learning rate schedule. We use a “staircase” exponential decay schedule (E XP D ECAY) where
+the client learning rate ηl is decreased by a factor of 0.1 every 500 rounds. This is analogous in some
+sense to standard staircase learning rate schedules in centralized optimization (Goyal et al., 2017).
+Table 11 gives the results. E XP D ECAY improves the accuracy of all optimizers, and allows most to
+get close to the best centralized accuracy. While we do not close the gap with centralized optimization
+entirely, we suspect that further tuning of the amount and frequency of decay may lead to even better
+accuracies. However, this may also require performing significantly more communication rounds, as
+the theoretical results in Section 3 are primarily asymptotic. In communication-limited settings, the
+added benefit of learning rate decay seems to be modest.
+36
+
+Published as a conference paper at ICLR 2021
+
+Table 11: (Top) Test accuracy (%) of a model trained centrally with various optimizers. (Bottom)
+Average test accuracy (%) over the last 100 rounds of various federated optimizers on the EMNIST
+CR task, using constant learning rates or the E XP D ECAY schedule for ηl . Accuracies (for the federated
+tasks) within 0.5% of the best result are shown in bold.
+A DAGRAD A DAM YOGI
+C ENTRALIZED 88.0
+87.9 88.0
+F ED ...
+
+A DAGRAD A DAM YOGI AVG M
+
+C ONSTANT ηl
+E XP D ECAY
+
+F
+
+S GDM S GD
+87.7 87.7
+
+85.1
+85.3
+
+85.6
+86.2
+
+85.5
+86.2
+
+AVG
+
+85.2 84.9
+85.8 85.2
+
+C REATING A F EDERATED CIFAR-100
+
+Overview
+We use the Pachinko Allocation Method (PAM) (Li & McCallum, 2006) to create a
+federated CIFAR-100. PAM is a topic modeling method in which the correlations between individual
+words in a vocabulary are represented by a rooted directed acyclic graph (DAG) whose leaves are the
+vocabulary words. The interior nodes are topics with Dirichlet distributions over their child nodes.
+To generate a document, we sample multinomial distributions from each interior node’s Dirichlet
+distribution. To sample a word from the document, we begin at the root, and draw a child node its
+multinomial distribution, and continue doing this until we reach a leaf node.
+To partition CIFAR-100 across clients, we use the label structure of CIFAR-100. Each image in
+the dataset has a fine label (often referred to as its label) which is a member of a coarse label. For
+example, the fine label “seal” is a member of the coarse label “aquatic mammals”. There are 20
+coarse labels in CIFAR-100, each with 5 fine labels. We represent this structure as a DAG G, with a
+root whose children are the coarse labels. Each coarse label is an interior node whose child nodes are
+its fine labels. The root node has a symmetric Dirichlet distribution with parameter α over the coarse
+labels, and each coarse label has a symmetric Dirichlet distribution with parameter β.
+We associate each client to a document. That is, we draw a multinomial distribution from the Dirichlet
+prior at the root (Dir(α)) and a multinomial distribution from the Dirichlet prior at each coarse label
+(Dir(β)). To create the client dataset, we draw leaf nodes from this DAG using Pachinko allocation,
+randomly sample an example with the given fine label, and assign it to the client’s dataset. We do this
+100 times for each of 500 distinct training clients.
+While more complex than LDA, this approach creates more realistic heterogeneity among client
+datasets by creating correlations between label frequencies for fine labels within the same coarse
+label set. Intuitively, if a client’s dataset has many images of dolphins, they are likely to also have
+pictures of whales. By using a small α at the root, client datasets become more likely to focus on a
+few coarse labels. By using a larger β for the coarse-to-fine label distributions, clients are more likely
+to have multiple fine labels from the same coarse label.
+One important note: Once we sample a fine label, we randomly select an element with that label
+without replacement. This ensures no two clients have overlapping examples. In more detail, suppose
+we have sample a fine label y with coarse label c for client m, and there is only one remaining such
+example (x, c, y). We assign (x, c, y) to client m’s dataset, and remove the leaf node y from the DAG
+G. We also remove y from the multinomial distribution θc that client m has associated to coarse
+label c, which we refer to as renormalization with respect to y (Algorithm 8). If i has no remaining
+children after pruning node j, we also remove node i from G and re-normalize the root multinomial
+θr with respect to c. For all subsequent clients, we draw multinomials from this pruned G according
+to symmetric Dirichlet distributions with the same parameters as before, but with one fewer category.
+Notation and method Let C denote the set of coarse labels and Y the set of fine labels, and let S
+denote the CIFAR-100 dataset. This consists of examples (x, c, y) where x is an image vector, c ∈ C
+is a coarse label set, and y ∈ Y is a fine label with y ∈ c. For c ∈ C, y ∈ Y, we let Sc and Sy denote
+the set of examples in S with coarse label c and fine label y. For v ∈ G we let |G[v]| denote the set
+of children of v in G. For γ ∈ R, let Dir(γ, k) denote the symmetric Dirichlet distribution with k
+categories.
+37
+
+Published as a conference paper at ICLR 2021
+
+Algorithm 7 Creating a federated CIFAR-100
+Input: N, M ∈ Z>0 , α, β ∈ R≥0
+for m = 1, · · · , M do
+Sample θr ∼ Dir(α, |G[r]|)
+for c ∈ C ∩ G[r] do
+Sample θc ∼ Dir(β, |G[c]|)
+Dm = ∅
+for n = 1, · · · N do
+Sample c ∼ Multinomial(θr )
+Sample y ∼ Multinomial(θc )
+Select (x, c, y) ∈ S uniformly at random
+Dm = Dm ∪ {(x, c, y)}
+S = S\{(x, c, y)}
+if Sy = ∅ then
+G = G\{y}
+θc = R ENORMALIZE(θc , y)
+if Sc = ∅ then
+G = G\{c}
+θr = R ENORMALIZE(θr , c)
+Algorithm 8 R ENORMALIZE
+Initialization: θ = (p1 , . . . , pK ), i ∈ [K]
+P
+a = k6=i pk
+for k ∈ [K], k 6= i do
+p0k = pk /a
+Return θ0 = (p01 , · · · p0i−1 , p0i+1 , · · · , p0K )
+
+Let M denote the number of clients, N the number of examples per client, and Dm the dataset
+for client m ∈ {1, · · · , M }. A full description of our method is given in Algorithm 7. For our
+experiments, we use N = 100, M = 500, α = 0.1, β = 10. In Figure 14, we plot the distribution of
+unique labels among the 500 training clients. Each client has only a fraction of the overall labels in
+the distribution. Moreover, there is variance in the number of unique labels, with most clients having
+between 20 and 30, and some having over 40. Some client datasets have very few unique labels.
+While this is primarily an artifact of performing without replacement sampling, this helps increase the
+heterogeneity of the dataset in a way that can reflect practical concerns, as in many settings, clients
+may only have a few types of labels in their dataset.
+
+Frequency
+
+70 CIFAR-100 Client Label Distribution
+60
+50
+40
+30
+20
+10
+0
+10
+20
+30
+40
+
+Number of unique labels
+
+Figure 14: The distribution of the number of unique labels among training client datasets in our
+federated CIFAR-100 dataset.
+
+38
+
+

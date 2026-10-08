@@ -1,0 +1,1213 @@
+S CALABLE U NCERTAINTY Q UANTIFICATION FOR D EEP
+O PERATOR N ETWORKS USING R ANDOMIZED P RIORS
+A P REPRINT
+
+arXiv:2203.03048v1 [cs.LG] 6 Mar 2022
+
+Yibo Yang
+Department of Mechanical Engineering
+and Applied Mechanics
+University of Pennsylvania
+Philadelphia, PA 19104
+ybyang@seas.upenn.edu
+
+Georgios Kissas
+Department of Mechanical Engineering
+and Applied Mechanics
+University of Pennsylvania
+Philadelphia, PA 19104
+gkissas@seas.upenn.edu
+
+Paris Perdikaris
+Department of Mechanical Engineering
+and Applied Mechanics
+University of Pennsylvania
+Philadelphia, PA 19104
+pgp@seas.upenn.edu
+
+March 8, 2022
+
+A BSTRACT
+We present a simple and effective approach for posterior uncertainty quantification in deep operator networks (DeepONets); an emerging paradigm for supervised learning in function spaces.
+We adopt a frequentist approach based on randomized prior ensembles, and put forth an efficient
+vectorized implementation for fast parallel inference on accelerated hardware. Through a collection of representative examples in computational mechanics and climate modeling, we show
+that the merits of the proposed approach are fourfold. (1) It can provide more robust and accurate predictions when compared against deterministic DeepONets. (2) It shows great capability in providing reliable uncertainty estimates on scarce data-sets with multi-scale function pairs.
+(3) It can effectively detect out-of-distribution and adversarial examples. (4) It can seamlessly
+quantify uncertainty due to model bias, as well as noise corruption in the data. Finally, we provide an optimized JAX library called UQDeepONet that can accommodate large model architectures, large ensemble sizes, as well as large data-sets with excellent parallel performance on accelerated hardware, thereby enabling uncertainty quantification for DeepONets in realistic largescale applications. All code and data accompanying this manuscript will be made available at
+https://github.com/PredictiveIntelligenceLab/UQDeepONet.
+Keywords Deep learning, Uncertainty quantification, Operator learning
+
+1
+
+Introduction
+
+Deep learning and data-driven methods have found great success in scientific applications such as image classification
+[1], language modeling [2], reinforcement learning [3], chemical discovery [4], finance [5], etc. In recent years, the
+combination of artificial neural networks, statistical tools and domain knowledge in the modeling of physical systems
+has also received a lot of attention in sparse system identification [6], solution of high-dimensional partial differential
+equations [7], and creating physics-informed data assimilation tools [8].
+A new direction in scientific deep learning aims at approximating maps between spaces of functions [9, 10, 11, 12],
+opening the path to building fast surrogate models that can be trained and queried in a continuous fashion at any
+
+A PREPRINT - M ARCH 8, 2022
+
+resolution. One prominent approach for supervised learning under this setting is the so-called deep operator network
+architecture (DeepONet) [11], proposed by Lu et. al. [11]. The DeepONet architecture constitutes an extension of
+the original architecture of Chen et. al., and has been successfully employed across different applications, including
+the prediction of boundary layers [13], bubble growth dynamics [14], chemical reactions [15], and others. Another
+prominent approach for learning in function spaces is the family of Neural Operator methods proposed by Li et. al.
+[16, 17, 18], and further formalized mathematically by Kovachki et. al. [12]. In this line of work, the authors propose
+an architecture that models the Green’s function of differential equations via functional compositions consisting of a
+linear transformation, an integral operator with a learnable parametric kernel, followed by a point-wise non-linearity.
+A more recent approach was proposed in Kissas et. al. [10] where the authors drew motivation from the success of
+the attention mechanism in deep learning [19] to propose a novel kernel-coupled attention mechanism that is suitable
+for learning in function spaces. Their proposed model is constructed by taking the expectation of a feature vector
+extracted via a spectral encoder and a distribution built using the attention mechanism, with an additional coupling of
+the score functions for different query locations.
+Despite the recent emergence of operator learning methods as a powerful tool across diverse applications, there are
+still open challenges that need to be addressed. First, initial results in [10] suggest that the predictions of different
+operator learning methods provide distributions of errors which may contain a large number of outliers depending
+on the difficulty of the problem and the amount of labeled data used during training. Second, recent works [20, 13]
+suggest that a bias might be present in a DeepONet model predictions, when trained on data-sets that include multiscale target functions. Without carefully weighting the loss function, the operator learning model would over-fit to
+the high magnitude components of the target functions while poorly approximating others, due to imbalanced and
+vanishing gradients. Third, the majority of operator learning methods in the literature assume enough input/output
+function samples for training, which may not be always feasible in applications where the cost of data acquisition is
+high. For cases where only a small number of input/output function samples are available, the predictions might be
+poor and the prediction errors large. Fourth, when querying new input functions to approximate new solutions, outof-distribution or adversarial samples might exist in the test data-set, inevitably leading to poor predictions. All these
+challenges suggest that using deterministic methods when learning from distributions of functions may lack reliability,
+thereby posing the need for methods that can account for uncertainty.
+The field of uncertainty quantification deals with the presence of incomplete information in various stages of the scientific method. Sources of uncertainty can vary [21], but most commonly include randomness introduced by partial
+observability or inherent randomness in the data-generating process, a limited amount of training labels, biased assumptions, or incomplete physical models, to list a few. There exist two general approaches in modeling uncertainty:
+the frequentist and the Bayesian. Frequentist approaches [22] view the notion of probability by examining the statistical outcomes of repeated experiments in order to quantify the frequency of certain events, and perform maximum
+likelihood estimation to calibrate the parameters of a statistical model, while uncertainty is quantified by calibrated
+confidence intervals. On the other hand, Bayesian approaches [23] are grounded on the laws of probability theory and
+provide a general formalism for posterior uncertainty quantification based on blending observational data and prior
+beliefs. Uncertainty in this case is obtained by performing posterior inference using Bayes’ rule. By now, uncertainty
+quantification has grown into an active and mature field of research with diverse applications in computer vision [24],
+language modeling [25], solutions of partial differential equations [26, 27, 28], black-box function optimization [29],
+sequential decision making [30], and engineering design [31]. However, there are only few works [21, 32, 33] that
+have formulated uncertainty quantification methods in the context of operator learning.
+In this work, we put forth a simple and effective framework for uncertainty quantification in operator learning, coined
+as UQDeepONet. Specifically, we propose a framework that combines an ensemble of DeepONet architectures together with randomized prior networks [34, 35] to control the model’s behavior in regions of the input space where
+training data does not exist. The main contributions of this work can be summarized as follows,
+• Robust output function predictions: By training an vectorized ensemble of randomized prior DeepONet,
+the proposed framework provides predictions for never-seen-before input functions with a small error spread
+compared to deterministic DeepONet.
+• Reliable uncertainty estimates: Leveraging DeepONet ensembles in conjunction with randomized prior
+networks, the proposed model provides reliable uncertainty estimates for scarce data-sets that may include
+output functions with diverse magnitudes.
+• Identification of out-of-distribution function samples: Due to its ensemble structure, the proposed model
+can identify out-of-distribution data.
+• Handling noisy data: The proposed model can be trained on a noisy data-set and provide meaningful predictions and uncertainty estimates for a never-seen before noisy data-set.
+2
+
+A PREPRINT - M ARCH 8, 2022
+
+Moreover, we provide a highly efficient software package for the vectorized training of UQDeepONets, enabling scalability to large data-sets, model architectures and ensemble sizes. The proposed implementation can be also trivially
+parallelized to leverage multiple hardware accelerators towards opening the path to performing reliable uncertainty
+quantification in realistic large-scale operator learning applications.
+The paper is structured as follows. In section 2, we review the key parts constructing this method. In particular, in
+section 2.1, we present deep operator networks (DeepONet) through the lens of a simple example to point out some
+of its existing drawbacks. In section 2.2, we give a brief review of deep learning techniques for uncertainty quantification and introduce the randomized prior method. In section 2.3, we present the details regarding the construction
+of the proposed UQDeepONet framework, and provide a pedagogical example to demonstrate the effectiveness of
+UQDeepONets. In section 3, three synthetic examples including anti-derivative of ordinary differential equations,
+reaction-diffusion equations and Burgers’ equations and a realistic climate modeling example are presented to demonstrate and examine the capabilities of the proposed methodology. In section 4, we present a discussion about our
+conclusions and some remarks.
+
+2
+
+Methods
+
+2.1
+
+Deep operator networks
+
+Formulation: Given X ⊂ Rdx and Y ⊂ Rdy we refer to x ∈ X as the input and y ∈ Y as the query locations,
+respectively. We use C(X ; Rdu ) and C(Y; Rds ) to denote the spaces of continuous input and output functions, u :
+X → Rdu and s : Y → Rds , respectively. Our goal is to learn an operator F : C(X ; Rdu ) → C(Y; Rds ) from pairs
+of input and output functions {ul , sl } generated from a ground truth operator G : C(X ; Rdu ) → C(Y; Rds ), where
+ul ∈ C(X ; Rdu ), sl ∈ C(Y; Rds ) and l = 1, ..., N , such that:
+sl = F(ul ).
+
+(1)
+
+The theoretical basis for the construction of the DeepONet architecture is the universal approximation theorem of
+Chen et. al. [9] for one hidden layer neural networks, which was later generalized to deep neural networks by Lu et
+al. [11]. The DeepONet architecture parametrizes the target operator G(u)(y) using two neural networks, the branch
+network that receives an input function ul , and the trunk network that receives a query location yjl . The n-dimensional
+features extracted by these two sub-networks are then merged by a dot-product operation to predict the value of the
+output function s(y) = Fθ (u)(y), given an input function u and a query location y. In summary, the DeepONet
+representation of the latent operator can be expressed as
+Fθ (u)(y) =
+
+n
+X
+
+bi (u)ti (y),
+
+(2)
+
+i=1
+
+b : Rm×du → Rn×ds denotes the branch network, t : R1×dy → Rn×ds denotes the trunk network, and θ denotes all
+the trainable parameters of the branch and trunk networks, respectively.
+Training: Given a data-set consisting of input/output function pairs {ul , sl }N
+l=1 , a DeepONet model can be trained
+via empirical risk minimization using the following loss
+N
+
+L(θ) =
+
+P
+
+1 XX
+|Fθ (ui )(yji ) − si (yji )|2 .
+N P i=1 j=1
+
+(3)
+
+Recent works [20, 13] have indicated that DeepONets trained using the loss of equation (3) can be biased towards
+approximating output functions with larger magnitudes. This is because output functions with larger magnitudes can
+dominate the magnitude of the back-propagated gradients during training, leading to a model that performs poorly
+when the magnitude of the queried output functions is small. To mitigate this shortcoming, one can instead employ a
+normalized loss function, such as the one proposed in [13, 36]. Here we choose to normalize the loss by the infinity
+norm of the output function samples as
+N
+
+L(θ) =
+
+P
+
+1 X X |Fθ (ui )(yji ) − si (yji )|2
+.
+N P i=1 j=1
+ksi (yji )k2∞
+
+(4)
+
+This normalized loss function weighs the different loss components by the magnitude of s, which has been shown
+[20, 13] to safeguard the neural network from over-fitting low magnitude examples.
+3
+
+A PREPRINT - M ARCH 8, 2022
+
+Inference: Once a DeepONet model has been successfully trained, it can be queried to return predictions of a target
+output function at any continuous query location y ∗ , given an input function u∗ . This can be translated to evaluating
+the model’s forward pass as
+n
+X
+Fθ (u∗ )(y ∗ ) =
+bi (u∗ )ti (y ∗ ),
+(5)
+i=1
+∗
+
+where u should be evaluated at the same locations x as the input functions used during training, while y ∗ are arbitrary
+query locations y ∗ ∈ Y.
+A need for uncertainty quantification: We consider the simple example of learning an anti-derivative operator
+to demonstrate some inherent shortcomings in the training of deterministic DeepONets that motivate the need for
+uncertainty quantification. To this end, let us consider a simple ordinary differential equation of the form
+ds
+= u(x),
+dx
+s(0) = 0.
+
+x ∈ [0, 1],
+
+(6)
+
+Rx
+Our goal here is to learn the anti-derivative operator G : u(x) −→ s(x) = s(0) + 0 u(t)dt that maps a forcing
+term u to the solution trajectory s. To do so, we create the training data-set by first sampling u(x) from Gaussian
+process priors with different output scales that are chosen as k = 10α , where α is sampled from a uniform distribution
+U(−2, 2). For each output scale, we generate 100 realizations of u(x) and numerically integrate equation (6) to create
+a total of 1, 000 training input/output function pairs. The test data-set is also created in an identical manner. We employ
+the Xavier normal initialization scheme [37] to initialize all neural networks weights, while all biases are initialized to
+zero. The resulting DeepONet model is trained using the Adam optimizer [38] with default settings, using a learning
+rate of 10−3 with an exponential decay applied every 1, 000 iterations with rate of 0.9. The predictive accuracy of the
+trained model is assessed using the relative L2 error defined as
+L2 =
+
+kFθ (u∗ )(y ∗ ) − sk2
+.
+ksk2
+
+(7)
+
+In figure 1, we report the comparison of the relative L2 prediction error averaged over all examples in the test data-set,
+for two different cases. In the first case, the model is trained using the loss in equation (3), while in the second case
+we train the same model using the scaled loss in equation (4). Notice how the model trained using the loss of equation
+(3) yields larger errors compared to the model training using the scaled loss of equation (4). Second, the relative L2
+errors of the model trained with the un-scaled loss increase as the output scale of the target functions decreases. Third,
+the maximum error across all testing data is around 25%, which indicates that the worst-case-scenario prediction of
+DeepONets could be unreliable. As summarized in table 1, there is a clear trend of increasing errors as the output scale
+of the target output functions function is decreased, suggesting that DeepONets can be biased towards approximating
+function with large magnitudes – an observation that is in agreement with the findings reported in [13, 20] . These
+findings demonstrate some drawbacks that are inherent to the deterministic training of DeepONets, and motivate the
+need for an uncertainty quantification method.
+Table 1: Learning the anti-derivative operator: Relative L2 error averaged over groups of examples in the test data-set
+with the same output scale, for a DeepONet trained using the un-scaled loss of equation (3).
+
+Output magnitude in log-scale
+
+-2.00
+
+-1.56
+
+-1.11
+
+-0.67
+
+-0.22
+
+0.22
+
+0.67
+
+1.11
+
+1.56
+
+2.00
+
+Average relative L2 error (%)
+
+3.07
+
+2.59
+
+2.85
+
+2.09
+
+1.86
+
+1.83
+
+2.08
+
+2.35
+
+1.94
+
+1.81
+
+2.2
+
+Uncertainty quantification in deep learning
+
+Uncertainty quantification in deep learning has recently received a lot of attention and has been successfully employed
+for diverse applications, including computer vision [24], language modeling [25], solutions of partial differential
+equations [26, 27], black-box function optimization [39] and sequential decision making [34, 40]. In this section, we
+provide a brief review of the most widely used tools for performing uncertainty quantification in deep neural networks.
+A more detailed overview can be found in [21], while extensive comparisons between different methods have been
+recently performed in [41, 35].
+4
+
+A PREPRINT - M ARCH 8, 2022
+
+Figure 1: Learning the anti-derivative operator: Comparison of relative L2 prediction errors of a DeepONet trained
+using the un-scaled loss of equation (3) (blue) and the scaled loss of equation (4) (red). The black diamonds represent
+the error outliers among 100 examples in the test data-set containing output functions with different output scales.
+x-axis is the α that denotes the log of the output scale. y-axis is the relative L2 prediction errors.
+Hamiltonian Monte Carlo: Hamiltonian Monte Carlo (HMC) methods [42] are currently considered the goldstandard tool for approximate Bayesian inference with asymptotic convergence guarantees. They are formulated
+on the premise of exploiting gradient information and trajectory dynamics in the parameter space for accelerating
+the convergence of a Markov Chain Monte Carlo sampling process. Despite its success across many applications
+in machine learning, the use of HMC in deep learning is typically limited by its high computational cost and its
+requirement for using the entire training data set for evaluating the likelihood function and its gradients during the
+Metropolis accept-reject step [43]. These factors cast a great difficulty in scaling HMC algorithms to large neural
+network architectures and large data-sets.
+Variational inference: Variational inference [44] utilizes tractable distributions (e.g. the mean field family) to approximate intractable posterior distributions by enabling the derivation of a tractable optimization objective, such as
+the KL-divergence, for updating a model’s parameters via stochastic gradient descent methods. Variational inference
+can be extended for estimating the posterior distribution of large neural networks [45], but mean-field approximations are known to underestimate the posterior variance, while they also provide only a crude approximation of the
+degenerate and multi-modal posterior distributions often encountered in Bayesian deep learning. As such, the resulting uncertainty estimates are often poor and lead to models that under-perform in settings where well-calibrated
+uncertainty estimation plays a prominent role (e.g. sequential decision making [40, 41]).
+Deep Ensembles: Deep ensembles [46] provide a straightforward frequentist approach, in which independent neural
+networks with different initialization are trained in parallel. Such approach aims to calibrate the epistemic uncertainty
+of neural networks whose training objective is non-convex and might involve many local optima leading to multimodal posterior distributions that are hard to explore via sampling [47]. The deep ensemble method is shown to
+produce well-calibrated uncertainty estimates [46], while it can readily facilitate vectorization and parallelization in
+modern hardware accelerators, enabling uncertainty quantification for large deep learning models and large data-sets
+within a reasonable computational cost. This approach was successfully adopted in [21] for performing uncertainty
+quantification in DeepONets, although it was limited to using small ensembles with 5-10 replicas, likely due to a high
+computational cost.
+Dropout: Dropout [48] is a simple trick that randomly zeros out the output of neurons during training and inference
+based on a fixed a-priori chosen probability. Dropout does not only work as a simple regularization mechanism,
+5
+
+A PREPRINT - M ARCH 8, 2022
+
+but also enables the quantification of uncertainty in neural networks. It was also shown in [49] that in deep Gaussian
+processes [50], where the width of the neural networks tends to infinity, dropout works as an approximation of Bayesian
+inference. Dropout has a very low computational overhead and has been widely used across different deep learning
+architectures and applications, however it is known to provide crude uncertainty estimates that often lead to models that
+under-perform in settings where well-calibrated posterior uncertainty plays a prominent role (e.g. sequential decision
+making [40, 41]).
+Stochastic Weight Averaging: Stochastic Weight Averaging (SWA) [51] is an ensembling procedure that averages
+multiple model parameters along the training trajectory of a deep learning model. Using a cyclical learning rate,
+stochastic gradient descent has the ability to better explore the underlying non-convex loss landscape, leading to
+stochastic weights that correspond to different local basins of attraction. This framework has been demonstrated to
+yield robust predictions and achieve generalizable solutions with low loss. Based on SWA, SWA-Gaussian (SWAG)
+[52] was proposed for conducting uncertainty representation and Bayesian inference in deep networks. SWAG models
+the model parameters as samples of multivariate Gaussian distributions. Then the SWA solution as considered as the
+posterior mean, while a low-rank approximation is proposed to efficiently estimate the posterior covariance. This
+framework has shown benefits in performing out-of-distribution detection and provides robust prediction. However,
+although the low-rank approximation is used for the covariance matrix, it is still computationally expensive to draw
+posterior samples for large neural network architectures.
+Randomized prior networks: Randomized prior networks were proposed by Osband et al. [34] in the context
+of leveraging posterior uncertainty estimates to effectively balance the exploration versus exploitation trade-off in
+reinforcement learning. The main idea consists of using randomly initialized networks to control the model’s behavior
+in regions of the space where limited training data is available. Compared to deep ensembles [46], this method
+introduces randomly initialized prior functions whose parameters remain fixed during model training, and sums the
+output of those fixed prior functions with the output of a trainable neural network. To this end, a prediction can be
+obtained by evaluating
+fˆθ = fθ + βfΘ ,
+(8)
+where fθ is a neural network with trainable parameters θ, while fΘ denotes the same exact network that is randomly
+initialized with another set of parameters Θ that remained fixed during training. A frequentist ensemble for uncertainty
+quantification can be constructed by considering multiple replicas of randomly initialized prior networks. During
+training, one keeps the parameters of each prior network fΘ in the ensemble fixed, and only updates the trainable
+parameters θ. The fixed neural networks fΘ , represent our prior belief and act as the source of uncertainty. Moreover,
+β is a user-defined hyper-parameter that controls the variance of the uncertainty originating from the prior networks.
+This approach is supported by theoretical guarantees of consistency and asymptotic convergence to the true posterior
+distribution in the context of Bayesian inference for Gaussian linear models [34], and has been recently demonstrated to
+be very effective in complex sequential decision making tasks [41, 35]. Finally, similar to deep ensembles, randomized
+prior networks can be trivially parallelized allowing one to accommodate large network architectures and training datasets.
+Does Bayesian deep learning work? High quality uncertainty estimation plays critical roles in many applications
+of Bayesian deep learning. Recent work [41] argues that despite the success of Bayesian deep learning frameworks
+for approximating marginal distributions, some established methods yield poor performance when evaluating joint
+predictive distributions. For instance, the authors argue that variational inference, dropout and deep ensembles fail
+to provide reliable uncertainty estimates and show poor performance in areas where uncertainty quantification plays
+essential roles, such as sequential decision making tasks. HMC provides state-of-the-art performance in estimating
+uncertainty, but typically suffers from a high computational cost that limits its applicability to large-scale problems.
+Randomized priors, on the other hand, have been shown to achieve similar performance to HMC, which is especially
+beneficial in the small data regime, while being computationally efficient and trivially parallelizable on hardware
+accelerators. Moreover, a recent study [35] provides theoretical results showing that the uncertainty obtained from
+randomized prior networks is conservative and capable of reliably performing out-of-distribution sample detection.
+The same study also shows that this framework generalizes to any neural network architecture trained by standard
+optimization pipelines. Such properties make the randomized prior approach a potentially valuable tool for applying
+Bayesian deep learning methods in challenging engineering problems.
+Other related works: In [32, 33], the authors proposed a Markov Chain Monte Carlo (MCMC) approach for posterior inference in DeepONet architectures. Although MCMC techniques are considered to be the gold standard for
+posterior uncertainty quantification of complex models, they typically suffer from high computational cost and cannot
+be easily scaled to efficiently support large model architectures and large data-sets. In [33], the authors also provided
+6
+
+A PREPRINT - M ARCH 8, 2022
+
+a maximum likelihood framework to train DeepONet. They conducted the uncertainty quantification with a Gaussian
+estimate of the predictive distribution. In [21], the authors provided a comprehensive review of uncertainty quantification methods, including some early results on uncertainty quantification in DeepONet. On one hand, they focus
+on facilitating aleatoric uncertainty estimation on noisy data. To this end, the authors use pre-trained DeepONet on
+noiseless data as a surrogate, and quantify the uncertainty from random input functions through posterior inference
+methods such as Bayesian neural networks (BNN) [42] or Generative adversarial nets (GAN) [53]. However, these
+approaches require the pre-training data to be noiseless, while the computational cost for training BNNs and GANs
+can be high. On the other hand, similar to deep ensemble [46], [21] also considers a frequentist approach by training a small number of neural networks in order to capture epistemic uncertainty in the DeepONet model predictions.
+Although this is a computationally efficient approach, the findings discussed in [35, 41] indicate that deep ensembles
+can yield sub-optimal performance by providing overconfident uncertainty estimation in practice. In particular, [35]
+points out an edge case, in which if each of the networks in the ensemble is convex in the weights, all networks would
+converge to the same weights and therefore result in zero uncertainty. To overcome the aforementioned difficulties, in
+the next section we put forth a scalable and computationally efficient framework for conservative posterior uncertainty
+quantification in DeepONet, by formulating a novel DeepONet variant that leverages the use of randomized prior
+networks [54].
+2.3
+
+Uncertainty quantification in DeepONet using randomized priors
+
+Formulation: Leveraging the DeepONet architecture for operator learning and the flexibility of randomized prior
+networks for uncertainty quantification, we propose a novel model class called UQDeepONet that facilitates scalable
+uncertainty estimation in operator learning. Using the conventional DeepONet parametrization of equation (2) as
+a starting point, we will parameterize the branch and the trunk networks, b(u) and t(y), respectively, using fully
+connected architectures, and then augment the model with randomized priors
+b̂φ (u) = bφ (u) + βbΦ (u),
+
+(9)
+
+t̂ψ (y) = tψ (y) + βtΨ (y),
+
+(10)
+
+where bΦ (u) and tΨ (y) denote randomly initialized branch and trunk networks with the exactly the same architecture
+as the backbone trainable networks b̂φ (u) and t̂ψ (y), albeit with a different set of parameters Φ and Ψ that are randomly
+initialized and remain fixed during model training. Under this setup, the prediction of a UQDeepONet model is
+obtained as
+n
+X
+Fθ (u∗ )(y ∗ ) =
+b̂φ (u∗ )i t̂ψ (y ∗ )i ,
+(11)
+i=1
+
+where θ = [φ, ψ] denotes the total number of trainable parameters of the UQDeepONet, which does not include the
+prior network parameters Φ and Ψ. Similar to [34], ensemble predictions can be obtained by considering multiple
+replicas of randomly initialized prior networks. During training, one keeps the Φ and Ψ parameters of each prior
+network in the ensemble fixed, and only updates the trainable parameters θ. Notice that the forward evaluation of the
+model is decoupled across ensembles; a fact that readily facilitates an implementation that is trivially parallelizable. As
+we will later demonstrate, this enables the concurrent training of hundreds of DeepONet on modern GPU accelerators
+with minimal computational overhead. Once a UQDeepONet is trained, we can obtain statistical estimates for the
+model’s predictions and variance via Monte Carlo ensemble averaging
+µ(s|u∗ , y ∗ ) = Eps [s|u∗ , y ∗ ] ≈
+
+Ns 
+
+1 X
+Fθ (u∗ )(y ∗ ) ,
+Ns i=1
+i
+
+σ 2 (s|u∗ , y ∗ ) = Varps [s|u∗ , y ∗ ] ≈
+
+Ns h
+
+i2
+1 X
+Fθ (u∗ )(y ∗ ) − µ(s|u∗ , y ∗ ) ,
+Ns i=1
+i
+
+(12)
+
+(13)
+
+where, Ns is the number of DeepONet in the UQDeepONet ensemble. The prediction and uncertainty estimation can
+be obtained by evaluating the forward pass of each network in the ensemble, which is also trivially parallelized and
+computationally efficient.
+Learning the anti-derivative operator with quantified uncertainty: To provide a simple use case of the proposed
+UQDeepONet framework, let us revisit the anti-derivative example discussed in section 2.1. To this end, we will
+approximate the anti-derivative operator with a UQDeepONet model and report two metrics for assessing the model
+performance. Similar to the definition of relative L2 loss in equation (7), the relative uncertainty defined as
+7
+
+A PREPRINT - M ARCH 8, 2022
+
+Figure 2: Learning the anti-derivative operator: Comparison between the relative L2 error of the predictions of a
+UQDeepONet trained using the un-scaled loss of equation (3) (blue) and the scaled loss of equation (4) (red). The
+black diamonds represent the error outliers among 100 examples in the test data-set containing output functions with
+different output scales. x-axis is the α that denotes the log of the output scale. y-axis is the relative L2 prediction
+errors.
+
+uncertainty2 =
+
+kσ(s|u∗ , y ∗ )k2
+,
+ksk2
+
+where σ(s|u∗ , y ∗ ) is defined in equation (13). The proposed scaling of the uncertainty metric is tailored to report higher
+uncertainty in areas where the prediction error is higher. The error plot is presented in figure 2. The UQDeepONet
+model is trained using Adam optimizer [38] with learning rate lr = 10−3 , which we decrease every 1, 000 iterations
+by 0.9. The total number of iterations is 5×105 . Similar to figure 1, we observe that the errors resulting from using the
+scaled L2 loss for training are smaller than the errors from L2 loss. When comparing outlier cases, the predictions of
+the UQDeepONet show a significantly smaller error spread than a conventional DeepONet providing a maximum error
+around 5% in most cases, while the error spread is also relatively contained across different output scale magnitudes.
+Moreover, in figure 3, we demonstrate the uncertainty estimation obtained from the UQDeepONet, which further
+reflects this point by providing higher uncertainty for test examples with higher prediction error. We also report the
+marginal density of prediction error versus uncertainty estimates generated by the UQDeepONet. As one would hope
+for, the predictive uncertainty attains small values for the cases where the model predictions are accurate, while it also
+consistently identifies cases for which the prediction error is large. This is a good indication that UQDeepONet is able
+to provide calibrated and conservative uncertainty estimates.
+Parallel implementation, computational cost and sensitivity on the β parameter: A discussion on parallel implementation and its computational cost is provided in the supplementary material (see section A). Specifically, we
+report wall-clock time needed for the training of a UQDeepONet with different ensemble sizes, and observe that the
+proposed parallel implementation is computationally efficient as the cost exhibits a near-linear scaling with the number
+networks in the ensemble.
+We also conduct a study on how the different values of the β hyper-parameter in the randomized prior networks
+affect the model output (see equations (9) and (10)). The discussion is provided in supplementary material section
+B, indicating that the default choice of β = 1 adopted in the randomized prior literature [34, 41, 35] yields robust
+performance.
+8
+
+A PREPRINT - M ARCH 8, 2022
+
+Figure 3: Uncertainty quantification versus prediction errors: Left: the L2 errors, scaled L2 errors and scaled uncertainty of the UQDeepONet predictions for different output scales are presented. The blue dots represent the L2
+error versus the quantified uncertainty for the original loss in equation (3). The red dots represent the L2 error versus
+the quantified uncertainty for the scaled loss in equation (4). Right: Marginal density of prediction error (red) and
+predictive uncertainty (blue).
+
+3
+
+Results
+
+To demonstrate the performance of the proposed UQDeepONet framework we have conducted a series of numerical
+studies across four representative benchmarks. First, we revisit the anti-derivative example discussed in the previous
+sections to study the robustness of UQDeepONets. The next two benchmarks consider canonical cases of approximating the solution operator of partial differential equations, while the last benchmark is focused on learning a black-box
+operator for a climate modeling prediction task from real sensor measurements. In each case, we aim to demonstrate
+the ability of UQDeepONets to provide robust output function predictions, return reliable uncertainty estimates, as
+well as their ability to identify model bias, out-of-distribution function samples, and handle noisy data. Our objectives
+for each experiment can be summarized as follows.
+Robust output function prediction: We consider the anti-derivative example described in section 2.1 where our
+goal is to learn an operator that maps random forcing terms to the solution trajectory of an ordinary differential
+equation. We use this example to quantitatively demonstrate how UQDeepONets can provide robust output function
+predictions across different examples in the testing data-set.
+Identification of out-of-distribution function samples: We consider a reaction-diffusion system as an example of
+learning an operator that maps random source terms to the full spatio-temporal solution of a time-dependent partial
+differential equation. We use this example to empirically illustrate how UQDeepONets can provide reliable uncertainty
+estimates, allowing us to identify out-of-distribution examples in the testing data-set.
+Reliable uncertainty estimates: We consider a time-dependent nonlinear transport problem with the goal of learning an operator that maps random initial conditions to the full spatio-temporal solution of the viscous Burgers equation.
+We choose this benchmark to show that UQDeepONets can provide both robust predictions and conservative uncertainty estimates, even for the worst-case-scenario in the testing data-set.
+Handling noisy data: We consider a large-scale climate modeling task where our goal is to learn an operator that
+maps the surface air temperature field over the Earth to the surface air pressure field, given real weather station data.
+Here we demonstrate the ability of UQDeepONet to handle noisy data, as well as to provide robust predictions and
+reliable uncertainty estimates, even when the model is called to extrapolate on future data.
+Hyper-parameter settings: Across all benchmarks, we parametrize the branch and trunk networks using a multilayer perceptron with 3 hidden layers and 128 neurons per layer. The randomized priors ensemble size for all examples
+is fixed to Ns = 512. The details of neural networks architecture settings are summarized in table 2. All models are
+9
+
+A PREPRINT - M ARCH 8, 2022
+
+trained on N input/output function pairs {ui , si }, and for each pair we assume that we have access to m discrete
+measurements of the input function {ui1 , ..., uim }, and M discrete measurements of the output function {si1 , ..., siM }
+i
+at query locations {y1i , ..., yM
+}. A different subset of P points is chosen for each DeepONet in the ensemble. We
+employ Glorot normal initialization [37] for all examples. The Adam optimizer is used to optimize all models with
+a base learning rate lr = 10−3 , which we decrease every 1, 000 iterations by a factor of 0.9. The total number of
+iterations is 5 × 105 . All hyper-parameter settings are summarized in table 3. For all examples, we set the inputs and
+outputs dimensions as discussed in 2.3 and normalize the data using the infinity norm, as discussed in section 2.1.
+Training: For training the UQDeepONets, we propose a novel hierarchical algorithm for performing unbiased minibatch sampling in a very efficient manner. At each training iteration, we randomly choose Ns out of the M total
+available labels which are shared across all DeepONets in the randomized priors ensemble. Then, we fetch different
+random batches (one for each DeepONet in the ensemble) of size Nb out of the N available input/output function pairs
+to create a data-set of size Nb × Ns × ds . This approach significantly reduces the computational cost and memory
+footprint of the data-loader during training.
+Error and performance metrics: For all examples, we report the relative L2 error between the ground truth and the
+mean prediction of a UQDeepONet, as defined in equation (7). All computations are vectorized on a single NVIDIA
+RTX A6000 GPU, leading to a training time of 6 hours for all benchmarks. Our implementation can also be readily
+extended to accommodate data-parallelism on multiple GPUs, which we anticipate that can considerably reduce the
+total training time in the future.
+Table 2: Hyper-parameter settings: UQDeepONet architecture used across all benchmarks.
+Architecture
+
+Trunk depth
+
+Trunk width
+
+Branch depth
+
+Branch width
+
+Ensemble size
+
+3
+
+128
+
+3
+
+128
+
+512
+
+Setting
+
+Table 3: Hyper-parameter settings: Training settings used across all benchmarks.
+Hyper-parameter
+
+Learning rate
+10
+
+Setting
+
+3.1
+
+−3
+
+Optimizer
+
+Iterations
+5
+
+5 × 10
+
+Adam [38]
+
+Learning rate decay
+0.9 every 1,000 iterations
+
+Robust output function prediction
+
+We revisit the anti-derivative example in section 2.1 to study the robustness of the UQDeepONet predictions by
+reporting the maximum test relative L2 error in table 4, which is an indicator of the worst-case-scenario prediction.
+We find that the maximum error reduces significantly as the ensemble size increases. When the ensemble size is
+greater than 32, the maximum testing error saturates to a limiting value. This observation demonstrates the ability
+of the proposed framework to reduce the inaccuracies for corner cases in the testing data-set, and yield robust worstcase-scenario predictions. Specifically, an ensemble with 32 networks yields a 6x reduction in relative error for the
+worst-case-scenario prediction compared to a conventional DeepONet model.
+Table 4: Robust output function prediction: Maximum testing relative L2 error of a UQDeepONet for different ensemble sizes.
+
+Ensemble size
+Max relative L2 error (%)
+
+1
+
+2
+
+4
+
+8
+
+16
+
+32
+
+64
+
+128
+
+256
+
+512
+
+26.91
+
+20.12
+
+8.31
+
+9.89
+
+6.26
+
+4.37
+
+4.36
+
+4.43
+
+4.51
+
+4.99
+
+10
+
+A PREPRINT - M ARCH 8, 2022
+
+3.2
+
+Identification of out-of-distribution function samples
+
+Reaction-diffusion equations [55] are widely used to describe the behavior of chemical reactions [56], pattern formation [57], ecology [58] and physics [55]. In one spatial dimension, they take the following form
+∂s
+∂2s
+= ν 2 + ks2 + u(x),
+∂t
+∂x
+s(x, 0) = 0,
+x ∈ [0, 1],
+s(0, t) = 0,
+t ∈ [0, 1],
+s(1, t) = 0,
+t ∈ [0, 1],
+
+(x, t) ∈ [0, 1] × [0, 1],
+(14)
+
+where ν denotes the diffusion coefficient and k the reaction rate, both of which are here set to 0.01. The input and
+the output domain in this problem are X and Y, respectively, with dx = 1 and dy = 2. Moreover, because we map
+scalar functions (i.e. du = ds = 1) the operator we are approximating is G : C(X ; R) → C(X ; R). The training
+and testing data generation process for this example is summarized in the supplementary material (see section C).
+Here we present the UQDeepONet predictions for randomly chosen examples in the test data-set in figure 4. For most
+random sampled examples, we observe very accurate predictions with small prediction variance, indicating that the
+UQDeepONet model is confident in what it predicts.
+We report the prediction error versus the quantified uncertainty of UQDeepONet for all testing samples in figure
+5, where we also highlight an outlier corresponding to an out-of-distribution function sample in the testing data set
+(shown in blue). As one may expect, the prediction error for this testing sample is significantly higher than the other
+samples. We identify and visualize this worst-case-scenario example for which the UQDeepONet prediction provides
+the highest relative L2 error, which is equal to 5.5%. We also report the marginal density of prediction error versus
+uncertainty estimates generated by the UQDeepONet, indicating that the UQDeepONet is able to provide calibrated
+and conservative uncertainty estimates. Figure 6 presents a comparison between the ground truth solution and the
+UQDeepONet predictive mean and uncertainty. Although the prediction is still relatively accurate, we note that the
+form of the ground truth solution is quite different from most examples in the training and testing data-set; a fact that
+may justify why the model provides the maximum error for this case. We observe that the uncertainty obtained from
+the UQDeepONet model is much higher for this case, compared to the rest of samples shown in figure 4. This is an
+indication that the UQDeepONet method can not only provide accurate predictions when employed for a previously
+unseen example, but also allow one to identify out-of-distribution examples in the testing data-set.
+3.3
+
+Reliable uncertainty estimates
+
+The Burgers’ equation [59] is well-known for modeling advective and dissipative behavior in fluids [60], nonlinear
+acoustics [61], and traffic flow [62]. It is studied as a prototype of turbulent flow and has the property of shock
+formation at the inviscid limit. The system of equations takes the form
+∂s
+∂s
+∂2s
++s
+= ν 2,
+(x, t) ∈ [0, 1] × [0, 1],
+∂t
+∂x
+∂x
+s(x, 0) = u(x),
+x ∈ [0, 1],
+(15)
+s(0, t) = s(1, t),
+t ∈ [0, 1],
+∂s(0, t)
+∂s(1, t)
+=
+,
+t ∈ [0, 1],
+∂x
+∂x
+where ν = 0.01 a viscosity parameter. For the Burgers’ equation, the input and out domains are X and Y, respectively,
+with dx = 1 and dy = 2. In this problem, we also map scalar functions, meaning du = ds = 1, and the operator we
+are approximating is G : C(X ; R) → C(X ; R).
+The training and testing data generation process is summarized in the supplementary materials (see section C). Representative results obtained from a trained UQDeepONet are presented in figure 7 where all testing errors are around
+3%. For the top two samples, we observe a very accurate prediction and tight uncertainty bounds. For the bottom two
+samples, we get larger uncertainty in regions where the UQDeepONet predictive mean is not so accurate. These two
+examples demonstrate the ability of UQDeepONet to provide sensible predictions with reliable uncertainty estimates
+that reflect how confident the model is across different examples in the testing data-set.
+3.4
+
+Handling noisy data
+
+In our last example we turn our attention to a realistic climate modeling task where our goal is to learn a black-box
+operator that captures the functional relation between the air temperature and pressure fields on the surface of the
+11
+
+A PREPRINT - M ARCH 8, 2022
+
+Figure 4: Reaction-diffusion dynamics: UQDeepONet predictions for representative examples in the test data-set (top
+to bottom rows). For each example, we present a comparison between the ground truth solution (blue), the predictive
+mean of the UQDeepONet (red dashed), and the predictive UQDeepONet uncertainty (yellow shade), for t = 0.25,
+t = 0.50 and t = 0.75.
+
+12
+
+A PREPRINT - M ARCH 8, 2022
+
+Figure 5: Reaction-diffusion dynamics: Left: uncertainty quantification versus prediction errors. The scaled L2 errors
+and scaled uncertainty of the UQDeepONet predictions are presented. The red dots represent the L2 error versus the
+quantified uncertainty for the scaled loss in equation (4). The blue dot represents an outlier corresponding to an outof-distribution function sample in the testing data set. Right: Marginal density of prediction error (red) and predictive
+uncertainty (blue).
+Earth. This mapping takes the form
+T (x) 7→ P (y),
+(16)
+where x, y ∈ [−90, 90] × [0, 360] correspond to latitude and longitude coordinates charting the Earth’s surface. In this
+case, the input and output function domains are the same, i.e. X = Y, dx = dy = 2, and for the scalar temperature
+and pressure fields du = ds = 1. Therefore the operator we aim to learn is G : C(X ; R) → C(X ; R).
+To enhance the performance of UQDeepONet for this benchmark, we exploit the periodic nature of the data and
+introduce a Harmonic Feature Expansion, as proposed by Lu et. al. [36]
+ξ(y) = [y, sin(2πy), cos(2πy), ..., sin(2H πy), cos(2H πy)],
+
+(17)
+
+where H is the order of the harmonic basis, which we set equal to 5. Our experience indicates that Harmonic Feature Expansion significantly increases the accuracy of the UQDeepONet prediction for this benchmark by mitigating
+spectral bias [63], as the underlying input and output functions exhibit higher frequencies.
+The construction of the training and testing data-sets is summarized in the supplementary material (see section C).
+Representative predictions of a trained UQDeepONet are presented in figure 8. We observe that the model is quite
+accurate and provides tight confidence bounds in regions where the target output functions are relatively smooth and
+well-behaved, while the predictive uncertainty is larger in regions where the output functions are more oscillatory.
+
+4
+
+Discussion
+
+In this work, we propose a novel uncertainty quantification approach for operator learning, called UQDeepONet.
+The proposed method is tested for two synthetic examples of learning the operator of a non-linear partial differential
+equation, one example of learning the anti-derivative operator and one realistic climate modeling example where an
+unknown operator between the surface air temperature and surface air pressure is approximated. With these examples,
+we experimentally demonstrate that the proposed model provides accurate predictions for most random function pairs
+in a never-seen data-set as well as reasonable uncertainty estimates for outliers. Moreover, taking advantage of the
+computational efficiency of randomized prior networks, we can train ensembles consisting of hundreds of DeepONet
+in a few hours on a single GPU. Taken together, these developments provide advanced computational infrastructure
+that enables surrogate modeling and uncertainty quantification for infinite-dimensional parametric problems, as the
+inputs to our model are, in principle, continuous functions.
+Beyond the results presented in this paper, there are few directions that need further investigation. First, while the
+current UQDeepONet method is mostly based on the original DeepONet architecture of Lu et al. [11], it would be
+interesting to extend it to include the modifications recently proposed in [36, 20] that have been empirically demonstrated to yield better performance. Second, randomized priors are not a concept is only applicable to the DeepONet
+13
+
+A PREPRINT - M ARCH 8, 2022
+
+Figure 6: Reaction-diffusion dynamics: Worst case scenario prediction. Top panel: Ground truth solution and
+UQDeepONet predictive mean. Middle panel: Absolute error between the ground truth solution and the UQDeepONet predictive mean, as well as the UQDeepONet predictive uncertainty. Bottom panel: Ground truth solution (blue),
+UQDeepONet predictive mean (red dashed) and uncertainty (yellow shade) at t = 0.25, t = 0.50 and t = 0.75.
+
+model, but could be also enable scalable uncertainty quantification for other operator learning frameworks, such as
+the Fourier Neural Operator [17] or the attention-based architecture LOCA [10]. Third, several advanced tools for
+efficient optimization and stabilization of the training dynamics, such as the Neural Tangent Kernel approach [64, 20]
+and hierarchical incremental gradient descent [65], could be considered for achieving better predictive accuracy and
+further accelerate the training process of multiple neural networks. One current limitation that warrants attention in
+future work is the limited ability of DeepONet and other operator learning techniques to receive input functions whose
+domain is very high-dimensional. To this end, dimension reduction or low-rank approximation techniques can be
+employed to reduce computational complexity. Finally, while uncertainty quantification is predominately used for
+providing prediction error bars and confidence intervals, it also plays a prominent role in decision making and the
+judicious acquisition of new data. To this end, the question of how to acquire informative data for operator learning
+tasks is currently under-explored and calls for further investigation in the future.
+
+Acknowledgements
+The authors would like to acknowledge support from the US Department of Energy under the Advanced Scientific
+Computing Research program (grant DE-SC0019116), the US Air Force (grant AFOSR FA9550-20-1-0060), and US
+Department of Energy/Advanced Research Projects Agency (grant DE-AR0001201). We also thank the developers of
+the software that enabled our research, including JAX [66], Matplotlib [67] and NumPy [68].
+14
+
+A PREPRINT - M ARCH 8, 2022
+
+Figure 7: Burgers’ transport dynamics: UQDeepONet predictions for representative examples in the test data-set (top
+to bottom rows). For each example, we present a comparison between the ground truth solution (blue), the predictive
+mean of the UQDeepONet (red dashed), and the predictive UQDeepONet uncertainty (yellow shade), for t = 0.25,
+t = 0.50 and t = 0.75.
+
+15
+
+A PREPRINT - M ARCH 8, 2022
+
+Figure 8: Climate modeling: UQDeepONet predictions for representative examples in the test data-set (top to bottom
+rows). For each example, we present a comparison between the reference surface air pressure (blue), the predictive
+mean of the UQDeepONet (red dashed), and the predictive UQDeepONet uncertainty (yellow shade), for latitude =
+40o N , latitude = 0o and latitude = 40o S.
+
+References
+[1] Alex Krizhevsky, Ilya Sutskever, and Geoffrey E Hinton. Imagenet classification with deep convolutional neural
+networks. In F. Pereira, C. J. C. Burges, L. Bottou, and K. Q. Weinberger, editors, Advances in Neural Information
+Processing Systems 25, pages 1097–1105. Curran Associates, Inc., 2012.
+[2] Sepp Hochreiter and Jürgen Schmidhuber. Long short-term memory. Neural Computation, 9:1735–1780, 1997.
+[3] Richard Sutton and Andrew Barto. Reinforcement learning: An introduction. MIT Press, Cambridge, MA, 2018.
+[4] Rafael Gómez-Bombarelli, Jennifer N Wei, David Duvenaud, José Miguel Hernández-Lobato, Benjamı́n
+Sánchez-Lengeling, Dennis Sheberla, Jorge Aguilera-Iparraguirre, Timothy D Hirzel, Ryan P Adams, and Alán
+Aspuru-Guzik. Automatic chemical design using a data-driven continuous representation of molecules. ACS
+Central Science, 2016.
+[5] Alain Chaboud, Benjamin Chiquoine, Erik Hjalmarsson, and Clara Vega. Rise of the machines: Algorithmic
+trading in the foreign exchange market. The Journal of Finance, 69:2045–2084, 2014.
+[6] Steven L Brunton, Joshua L Proctor, and J Nathan Kutz. Discovering governing equations from data by sparse
+identification of nonlinear dynamical systems. Proceedings of the National Academy of Sciences, 113(15):3932–
+3937, 2016.
+[7] Jiequn Han, Arnulf Jentzen, and E Weinan. Solving high-dimensional partial differential equations using deep
+learning. Proceedings of the National Academy of Sciences, 115(34):8505–8510, 2018.
+16
+
+A PREPRINT - M ARCH 8, 2022
+
+[8] Maziar Raissi, Paris Perdikaris, and George E Karniadakis. Physics-informed neural networks: A deep learning
+framework for solving forward and inverse problems involving nonlinear partial differential equations. Journal
+of Computational Physics, 378:686–707, 2019.
+[9] Tianping Chen and Hong Chen. Universal approximation to nonlinear operators by neural networks with arbitrary
+activation functions and its application to dynamical systems. IEEE Transactions on Neural Networks, 6(4):911–
+917, 1995.
+[10] Georgios Kissas, Jacob Seidman, Leonardo Ferreira Guilhoto, Victor M. Preciado, George J. Pappas, and Paris
+Perdikaris. Learning operators with coupled attention, 2022.
+[11] Lu Lu, Pengzhan Jin, Guofei Pang, Zhongqiang Zhang, and George Em Karniadakis. Learning nonlinear operators via DeepONet based on the universal approximation theorem of operators. Nature Machine Intelligence,
+3(3):218–229, 2021.
+[12] Nikola Kovachki, Zongyi Li, Burigede Liu, Kamyar Azizzadenesheli, Kaushik Bhattacharya, Andrew Stuart, and Anima Anandkumar. Neural operator: Learning maps between function spaces. arXiv preprint
+arXiv:2108.08481, 2021.
+[13] P Clark Di Leoni, Lu Lu, Charles Meneveau, George Karniadakis, and Tamer A Zaki. DeepONet prediction of
+linear instability waves in high-speed boundary layers. arXiv preprint arXiv:2105.08697, 2021.
+[14] Chensen Lin, Zhen Li, Lu Lu, Shengze Cai, Martin Maxey, and George Em Karniadakis. Operator learning for
+predicting multiscale bubble growth dynamics. The Journal of Chemical Physics, 154(10):104118, 2021.
+[15] Zhiping Mao, Lu Lu, Olaf Marxen, Tamer A Zaki, and George Em Karniadakis. Deepm&mnet for hypersonics:
+Predicting the coupled flow and finite-rate chemistry behind a normal shock using neural-network approximation
+of operators. Journal of Computational Physics, 447:110698, 2021.
+[16] Zongyi Li, Nikola Kovachki, Kamyar Azizzadenesheli, Burigede Liu, Kaushik Bhattacharya, Andrew Stuart, and
+Anima Anandkumar. Neural operator: Graph kernel network for partial differential equations. arXiv preprint
+arXiv:2003.03485, 2020.
+[17] Zongyi Li, Nikola Kovachki, Kamyar Azizzadenesheli, Burigede Liu, Kaushik Bhattacharya, Andrew Stuart,
+and Anima Anandkumar. Fourier neural operator for parametric partial differential equations. arXiv preprint
+arXiv:2010.08895, 2020.
+[18] Chunyuan Li. Towards Better Representations with Deep/Bayesian Learning. PhD thesis, Duke University, 2018.
+[19] Dzmitry Bahdanau, Kyunghyun Cho, and Yoshua Bengio. Neural machine translation by jointly learning to align
+and translate. arXiv preprint arXiv:1409.0473, 2014.
+[20] Sifan Wang, Hanwen Wang, and Paris Perdikaris. Improved architectures and training algorithms for deep
+operator networks. arXiv preprint arXiv:2110.01654, 2021.
+[21] Apostolos F Psaros, Xuhui Meng, Zongren Zou, Ling Guo, and George Em Karniadakis. Uncertainty quantification in scientific machine learning: Methods, metrics, and comparisons. arXiv preprint arXiv:2201.07766,
+2022.
+[22] Craig R Fox and Gülden Ülkümen. Distinguishing two dimensions of uncertainty. Fox, Craig R. and Gülden
+Ülkümen (2011),“Distinguishing Two Dimensions of Uncertainty,” in Essays in Judgment and Decision Making,
+Brun, W., Kirkebøen, G. and Montgomery, H., eds. Oslo: Universitetsforlaget, 2011.
+[23] Subhash R Lele. How should we quantify uncertainty in statistical inference? Frontiers in Ecology and Evolution,
+8:35, 2020.
+[24] Alex Kendall and Yarin Gal. What uncertainties do we need in Bayesian deep learning for computer vision?
+arXiv preprint arXiv:1703.04977, 2017.
+[25] Yijun Xiao and William Yang Wang. Quantifying uncertainties in natural language processing tasks. In Proceedings of the AAAI Conference on Artificial Intelligence, volume 33, pages 7322–7329, 2019.
+[26] Maziar Raissi and George Em Karniadakis. Hidden physics models: Machine learning of nonlinear partial
+differential equations. Journal of Computational Physics, 357:125–141, 2018.
+[27] Yibo Yang and Paris Perdikaris. Adversarial uncertainty quantification in physics-informed neural networks.
+Journal of Computational Physics, 394:136–152, 2019.
+[28] Yibo Yang and Paris Perdikaris. Physics-informed deep generative models. arXiv preprint arXiv:1812.03511,
+2018.
+[29] Antoine Blanchard and Themistoklis Sapsis. Bayesian optimization with output-weighted importance sampling.
+Journal of Computational Physics, 425:109901, 2021.
+17
+
+A PREPRINT - M ARCH 8, 2022
+
+[30] Yibo Yang, Antoine Blanchard, Themistoklis Sapsis, and Paris Perdikaris. Output-weighted sampling for multiarmed bandits with extreme payoffs. arXiv preprint arXiv:2102.10085, 2021.
+[31] Soumalya Sarkar, Sudeepta Mondal, Michael Joly, Matthew E Lynch, Shaunak D Bopardikar, Ranadip Acharya,
+and Paris Perdikaris. Multifidelity and multiscale Bayesian framework for high-dimensional engineering design
+and calibration. Journal of Mechanical Design, 141(12), 2019.
+[32] Guang Lin, Christian Moya, and Zecheng Zhang. Accelerated replica exchange stochastic gradient Langevin
+diffusion enhanced Bayesian DeepONet for solving noisy parametric pdes. arXiv preprint arXiv:2111.02484,
+2021.
+[33] Christian Moya, Shiqi Zhang, Meng Yue, and Guang Lin. DeepONet-Grid-UQ: a trustworthy deep operator
+framework for predicting the power grid’s post-fault trajectories. arXiv preprint arXiv:2202.07176, 2022.
+[34] Ian Osband, John Aslanides, and Albin Cassirer. Randomized prior functions for deep reinforcement learning.
+In S. Bengio, H. Wallach, H. Larochelle, K. Grauman, N. Cesa-Bianchi, and R. Garnett, editors, Advances in
+Neural Information Processing Systems, volume 31. Curran Associates, Inc., 2018.
+[35] Kamil Ciosek, Vincent Fortuin, Ryota Tomioka, Katja Hofmann, and Richard Turner. Conservative uncertainty
+estimation by fitting prior networks. In International Conference on Learning Representations, 2019.
+[36] Lu Lu, Xuhui Meng, Shengze Cai, Zhiping Mao, Somdatta Goswami, Zhongqiang Zhang, and George Em
+Karniadakis. A comprehensive and fair comparison of two neural operators (with practical extensions) based on
+fair data. arXiv preprint arXiv:2111.05512, 2021.
+[37] Xavier Glorot and Yoshua Bengio. Understanding the difficulty of training deep feedforward neural networks.
+In Proceedings of the thirteenth international conference on artificial intelligence and statistics, pages 249–256,
+2010.
+[38] Diederik P Kingma and Jimmy Ba. Adam: A method for stochastic optimization. arXiv preprint
+arXiv:1412.6980, 2014.
+[39] Jasper Snoek, Oren Rippel, Kevin Swersky, Ryan Kiros, Nadathur Satish, Narayanan Sundaram, Mostofa Patwary, Mr Prabhat, and Ryan Adams. Scalable Bayesian optimization using deep neural networks. In International
+conference on machine learning, pages 2171–2180. PMLR, 2015.
+[40] Carlos Riquelme, George Tucker, and Jasper Snoek. Deep Bayesian bandits showdown: An empirical comparison of Bayesian deep networks for Thompson sampling. arXiv preprint arXiv:1802.09127, 2018.
+[41] Ian Osband, Zheng Wen, Seyed Mohammad Asghari, Vikranth Dwaracherla, Botao Hao, Morteza Ibrahimi, Dieterich Lawson, Xiuyuan Lu, Brendan O’Donoghue, and Benjamin Van Roy. Evaluating predictive distributions:
+Does Bayesian deep learning work? arXiv preprint arXiv:2110.04629, 2021.
+[42] Radford M Neal. Bayesian learning for neural networks, volume 118. Springer Science & Business Media,
+2012.
+[43] Liu Yang, Xuhui Meng, and George Em Karniadakis. B-PINNs: Bayesian physics-informed neural networks for
+forward and inverse pde problems with noisy data. Journal of Computational Physics, 425:109913, 2021.
+[44] Geoffrey E Hinton and Drew Van Camp. Keeping the neural networks simple by minimizing the description
+length of the weights. In Proceedings of the sixth annual conference on Computational learning theory, pages
+5–13, 1993.
+[45] Charles Blundell, Julien Cornebise, Koray Kavukcuoglu, and Daan Wierstra. Weight uncertainty in neural networks. arXiv preprint arXiv:1505.05424, 2015.
+[46] Balaji Lakshminarayanan, Alexander Pritzel, and Charles Blundell. Simple and scalable predictive uncertainty
+estimation using deep ensembles. arXiv preprint arXiv:1612.01474, 2016.
+[47] Stanislav Fort, Huiyi Hu, and Balaji Lakshminarayanan. Deep ensembles: A loss landscape perspective. arXiv
+preprint arXiv:1912.02757, 2019.
+[48] Nitish Srivastava, Geoffrey Hinton, Alex Krizhevsky, Ilya Sutskever, and Ruslan Salakhutdinov. Dropout: a
+simple way to prevent neural networks from overfitting. The journal of machine learning research, 15(1):1929–
+1958, 2014.
+[49] Yarin Gal and Zoubin Ghahramani. Dropout as a Bayesian approximation: Representing model uncertainty in
+deep learning. In international conference on machine learning, pages 1050–1059. PMLR, 2016.
+[50] Carl Edward Rasmussen. Gaussian processes in machine learning. In Olivier Bousquet, Ulrike von Luxburg,
+and Gunnar Rätsch, editors, Advanced Lectures on Machine Learning: ML Summer Schools 2003, Canberra,
+Australia, February 2 - 14, 2003, Tübingen, Germany, August 4 - 16, 2003, Revised Lectures, pages 63–71.
+Springer Berlin Heidelberg, Berlin, Heidelberg, 2004.
+18
+
+A PREPRINT - M ARCH 8, 2022
+
+[51] Pavel Izmailov, Dmitrii Podoprikhin, Timur Garipov, Dmitry Vetrov, and Andrew Gordon Wilson. Averaging
+weights leads to wider optima and better generalization. arXiv preprint arXiv:1803.05407, 2018.
+[52] Wesley J Maddox, Pavel Izmailov, Timur Garipov, Dmitry P Vetrov, and Andrew Gordon Wilson. A simple
+baseline for Bayesian uncertainty in deep learning. Advances in Neural Information Processing Systems, 32,
+2019.
+[53] Ian Goodfellow, Jean Pouget-Abadie, Mehdi Mirza, Bing Xu, David Warde-Farley, Sherjil Ozair, Aaron
+Courville, and Yoshua Bengio. Generative adversarial nets. In Z. Ghahramani, M. Welling, C. Cortes, N. D.
+Lawrence, and K. Q. Weinberger, editors, Advances in Neural Information Processing Systems 27, pages 2672–
+2680. Curran Associates, Inc., 2014.
+[54] Ian Osband, Charles Blundell, Alexander Pritzel, and Benjamin Van Roy. Deep exploration via bootstrapped
+dqn. In Advances in Neural Information Processing Systems, pages 4026–4034, 2016.
+[55] Joel Smoller. Shock waves and reaction—diffusion equations, volume 258. Springer Science & Business Media,
+2012.
+[56] Bartosz A Grzybowski. Chemistry in motion: reaction-diffusion systems for micro-and nanotechnology. John
+Wiley & Sons, 2009.
+[57] Shigeru Kondo and Takashi Miura. Reaction-diffusion model as a framework for understanding biological pattern
+formation. science, 329(5999):1616–1620, 2010.
+[58] Robert Stephen Cantrell and Chris Cosner. Spatial ecology via reaction-diffusion equations. John Wiley & Sons,
+2004.
+[59] Johannes Martinus Burgers. A mathematical model illustrating the theory of turbulence. In Richard von Mises
+and Theodore von Karman, editors, Advances in applied mechanics, volume 1, pages 171–199. Elsevier, 1948.
+[60] Gerald Beresford Whitham. Linear and nonlinear waves. John Wiley & Sons, 2011.
+[61] Mark F Hamilton, David T Blackstock, et al. Nonlinear acoustics, volume 237. Academic press San Diego,
+1998.
+[62] Michael James Lighthill and Gerald Beresford Whitham. On kinematic waves ii. a theory of traffic flow on long
+crowded roads. Proceedings of the Royal Society of London. Series A. Mathematical and Physical Sciences,
+229(1178):317–345, 1955.
+[63] Sifan Wang, Hanwen Wang, and Paris Perdikaris. On the eigenvector bias of Fourier feature networks: From
+regression to solving multi-scale PDEs with physics-informed neural networks. Computer Methods in Applied
+Mechanics and Engineering, 384:113938, 2021.
+[64] Arthur Jacot, Franck Gabriel, and Clément Hongler. Neural tangent kernel: Convergence and generalization in
+neural networks. Advances in neural information processing systems, 31, 2018.
+[65] Weijie J Su and Yuancheng Zhu. Uncertainty quantification for online learning and stochastic approximation via
+hierarchical incremental gradient descent. arXiv preprint arXiv:1802.04876, 2018.
+[66] James Bradbury, Roy Frostig, Peter Hawkins, Matthew James Johnson, Chris Leary, Dougal Maclaurin, George
+Necula, Adam Paszke, Jake VanderPlas, Skye Wanderman-Milne, and Qiao Zhang. JAX: composable transformations of Python+NumPy programs, 2018.
+[67] John D Hunter. Matplotlib: A 2D graphics environment. IEEE Annals of the History of Computing, 9(03):90–95,
+2007.
+[68] Charles R Harris, K Jarrod Millman, Stéfan J van der Walt, Ralf Gommers, Pauli Virtanen, David Cournapeau,
+Eric Wieser, Julian Taylor, Sebastian Berg, Nathaniel J Smith, et al. Array programming with numpy. Nature,
+585(7825):357–362, 2020.
+[69] Carl Edward Rasmussen and Christopher Williams. Gaussian processes for machine learning. MIT Press,
+Cambridge, MA, 2006.
+[70] Tobin A Driscoll, Nicholas Hale, and Lloyd N Trefethen. Chebfun guide, 2014.
+[71] Eugenia Kalnay, Masao Kanamitsu, Robert Kistler, William Collins, Dennis Deaven, Lev Gandin, Mark Iredell,
+Suranjana Saha, Glenn White, John Woollen, et al. The ncep/ncar 40-year reanalysis project. Bulletin of the
+American meteorological Society, 77(3):437–472, 1996.
+
+19
+
+A PREPRINT - M ARCH 8, 2022
+
+A
+
+Parallel implementation and computational cost
+
+We demonstrate the performance of our implementation for the anti-derivative benchmark by presenting the wall-clock
+time needed for the training of a UQDeepONet with different ensemble sizes in table 5. We observe that the method
+is computationally efficient as the cost exhibits a near-linear scaling with the number networks in the ensemble, e.g.
+the wall-clock time for training 64 DeepONet on a single GPU is just 4 times larger than training a single DeepONet.
+Moreover, the parallel training of a UQDeepONet ensemble with 512 networks finishes within half an hour, which
+indicates the efficiency of the method. The computational cost mainly consists of two parts: (1) the cost for training
+the neural networks in the UQDeepONet ensemble, (2) the cost of fetching different mini-batches of training data at
+each gradient descent iteration. We notice that for small ensemble sizes, the cost of training neural networks is roughly
+in the same order of the cost needed to fetch data batches, indicating that a small number of networks is not sufficient
+to efficiently utilize the full capacity of a GPU. To this end, better hardware utilization is observed as the ensemble
+size is increased, indicating better parallel performance and the observed linear scaling.
+Table 5: Training time of a UQDeepONet for different ensemble sizes.
+
+1
+
+2
+
+4
+
+8
+
+16
+
+32
+
+64
+
+128
+
+256
+
+512
+
+48.66
+
+56.52
+
+53.45
+
+53.09
+
+68.46
+
+106.11
+
+172.53
+
+315.74
+
+597.74
+
+1160.53
+
+Ensemble size
+Training time (sec)
+
+B
+
+Effect of the scaling parameter β
+
+In this section, we study how the different values of the β hyper-parameter in the randomized prior networks affects
+the model output (see equations 9 and 10). While the default β value used in the literature is 1 [34, 41, 35], here we
+examine the performance of different setting, such as 0.1, 0.5 and 10, to test the sensitivity of the results this choice.
+Figure 9, shows the prediction of UQDeepONet on a randomly chosen testing input/output function pair. We observe
+that the results are not sensitive to β when it takes values in O(1), while an excessively large value of β will inevitably
+lead to increasingly conservative uncertainty estimates. This is expected as the contribution of the fixed prior networks
+in equations 9 and 10 will exhibit increasingly high variance, casting a great difficulty to the trainable network to fit
+data. In practice, for the purpose of obtaining reliable uncertainty estimates, the fixed prior network is assumed to
+have the same scale as the trainable network after being properly initialized. Without a loss of generality, we adopt the
+default setting used in the literature and set β = 1.0 throughout all experiments in this manuscript.
+= 0.1
+
+= 0.5
+
+= 10
+
+Figure 9: Effect of the scaling parameter β: Prediction of a trained UQDeepONet for a randomly chosen example in
+the test data-set of the anti-derivative benchmark. From left to right: β = 0.1, β = 0.5 and β = 10. The red dashed
+lines represent the predicted mean, the blue solid lines represent the reference solution, and the yellow shaded areas
+represent two standard deviations of the UQDeepONet predictions.
+
+C
+
+Data generation
+
+In this section, we provide details on how we generate the training and testing data for all numerical experiments
+considered in this work.
+20
+
+A PREPRINT - M ARCH 8, 2022
+
+C.1
+
+Reaction-diffusion dynamics
+
+A training data-set is constructed by generating random source term functions u(x) from a Gaussian processes prior
+[69] with an exponential quadratic kernel using a length-scale parameter of l = 0.2. Each realization is then recorded
+on an equi-spaced grid of m = 500 sensor locations. We numerically solve the system of equations (14) using second
+order finite differences to obtain discrete measurements on a 100 × 100 grid for training. As such, we generate
+N = 1, 000 input/output function pairs for training the UQDeepONet model, and another 1, 000 pairs for testing its
+performance.
+C.2
+
+Burgers’ transport dynamics
+
+Training and testing data-sets are generated by sampling random initial condition functions u(x) from a Gaussian
+Random Field u ∼ N (0, 252 (−∆ + 25I)−2 ) on a 100 × 100 grid, and using them as input to solve the Burgers’
+equation using a spectral numerical solver (Chebfun package in Matlab [70]) to obtain ground truth estimates for the
+target solution s(x, t). As such, we construct a training data-set consisting of N = 1, 000 input/output function pairs,
+and a testing data-set consisting of another N = 1, 000 pairs.
+C.3
+
+Climate modeling
+
+Training and testing data-sets are obtained from the Physical Sciences Laboratory database [71] 1 which contains daily
+measurements of surface air temperature and pressure from years 2000 to 2010. Our training data-set is constructed
+by taking measurements from 2000 to 2005 to obtain N = 1, 825 input/output function pairs evaluated on a 2.5 degree
+latitude and 2.5 degrees longitude (144 × 72) grid, which we then sub-sample to a 72 × 72 grid. Similarly, our testing
+data-set comprises daily measurements from 2005 to 2010 which are pre-processed in an equivalent manner to obtain
+N = 1, 825 input/output function pairs on a 72 × 72 grid.
+
+D
+
+Out-of-distribution detection
+
+Similar to the reaction-diffusion equation example in section 3.2, here we also report out-of distribution detection
+results for the Burgers’ transport and climate modeling benchmarks.
+D.1
+
+Burgers’ transport dynamics
+
+We identify the function sample in the testing data-set for which the UQDeepONet prediction provides the highest
+relative error, equal to 21.6%. For this example, Figure 10 presents a comparison between the ground truth solution
+and the UQDeepONet predictive mean, as well as the absolute point-wise error and the corresponding UQDeepONet
+predictive uncertainty. We observe that the target output function in this case not only exhibits very small magnitude,
+but also exhibits different frequencies than most examples in the training and testing data-sets. This justifies the poor
+predictive mean predictions we see in this case. However, the lack of accuracy is clearly reflected in the high predictive
+uncertainty reported by the UQDeepONet model, whose distribution seems to correlate well with the absolute pointwise error. In realistic scenarios where the ground truth solution may be unknown, we argue that one cannot simply
+rely on using deterministic DeepONet predictions as those provide no indication of whether the model is confident
+in what it predicts or not. This highlights the crucial aspect of uncertainty quantification provided by UQDeepONet,
+which makes them suitable to adopt for risk-sensitive applications.
+D.2
+
+Climate modeling
+
+We identify the function sample in the testing data-set that the UQDeepONet model provides the highest relative
+error, equal to 13.1%. We present a comparison between the model prediction and the baseline output function, as
+well as the absolute error and the uncertainty estimate in figure 11. Moreover, we observe that the model provided
+realistic uncertainty estimates nearly everywhere that there is a discrepancy between the predicted mean and the
+baseline measurements. In this example, both the measurements of the input and the output functions are noisy, which
+motivates the use of UQDeepONet in real world applications where learning a black-box operator is needed.
+
+1
+
+https://psl.noaa.gov/data/gridded/data.ncep.reanalysis.html
+
+21
+
+A PREPRINT - M ARCH 8, 2022
+
+Figure 10: Burgers’ transport dynamics: Worst case scenario prediction. Top panel: Ground truth solution and
+UQDeepONet predictive mean. Middle panel: Absolute error between the ground truth solution and the UQDeepONet
+predictive mean, as well as the UQDeepONet predictive uncertainty. Bottom panel: Ground truth solution (blue),
+UQDeepONet predictive mean (red dashed) and uncertainty (yellow shade) at t = 0.25, t = 0.50 and t = 0.75.
+
+22
+
+A PREPRINT - M ARCH 8, 2022
+
+Figure 11: Climate modeling: Worst case scenario prediction. Top panel: Reference surface air pressure and UQDeepONet predictive mean. Middle panel: Absolute error between the reference surface air pressure and the UQDeepONet
+predictive mean, as well as the UQDeepONet predictive uncertainty. Bottom panel: Reference surface air pressure
+(blue), UQDeepONet predictive mean (red dashed) and uncertainty (yellow shade) at latitude = 40o N , latitude = 0o
+and latitude = 40o S.
+
+23
+
+

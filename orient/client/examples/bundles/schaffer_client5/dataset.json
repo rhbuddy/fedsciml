@@ -1,0 +1,14 @@
+{
+  "problem": "schaffer",
+  "n_samples": 2000,
+  "domain": {
+    "x1_interval": [
+      1.2000000000000002,
+      2.0
+    ],
+    "x2_interval": [
+      -2.0,
+      2.0
+    ]
+  }
+}

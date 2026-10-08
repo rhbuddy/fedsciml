@@ -1,0 +1,3198 @@
+arXiv:2204.06684v1 [physics.comp-ph] 14 Apr 2022
+
+Multifidelity deep neural operators for efficient learning of partial
+differential equations with application to fast inverse design of
+nanoscale heat transport
+Lu Lu1,* , Raphaël Pestourie2 , Steven G. Johnson2 , and Giuseppe Romano3
+1
+
+Department of Chemical and Biomolecular Engineering, University of Pennsylvania,
+Philadelphia, PA 19104, USA
+2
+Department of Mathematics, Massachusetts Institute of Technology, Cambridge, MA
+02139, USA
+3
+Institute for Soldier Nanotechnologies, Massachusetts Institute of Technology, Cambridge,
+MA 02139, USA
+*
+Corresponding author. Email: lulu1@seas.upenn.edu
+
+Abstract
+Deep neural operators can learn operators mapping between infinite-dimensional function
+spaces via deep neural networks and have become an emerging paradigm of scientific machine
+learning. However, training neural operators usually requires a large amount of high-fidelity
+data, which is often difficult to obtain in real engineering problems. Here, we address this
+challenge by using multifidelity learning, i.e., learning from multifidelity datasets. We develop
+a multifidelity neural operator based on a deep operator network (DeepONet). A multifidelity
+DeepONet includes two standard DeepONets coupled by residual learning and input augmentation. Multifidelity DeepONet significantly reduces the required amount of high-fidelity data
+and achieves one order of magnitude smaller error when using the same amount of high-fidelity
+data. We apply a multifidelity DeepONet to learn the phonon Boltzmann transport equation
+(BTE), a framework to compute nanoscale heat transport. By combining a trained multifidelity
+DeepONet with genetic algorithm or topology optimization, we demonstrate a fast solver for
+the inverse design of BTE problems.
+
+1
+
+Introduction
+
+Scientific machine learning (SciML) has become an emerging research field, where deep learning
+in the form of deep neural networks (DNNs) is used to address challenging problems in computational science and engineering [1]. In the past a few years, different SciML methods have been
+proposed [1]. One notable method is physics-informed neural networks (PINNs) [2, 3, 1], which
+have been developed to solve both forward and inverse problems of ordinary and partial differential
+equations (ODEs and PDEs). PINNs and the extensions [4, 5, 6, 7] have been applied to solve
+diverse scientific and engineering applications [1, 8, 9, 10].
+More recently, learning operators mapping between infinite-dimensional function spaces via
+DNNs has become a new and important paradigm of SciML [11, 12, 13]. DNNs of this type are
+called deep neural operators. A typical application of deep neural operators for PDEs is used as
+a surrogate solver of the PDE, mapping from initial conditions, boundary conditions, or forcing
+1
+
+terms to the PDE solution. Different architectures of deep neural operators have been developed, such as deep operator networks (DeepONet) [11, 12, 14], Fourier neural operators [13, 14],
+nonlocal kernel networks [15], and several others [16, 17, 18]. Among these deep neural operators, DeepONet was the first one to be proposed (in 2019) [11], and many subsequent extensions
+and improvements have been developed, such as DeepONet with proper orthogonal decomposition (POD-DeepONet) [14], DeepONet for multiple-input operators (MIONet) [19], DeepONet for
+multi-physics problems via physics decomposition (DeepM&Mnet) [20, 21], DeepONet with uncertainty quantification [22, 23, 24], multiscale DeepONet [25], POD-DeepONet with causality [26],
+and physics-informed DeepONet [27, 28].
+DeepONet and its extensions have demonstrated good performance in diverse applications, such
+as fractional-derivative operators [12], stochastic differential equations [12], high-speed boundarylayer problems [29], multiscale bubble growth dynamics [30, 31], solar-thermal systems [32], aortic
+dissection [33], multiphysics and multiscale problems of electroconvection [20] and hypersonics [21],
+power grids [23], and multiscale modeling of mechanics problems [34]. It has also been theoretically
+proved that DeepONet may break the curse of dimensionality in some PDEs [35, 36, 37].
+Despite this computational and theoretical progress, training DeepONet usually requires a large
+amount of data to achieve a good accuracy. However, in many engineering problems, it is often
+difficult to obtain necessary data of high accuracy. In these situations, it may be advantageous
+to complement the high-fidelity dataset (small and accurate) by employing a low-fidelity dataset
+(larger and less accurate), i.e., learning from multifidelity datasets [38, 39, 40]. Multifidelity learning
+can be used in diverse applications and scenarios. For example, the high-fidelity dataset might be
+obtained from simulations with fine mesh, while the low-fidelity dataset is from simulations with
+coarse mesh. In Ref. [40], the high-fidelity dataset is from experiments and 3D simulations, while
+the low-fidelity dataset is from 2D simulations and analytical solutions. Multifidelity learning by
+neural networks has been developed for function approximation in Refs. [39, 40]. Another recent
+approach to data efficiency using a low-fidelity solver trains a combination of a generative neural
+network and a low-fidelity solver, end-to-end, to match the limited data of a high-fidelity solver [41].
+In this work, we aim to alleviate the challenge of large datasets required for training DeepONet.
+We propose new algorithms to significantly reduce the required number of high-fidelity data. Specifically, we develop a new version of DeepONet by using residual learning and input augmentation,
+that is capable of fusing together different sets of data with different fidelity levels, making the
+proposed multifidelity DeepONet very efficient for learning complex systems.
+As an application, we apply multifidelity DeepONet to learn heat transport in nanostructured
+materials, described by the phonon Boltzmann-transport equation (BTE) [42]. We first train a
+multifidelity DeepONet to predict the map of magnitude of thermal flux in a Si nanoporous system;
+then, the trained DeepONet is employed with genetic algorithms and topology optimization for
+inverse design of materials to maximize heat transport over prescribed points with a constrained
+number of pores. Our method is validated against numerical BTE simulations. We note that the
+same DeepONet can be used for multiple inverse design tasks without the need for retraining.
+Potential applications in this area include energy harvesting and heat management [43, 44, 45].
+The paper is organized as follows. In Section 2, after introducing the algorithm of DeepONet, we
+present the setup of multifidelity learning and a few different approaches of multifidelity DeepONet.
+Then we discuss how to apply the trained DeepONet for inverse design. In Section 3, we compare
+different approaches of multifidelity DeepONet and demonstrate the effectiveness on a Poisson
+equation and BTE problem. Subsequently, we solve several inverse design problems of BTE for
+different objective functions. Finally, we conclude the paper in Section 4.
+
+2
+
+2
+
+Methods
+
+We first introduce DeepONet and then present different approaches of multifidelity learning for
+DeepONet. We also discuss how to use the learned multifidelity DeepONet for inverse design.
+
+2.1
+
+DeepONet
+
+DeepONet was proposed in Ref. [12] for learning nonlinear operators mapping from a function to
+another function, e.g., from the boundary/initial condition to the PDE solution. We denote the
+input function by v defined on the domain D ∈ Rd :
+v : D 3 x 7→ v(x) ∈ R,
+0
+
+and the output function by u defined on the domain D0 ∈ Rd :
+u : D0 3 ξ 7→ u(ξ) ∈ R.
+Let V and U be the spaces of v and u, respectively, and then the operator is
+G : V 3 v 7→ u ∈ U.
+DeepONet is used to learn the mapping G from a dataset of v and u. In a DeepONet, there are
+two sub-networks: a branch net and a trunk net (Fig. 1A). The branch net takes the evaluations
+of v at {x1 , x2 , . . . , xm } as its input, while the trunk net takes ξ as its input. Then the DeepONet
+output is an inner product of the branch and trunk outputs
+G(v)(ξ) =
+
+p
+X
+
+bk (v)tk (ξ) + b0 ,
+
+k=1
+
+where b0 as a bias.
+
+2.2
+
+Multifidelity DeepONet
+
+DeepONet can be used to learn diverse nonlinear operators, but it usually requires a large highfidelity dataset for training, which is generated by expensive numerical simulations. Here, we propose multifidelity DeepONet to reduce dramatically the required high-fidelity dataset by leveraging
+an additional low-fidelity dataset.
+2.2.1
+
+Multifidelity learning
+
+The idea of multifidelity learning is that instead of generating a large dataset of high accuracy (i.e.,
+high-fidelity), we only generate a small high-fidelity dataset, but in the meanwhile, we generate
+another dataset of low accuracy (i.e., low-fidelity). The low-fidelity dataset is much cheaper to
+generate, and thus it is easy to generate a large low-fidelity dataset. In short, in multifidelity
+learning, we have two datasets:
+• a high-fidelity dataset of size NH :
+
+
+H
+TH = viH , uH
+i = GH vi
+i=1,2,...,N
+
+H
+
+• a low-fidelity dataset of size NL :
+TL =
+
+
+
+L
+viL , uL
+i = GL vi
+
+3
+
+
+i=1,2,...,NL
+
+A
+
+DeepONet
+b1
+
+v
+
+v(x1 )
+v(x2 )
+···
+v(xm )
+
+Branch net
+
+Residual
+
+v
+
+DeepONetL
+
+GL (v)(ξ)
+
+ξ
+
+DeepONetH
+
++
+
+b2
+
+...
+
+GH (v)(ξ)
+
+bp
+t1
+
+ξ
+
+B
+
+Trunk net
+
+G(v)(ξ) C
+
+×
+
+v
+
+GL (v)
+
+ξ
+
+GL (v)(ξ)
+
+t2
+
+...
+
+Input augmentation
+
+tp
+
+DeepONetH
+
+GH (v)(ξ)
+
+D Multifidelity DeepONet: Residual & Input augmentation
+v
+ξ
+
+DeepONetL
+
+GL (v)(ξ)
+DeepONetH
+
++
+
+GH (v)(ξ)
+
+Figure 1: Architectures of DeepONet and multifidelity DeepONet. (A) Architecture of
+DeepONet, adapted from [12]. (B) A DeepONet learns the residual between the high-fidelity and
+low-fidelity solutions. (C) The low-fidelity solution is used as the extra input of the DeepONet.
+(D) Multifidelity DeepONet uses the residual learning (the red line) and input augmentation (the
+green line).
+where NH  NL . GH (i.e., the original G) is the high-fidelity operator we aim to learn, and GL is
+the low-fidelity operator. Then we use both datasets to learn the operator.
+Because we have a large low-fidelity dataset, it is straightforward to use a DeepONet (DeepONetL )
+to learn GL from TL . Here, we develop two methods to learn GH , including residual learning and
+input augmentation.
+2.2.2
+
+Residual learning
+
+Although the low-fidelity solution is not accurate enough, it captures the basic trend or shape of
+the solution. Instead of directly learning the high-fidelity output, we learn the residual between
+the high-fidelity and low-fidelity outputs:
+R(v)(ξ) = GH (v)(ξ) − GL (v)(ξ).
+We use another DeepONet (DeepONetH ) to learn the residual operator R. Hence, we have
+two DeepONets (DeepONetL and DeepONetH ) (Fig. 1B). DeepONetL is trained using TL , and
+DeepONetH is trained using TH . During the preparation of this manuscript, a new paper [46]
+appeared, which also proposed a similar approach of residual learning for multifidelity DeepONets.
+2.2.3
+
+Input augmentation
+
+For a same input function v, the low-fidelity solution GL (v) and high-fidelity solution GH (v) are
+usually highly correlated. In our residual learning above, therefore, we are exploiting the property
+that GH (v) and GL (v) exhibit similar behaviors, which should make their difference R is easy to
+4
+
+learn. We can also learn this correlation directly from data. Specifically, we use the low-fidelity
+prediction as an additional input of DeepONetH . We can append the low-fidelity prediction to the
+input of the branch net and/or the trunk net (Fig. 1C).
+Approach I. We append the low-fidelity prediction GL (v) (the entire function) to the branch net
+inputs:
+GH (v)(ξ) = Q(v, GL (v))(ξ),
+i.e., the branch net has two functions v and GL (v) as the input. In this study, we directly concatenate
+the discretized v and GL (v).
+Approach II. Instead of using the entire function GL (v), we can also use only the evaluation
+of GL (v) at the location ξ to be predicted, i.e., GL (v)(ξ). In this case, we append GL (v)(ξ) in the
+trunk-net inputs:
+GH (v)(ξ) = Q(v)(ξ, GL (v)(ξ)).
+In our numerical experiments with the Poisson equation in Section 3.1, we find that Approach II
+achieves better accuracy than Approach I.
+2.2.4
+
+Residual learning and input augmentation
+
+We also combine the methods of residual learning and input augmentation Approach II (Fig. 1D),
+where we have two DeepONets: DeepONetL and DeepONetH . DeepONetL learns the low-fidelity
+operator GL , and DeepONetH learns the residual operator R. DeepONetH also uses GL (v)(ξ) as
+one of its inputs of the trunk net. The final prediction of the high-fidelity solution is
+DeepONetL
+
+z }| {
+GH (v)(ξ) = GL (v)(ξ) + R(v)(ξ, GL (v)(ξ) ) .
+| {z } |
+{z
+}
+DeepONetL
+
+(1)
+
+DeepONetH
+
+We can decompose the error of the multifidelity DeepONet EGH by the triangle inequality as
+EGH ≤ EGL + ER ,
+
+(2)
+
+where EGL and ER are the errors of DeepONetL and DeepONetH , respectively. Hence, in order
+to have an accurate multifidelity DeepONet surrogate for GH , both DeepONetL and DeepONetH
+should be trained well.
+
+2.3
+
+Inverse design
+
+Once we have a surrogate model of the operator G, we can predict G(v) for any v within a fraction
+of second. One application is inverse design, which is formulated as an optimization problem:
+max J (u; v),
+v
+
+subject to
+u = G(v).
+We have the flexibility to choose the optimization algorithm.
+
+5
+
+2.3.1
+
+Genetic algorithm
+
+We can use derivative-free optimization algorithm such as genetic algorithm (GA). In this study,
+we consider the canonical genetic algorithm. The algorithm starts from a population of randomly
+generated candidate solutions (called individuals), and then the population is evolved toward better
+solutions. The population in each iteration is called a generation. In each generation, the individuals
+are selected and modified via the operations of mutation and crossover to form a new generation
+in the next iteration. The individuals with higher values of the objective function have higher
+chance to be selected. We terminate the algorithm until a maximum number of generations has
+been produced. For more details of the algorithm, see Ref. [47]. We implement the algorithm using
+the library DEAP [48]. In this work, we choose the population size as 100.
+2.3.2
+
+Gradient-based topology optimization
+
+∂u(ξ)
+Because G is approximated by DeepONets in Eq. (1), we can compute the derivative of ∂v(x
+as
+i)
+
+
+∂GH (v)(ξ)
+∂R(v)(ξ, GL (v)(ξ)) ∂GL (v)(ξ)
+∂R(v)(ξ, GL (v)(ξ))
+=
++
+1+
+,
+∂v(xi )
+∂v(xi )
+∂v(xi )
+∂GL (v)(ξ)
+
+where the three partial derivatives in the right-hand side are computed by automatic differentiation
+∂J
+(AD; also called “backpropagation”). Then we can compute ∂v(x
+by the chain rule and use
+i)
+gradient-based topology optimization (TO) methods.
+In TO, each pixel of the domain is a degree of freedom, where the material property is iteratively
+updated using a gradient-based optimization algorithm, such as the conservative convex separable
+approximations algorithm [49]. In contrast to genetic algorithm, TO uses a continuous relaxation
+optimization scheme, which takes full advantage of the extension from binary inputs to real inputs
+of neural networks. Even though the data only has binary inputs, the neural network defines a
+differentiable continuous function which can return function evaluations and gradient evaluations
+anywhere between the binary inputs. Despite the fact that this continuation is artificial, i.e., nonbinary values do not correspond to any physical materials, we can use this framework to perform
+optimization as long as the end design only contains binary values.
+In order to converge to a binary-input result, TO uses a smoothed approximation of the Heaviside function as a thresholding function, which pushes the design values towards binary values [50]:
+˜ = tanh βη + tanh β(ξ − η) ,
+ξ(ξ)
+tanh βη + tanh β(1 − η)
+
+(3)
+
+where η is a hyperparameter to be fixed in [0, 1], and β ∈ [1, ∞] controls how binary the resulting
+design will be. The larger the β, the stiffer the optimization becomes. In TO, β starts at 1, and is
+successively doubled after each round of optimization, using the optimal design of the last round of
+optimization as a starting point to the next, until the optimum converges to binary values. Although
+the thresholding function is usually sufficient to converge to binary design, it is not guaranteed. In
+the case when the thresholding function is not sufficient to converge to a binary design, a penalty
+¯ ξ)
+˜ = ξ(1
+˜ − ξ)
+˜ is added to the objective function to force the design to be binary.
+function ξ(
+
+3
+
+Results
+
+We apply the proposed multifidelity DeepONet to learn the Poisson equation and Boltzmann transport equation. We then use the learned multifidelity DeepONet for inverse design of thermal transport in nanostructures. All the multifidelity DeepONet codes in this study are implemented by
+6
+
+using the library DeepXDE [3] and will be deposited in GitHub at https://github.com/lu-group/
+multifidelity-deeponet.
+
+3.1
+
+Poisson equation
+
+We first consider a 1D Poisson equation to compare the different multifidelity methods proposed
+in Section 2.2, and demonstrate the effectiveness of multifidelity DeepONet.
+3.1.1
+
+Problem setup
+
+The 1D Poisson equation is described by
+d2 u
+= 20f (x),
+dx2
+
+x ∈ [0, 1],
+
+with the Dirichlet boundary condition u(0) = u(1) = 0. We aim to learn the operator from the
+forcing term f (x) to the PDE solution:
+G : f 7→ u.
+We sample f from a Gaussian random field (GRF) with mean zero:
+f ∼ GP(0, kl (x1 , x2 )),
+
+where the covariance kernel kl (x1 , x2 ) = exp −|x1 − x2 |2 /(2l2 ) is the Gaussian kernel with a
+length-scale parameter l = 0.05. An example of randomly sampled f is shown in Fig. 2A.
+A 2
+
+B
+
+0.2
+0
+
+0
+
+-0.2
+
+f
+
+u
+
+1
+
+-1
+
+-0.4
+
+-2
+
+-0.6
+
+-3
+
+High-fidelity
+Low-fidelity
+
+0
+
+0.2
+
+0.4
+
+x
+
+0.6
+
+0.8
+
+-0.8
+
+1
+
+0
+
+0.2
+
+0.4
+
+x
+
+0.6
+
+0.8
+
+1
+
+Figure 2: Examples of the Poisson equation. (A) An example of randomly sampled f . (B)
+The corresponding low- and high-fidelity solutions.
+We generate the high-fidelity and low-fidelity datasets by solving the Poisson equation via
+the finite difference method with different mesh size ∆x. For the high-fidelity solutions, we use
+∆x = 1/99, and for the low-fidelity solutions, ∆x = 1/9. The low- and high-fidelity solutions for
+the randomly sample f above are shown in Fig. 2B, which shows that the low-fidelity solution has
+a large error. When testing on a large dataset, the mean squared error (m.s.e.) of the low-fidelity
+solver is 0.0233.
+3.1.2
+
+High-fidelity only
+
+Instead of achieving high accuracy, we aim to compare the performance of different approaches
+of multifidelty DeepONet, and thus we generate an extremely small high-fidelity dataset. In the
+7
+
+high-fidelity dataset, we have 500 different samples of f , but for each f , we do not have the full
+field observation of the corresponding solution u, and instead, we only know the value of u(x) at
+one location x randomly sampled in [0, 1].
+Because the dataset is small, we choose both the trunk net and the branch net as shallow fullyconnected neural networks with the SELU activation function [51]. All DeepONets are trained
+with Adam optimizer [52] with a learning rate 10−4 for 50000 epochs. We test DeepONets with
+different width, and the DeepONet with the width 5 has the smallest test m.s.e. of 0.0157 ± 0.0069
+(Fig. 3A). The mean and standard deviation of the error are obtained by 10 runs with randomly
+generated dataset and random network initialization. Larger DeepONets have the issue of overfitting. Because an extremely small dataset has been used, the best DeepONet has similar accuracy
+as the low-fidelity solution.
+3.1.3
+
+Multifidelity
+
+We use the same set up (the same high-fidelity dataset and the same hyperparameters) to test
+different approaches of multifidelity DeepONet. Because a multifidelity DeepONet has a lowfidelity DeepONet (DeepONetL ) and a high-fidelity DeepONet (DeepONetH ), in order to remove
+the interference of DeepONetL , we directly use the low-fidelity solver to replace DeepONetL in
+Figs. 1B, C and D, i.e., we assume that the network DeepONetL is perfect. Because the low-fidelity
+solver can only predict the solution on the 10 locations as shown in Fig. 2B, we perform a linear
+interpolation to compute the low-fidelity solution for other locations (e.g., the dash line in Fig. 2B).
+Residual learning. We first test the residual learning in Section 2.2.2. By learning the residual,
+the error of DeepONet is always about one order of magnitude smaller than the DeepONet with
+high-fidelity only (Fig. 3B) no matter what the network width is. The smallest error (0.0021 ±
+0.0007) is obtained for the width 4.
+Input augmentation. Similarly, we also test the two approaches of input augmentation in Section 2.2.3. We show that the approach I, i.e., using the entire low-fidelity solution as the branch net
+input, does not have any improvement (Fig. 3C). For the approach II of only using the low-fidelity
+solution of the target point as the trunk net input, the smallest test error is 0.0052 ± 0.0033, also
+obtained at the width 5. Input augmentation approach II is uniformly better than high-fidelity
+only (Fig. 3D).
+Residual and Input augmentation (Approach I). We further combine the residual learning
+and the input augmentation (Approach II). When the width is 5, the smallest test m.s.e. is 0.0031
+± 0.0006 (Fig. 3E).
+We show that in this Poisson equation, residual learning and input augmentation approach II
+improve the accuracy of DeepONet, but there is no improvement by combing them. However, as
+we show in the next section, by using both approaches together, we can achieve better accuracy.
+
+3.2
+
+Boltzmann transport equation
+
+When the characteristic length of a semiconductor material approaches the mean-free-path (MFP)
+of heat carriers, i.e., phonons, Fourier’s law breaks down [42]. Here, we learn the nondiffusive
+heat transport with the steady-state phonon Boltzmann transport equation (BTE) by multifidelity
+DeepONet.
+
+8
+
+A
+
+B
+
+Test M.s.e.
+
+10-1
+
+Test M.s.e.
+
+10-1
+
+10-2
+
+10-3
+
+10-2
+
+Low-fidelity
+High-fidelity
+0
+
+5
+
+10
+Network width
+
+15
+
+10-3
+
+20
+
+C
+
+Low-fidelity
+High-fidelity
+Residual
+0
+
+5
+
+10
+Network width
+
+15
+
+20
+
+D
+
+Test M.s.e.
+
+10-1
+
+Test M.s.e.
+
+10-1
+
+10-2
+
+10-3
+
+10-2
+
+Low-fidelity
+High-fidelity
+Input Aug. I
+0
+
+5
+
+10
+Network width
+
+15
+
+20
+
+15
+
+20
+
+10-3
+
+Low-fidelity
+High-fidelity
+Input Aug. II
+0
+
+5
+
+10
+Network width
+
+15
+
+20
+
+E
+Low-fidelity
+Residual
+Input Aug. II
+Res. & Input Aug. II
+
+Test M.s.e.
+
+10-1
+
+10-2
+
+10-3
+
+0
+
+5
+
+10
+Network width
+
+Figure 3: Comparison of different multifidelity methods for DeepONet on the Poisson
+equation. (A) DeepONet trained only with an extremely small high-fidelity dataset. (B) Multifidelity DeepONet with residual learning. (C) Multifidelity DeepONet with input augmentation
+Approach I. (D) Multifidelity DeepONet with input augmentation Approach II. (E) Multifidelity
+DeepONet with residual learning and input augmentation Approach II. The shaded regions represent the one standard deviation of 10 runs with randomly generated dataset and random network
+initialization.
+
+9
+
+3.2.1
+
+Problem setup
+
+Under the relaxation time approximation, BTE is given by [42]
+− vµ · ∇fµ (r) =
+
+fµ (r) − fµ0 (r)
+,
+τµ
+
+(4)
+
+where vµ and τµ are the phonon group velocity and intrinsic scattering time, respectively. The
+label µ indicates both the phonon wave vector and polarization. The unknown of Eq. (4) is the
+nonequilibrium phonon distribution fµ (r). Both the group velocities and the scattering times,
+computed with density functional theory (see Ref. [53] for its application to phonon transport),
+are obtained by AlmaBTE [54] using a wave-vector discretization of 24 × 24 × 24. The equilibrium
+distribution, fµ0 (r), under the assumption of small temperature variation, is given by
+fµ0 (r) =
+
+X
+
+αµ0 fµ0 (r),
+
+µ0
+
+−1
+P
+00 /τµ00
+C
+; the terms Cµ and τµ are the mode-resolved heat capacity
+where αµ0 = Cµ0 /τµ0
+00
+µ
+µ
+and scattering time, respectively [54].
+We consider BTE defined on a rectangular domain (in nm) Ω = [−50, 50] × [−50, 50] with
+periodic boundary conditions in both x and y directions, and a temperature difference of 1K is
+applied along the x -axis. Inside the domain, we have a five by five equispaced arrays of small
+squares (the blue squares in Fig. 4A). Each square is of size (10, 10) and can be a pore without
+any material. Along the wall of the pores, we adopt the totally diffuse boundary conditions [55].
+A
+
+B
+
+0.5
+40
+
+0.5
+40
+
+0.4
+20
+
+0.4
+20
+0.3
+y
+
+y
+
+0.3
+0
+
+0
+
+0.2
+-20
+
+0.2
+-20
+
+0.1
+-40
+
+0.1
+-40
+
+-40 -20
+
+0
+x
+
+20
+
+40
+
+0
+
+-40 -20
+
+0
+x
+
+20
+
+40
+
+0
+
+Figure 4: BTE problem setup and two examples. (A) The computational domain and
+possible pore locations. (B) Two examples of the pore locations and the corresponding flux. The
+dots represent the locations of the mesh nodes.
+We solve Eq. (4) by the finite-volume method implemented in the free/open-source software
+OpenBTE [56], which adopts the source iteration scheme [55], i.e.,
+X
+(n−1)
+τµ vµ · ∇fµ(n) (r) + fµ(n) (r) =
+aµ0 fµ0
+(r).
+(5)
+µ0
+
+P
+Here, we are interested in the heat flux J = V1 µ Cµ vµ fµ (V being a normalization volume),
+and aim to learn the flux for different locations of pores. We generate the dataset by randomly
+sampling the locations of pores. For different number and locations of the pores, we have different
+10
+
+BTE solutions. Each data point in the dataset is a pair of the pore locations and the corresponding
+solution of flux in the mesh nodes. There are in total 225 ≈ 3.4×107 possibilities, and two examples
+of the random pore locations and the corresponding flux is shown in Fig. 4B. Different geometry
+has different mesh, and the mesh nodes of the two examples are the dots in Fig. 4B. In average,
+each mesh has 902 nodes. The high-fidelity solutions are obtained by Eq. (5) solved for 5 iterations,
+while the low-fidelity solutions are obtained with only 2 iterations.
+In DeepONet, the branch net input v = (v1,1 , v1,2 , . . . , v5,5 ) represents the locations of pores. If
+vi,j = 1, then it is a pore, otherwise it is not a pore. We note that when training DeepONet, we
+scale the x and y coordinates from [−50, 50] to [−1, 1] and also normalize the network output to
+zero mean and unit variance.
+3.2.2
+
+Effectiveness of multifidelity learning
+
+We use both the low-fidelity solver and DeepONet only trained with high-fidelity data as the two
+baselines. Compared to the high-fidelity solution, the low-fidelity solution has m.s.e. of 5.09 × 10−3
+(the horizontal dash line in Fig. 5). We train a DeepONet with only high-fidelity solutions, where
+the branch net and the trunk net use ReLU activation function and have 4 layers and 5 layers,
+respectively. DeepONet is trained with Adam optimizer [52] with a learning rate 10−4 for 100000
+epochs. The DeepONet needs about 150 training data to achieve similar accuracy of the low-fidelity
+solver (the solid black line in Fig. 5).
+
+Test M.s.e.
+
+10-2
+
+10-3
+
+10-4
+
+10-5
+
+Low-fidelity
+High-fidelity
+Residual
+
+10
+
+Input aug.
+Res. & Input aug.
+
+100
+1000
+No. of training data
+
+Figure 5: Comparison of different multifidelity methods for DeepONet on BTE.
+We then compare different approaches of multifidelity DeepONet. As discussed in Section 3.1.3,
+for better comparison, here we still use the low-fidelity solver to replace DeepONetL . In the same
+setup, both residual learning and input augmentation approach II improve the accuracy by one order
+of magnitude (Fig. 5). When the dataset is very small (< 100), residual learning is better than
+input augmentation, otherwise input augmentation becomes better. When we use both approaches
+together, we have even better accuracy.
+3.2.3
+
+Multifidelity DeepONet
+
+We have demonstrated the effectiveness of multifidelity DeepONet. As we mentioned above,
+we directly used the exact low-fidelity solver, and here we first train a low-fidelity DeepONet
+(DeepONetL ) and then combine it with DeepONetH to have the multifidelity DeepONet.
+11
+
+Low-fidelity DeepONet. DeepONetL is trained with a dataset of size 10000 solutions. We
+perform a hyperparameter tuning and choose the branch net as 3 layers and the trunk net as 5
+layers. Both the branch net and the trunk net use ReLU activation function and have width 512.
+After training with Adam optimizer [52] with a learning rate 10−4 for 500000 epochs, the testing
+m.s.e. is 4.61 ± 0.21 × 10−5 , and the L2 relative error is 1.91±0.02%.
+The flux satisfies the periodic boundary conditions in x and y directions, and as proposed
+in Ref. [14], we can enforce the periodic BCs in DeepONet by adding a Fourier feature layer.
+Specifically, we use the basis functions of the Fourier series on a 2D square as the first layer of the
+trunk net. By enforcing PBC, test m.s.e. decreases to 3.90 ± 0.15 × 10−5 , and L2 relative error
+becomes 1.72±0.02%.
+Multifidelity DeepONet. To train the high-fidelity DeepONet, we only use a dataset of size
+1000. We use the same setup for DeepONetH as the DeepONetL , except that the branch net is
+chosen as a shallow network. Then the testing m.s.e. of the multifidelity DeepONet is 8.89 ± 0.07 ×
+10−5 , and the L2 relative error is 3.34±0.01%. Furthermore, to verify Eq. (2), we replace DeepONetL
+with the exact low-fidelity solver, then the testing m.s.e. of DeepONetH is 6.00 ± 0.04 × 10−5 and
+L2 relative error is 2.72±0.01%. Hence, we have
+3.34
+±{z0.01%} < 1.72
+±{z0.02%} + |2.72 ±{z0.01%} .
+|
+|
+EGH
+
+EGL
+
+ER
+
+Two examples of the predictions and pointwise absolute errors of multifidelity DeepONet are shown
+in Fig. 6.
+0.4
+
+0.4
+
+0.3
+
+0
+
+0.2
+
+-20
+
+0.1
+
+-40
+
+40
+0.3
+
+20
+y
+
+y
+
+20
+
+0
+
+0.2
+
+-20
+
+0.1
+
+-40
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+0
+
+-20
+
+0
+x
+
+20
+
+40
+
+0.5
+
+0
+
+-40
+
+y
+
+y
+
+0.015
+0
+0.01
+-20
+
+0.1
+-40
+
+0
+
+0
+
+0.02
+
+0.2
+
+0.1
+40
+
+40
+
+0.3
+0
+
+-20
+
+20
+
+20
+
+20
+
+0.2
+
+0
+x
+
+0
+x
+
+0.4
+
+0.3
+
+-20
+
+-20
+
+0.025
+
+20
+
+-40
+
+0.005
+
+40
+
+0.4
+
+-40
+
+0.01
+
+0.5
+
+20
+
+-20
+
+0
+
+-20
+
+40
+
+0
+
+0.015
+
+20
+
+-40
+-40
+
+40
+
+y
+
+0.02
+
+40
+
+y
+
+40
+
+0.005
+-40
+
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+0
+
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+0
+
+Figure 6: Two examples of the predictions and pointwise absolute errors of multifidelity
+DeepONet for BTE. The results in the same row is for the same geometry of pore locations.
+(Left) Reference solutions. (Middle) Predictions of multifidelity DeepONet. (Right) Pointwise
+absolute errors.
+
+12
+
+3.3
+
+Boltzmann transport equation for inverse design
+
+We have trained a multifidelity DeepONet as a surrogate model of BTE. Next we will use it for
+inverse design of thermal transport by optimizing an objective function J :
+max J (u).
+v
+
+Because vi,j is a binary value, this is a discrete optimization problem, and thus we can use algorithms
+like genetic algorithm. Here, we also consider to optimize the continuous relaxation via topology
+optimization. In this section, we consider several different objective functions, and we note that
+the same surrogate model allows for using different objective functions and constraints without
+retraining.
+3.3.1
+
+Rationality of multifidelity DeepONet for continuous optimization algorithms
+
+In topology optimization, we treat vij as a continuous variable defined on [0, 1]. Our surrogate
+model has the capability to predict for any value of vi,j ∈ R, but we only trained the network with
+vi,j ∈ {0, 1}, and thus there is no guarantee that the trained network can predict reasonable values
+for vi,j ∈ (0, 1). Hence, in order to use it, we need to check whether the prediction of the trained
+multifidelity DeepONet for vi,j ∈ (0, 1) is reasonable.
+As an example, we take a random geometry shown in Fig. 7, and the value of v2,3 changes from
+0 to 1 gradually. When v2,3 is closer to 1, the flux nearby becomes closer to 0. Hence, DeepONet
+makes reasonable predictions for intermediate value of vij . However, we note that in general there
+is no guarantee for the prediction, because we do not have training data in this domain.
+0.5
+0.4
+
+0
+
+20
+
+0.3
+y
+
+0
+
+0.2
+
+-20
+
+-40 -20
+
+0
+x
+
+20
+
+40
+
+20
+
+y
+0.2
+
+-20
+
+0.1
+
+-40
+-40 -20
+
+0
+x
+
+20
+
+40
+
+0
+
+40
+
+0
+
+0.2
+
+-20
+
+0.1
+
+-40
+-40 -20
+
+0
+x
+
+20
+
+40
+
+0
+
+0.1
+0
+x
+
+20
+
+40
+
+0
+0.5
+
+40
+20
+
+0.3
+
+0
+
+0.2
+
+-40 -20
+
+0.4
+
+.8
+
+0.3
+
+0
+
+-40
+
+0.5
+
+20
+
+0.3
+
+0
+
+20
+
+40
+
+0.4
+
+.6
+
+0
+x
+
+0.4
+
+.4
+
+-20
+
+0.1
+-40 -20
+
+0.5
+
+40
+
+0.2
+
+-40
+
+0
+
+20
+
+0.3
+
+0
+-20
+
+0.1
+
+-40
+
+0.4
+
+.2
+
+0.5
+
+40
+
+y
+
+20
+
+0.5
+
+40
+
+y
+
+40
+
+0.4
+
+1
+
+0.3
+
+0
+
+0.2
+
+-20
+
+0.1
+
+-40
+-40 -20
+
+0
+x
+
+20
+
+40
+
+0
+
+Figure 7: Examples of predictions for v2,3 ∈ [0, 1] by the multifidelity DeepONet. v2,3 is
+equal to 0 (not pore), 0.2, 0.4, 0.6, 0.8, and 1 (pore).
+
+13
+
+3.3.2
+
+Maximizing normalized heat flux at a given location
+
+In the first inverse design problem, we consider to maximize the normalized heat flux at a given
+grid location. Here, we consider the center location, i.e.,
+J (u) =
+where
+
+1
+ū =
+Area(Ω)
+
+u(0, 0)
+,
+ū
+
+(6)
+
+Z
+u(x, y)dxdy
+
+(7)
+
+Ω
+
+is the average value of u. To compute the integral in ū, we use the midpoint rule as
+N2
+
+1 X
+u(xi , yi ),
+ū ≈ 2
+N
+i=1
+
+2
+
+where {(xi , yi )}N
+i=1 are the mid-points of an equispaced mesh of N by N , and we choose N = 100.
+We note that we can also use other numerical integration methods such as Gaussian quadrature,
+which has a high convergence rate for smooth functions, but in this problem, Gaussian quadrature
+has a slow convergence, because we use ReLU activation and the network has a bad smoothness.
+We applied both GA and TO described in Section 2.3 to solve this problem. Three examples
+of the values of the objective function during the iterative process of GA and TO are shown in
+Figs. 8A and B, respectively, and they achieved similar final objective values of ∼2.4. The abrupt
+jumps in the optimization curves for TO correspond to the final evaluation of the fully binarized
+structure, which happens once the optimization has converged.
+Because the learned multifidelity DeepONet has an error of 3.34% as shown in Section 3.2.3, in
+general the best design based on the multifidelity DeepONet may not be the best design according
+to the high-fidelity numerical solver. Hence, instead of only using the best design from GA or TO,
+we need to output several top candidates and then verify them using the numerical solver. Here,
+we consider the top 6 candidate designs (Figs. 8C to H).
+For each design in Fig. 8, the objective values computed by the multifidelity DeepONet are
+listed in Table 1. We also verify the objective values by using the high-fidelity numerical solver.
+Among these designs, the best one is the design in Fig. 8E with the optimal objective Jopt ≈ 2.343.
+|J −J |
+We also compute the relative difference of other designs compared to this best design Joptopt . The
+best design (Fig. 8E) is the third best based on the multifidelity DeepONet, but the best and second
+best designs (Figs. 8C and D) are only 1.58% and 2.18% worse, respectively, which is consistent
+with the error of the multifidelity DeepONet.
+3.3.3
+
+Maximizing normalized heat flux on multiple points
+
+We have considered the objective for a single location, and here we consider the objective for
+multiple points. Specifically, we consider 2 point locations: x1 = (−20, 20) and x2 = (20, 0) (the
+red circles in Fig. 9A), and the objective function is
+2
+
+1 X u(xi )
+J =
+,
+2
+ū
+i=1
+
+where ū is defined in Eq. (7).
+
+14
+
+A
+
+B
+
+2.5
+
+2
+Objective
+
+Objective
+
+2
+
+2.5
+
+1.5
+1
+0.5
+
+1.5
+1
+0.5
+
+0 0
+
+5
+
+10 15 20
+No. of iterations
+
+C
+
+0.5
+
+25
+
+0 0
+
+30
+
+D
+
+40
+
+0.5
+
+0.5
+
+0.4
+
+0.4
+20
+
+0.3
+
+0.3
+y
+
+y
+
+0.3
+0
+
+0.2
+-20
+
+0.2
+-20
+
+0.1
+
+0.1
+
+0.1
+
+-40
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+F
+
+0
+
+0.5
+
+-40
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+G
+
+40
+
+0
+
+0.5
+
+-40
+
+0.4
+
+y
+
+y
+
+0.3
+
+0.1
+-40
+
+40
+
+0
+
+0.2
+-20
+
+0.1
+20
+
+0
+
+0.2
+-20
+
+0
+x
+
+0
+
+0.5
+
+0.3
+0
+
+0.2
+
+-20
+
+40
+
+20
+
+0.3
+
+-40
+
+20
+
+0.4
+20
+
+-40
+
+0
+x
+
+40
+
+0.4
+20
+
+-20
+
+-20
+
+H
+
+40
+
+0
+
+0
+
+0.2
+-20
+
+-40
+
+30
+
+E
+
+20
+
+0
+
+25
+
+40
+
+0.4
+
+y
+
+10 15 20
+No. of iterations
+
+40
+
+20
+
+y
+
+5
+
+0.1
+-40
+
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+0
+
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+0
+
+Figure 8: Maximize the normalized heat flux at the center via GA and TO in Section 3.3.2. (A) The optimization process of GA. (B) The optimization process of TO. Update
+(C–H) The best 6 designs.
+Design
+
+Multifidelity DeepONet
+
+Numerical solver
+
+|J −Jopt |
+Jopt
+
+Fig. 8C
+Fig. 8D
+Fig. 8E
+Fig. 8F
+Fig. 8G
+Fig. 8H
+
+2.447
+2.440
+2.435
+2.425
+2.414
+2.412
+
+2.306
+2.292
+2.343
+2.233
+2.235
+2.211
+
+1.58%
+2.18%
+Optimal
+4.69%
+4.61%
+5.63%
+
+Table 1: Maximize the normalized heat flux at the center via GA and TO in Section 3.3.2. The objective values of the found designs (Fig. 8) computed by the multifidelity
+DeepONet and the numerical solver.
+15
+
+A
+
+B
+
+C
+2
+
+2
+
+1.6
+
+1.6
+
+Objective
+
+0
+
+-20
+
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+D
+
+0
+
+0.4
+
+40
+
+1.2
+0.8
+0.4
+
+0
+
+5
+
+10 15 20
+No. of iterations
+
+25
+
+E
+
+0
+
+30
+
+0.4
+
+40
+
+0
+
+10
+20
+No. of iterations
+
+30
+
+F
+
+0.4
+
+40
+
+0.3
+
+20
+
+0.3
+
+20
+
+0.3
+
+0
+
+0.2
+
+0
+
+0.2
+
+0
+
+0.2
+
+-20
+
+0.1
+
+-40
+
+-20
+
+y
+
+20
+
+y
+
+-20
+
+0.1
+
+-40
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+G
+
+0
+
+0.4
+
+40
+
+0.1
+
+-40
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+H
+
+0
+
+0.4
+
+40
+
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+I
+
+0
+
+0.4
+
+40
+
+20
+
+0.3
+
+20
+
+0.3
+
+20
+
+0.3
+
+0
+
+0.2
+
+0
+
+0.2
+
+0
+
+0.2
+
+-20
+
+0.1
+
+-40
+
+-20
+
+0.1
+
+-40
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+0
+
+y
+
+y
+
+0.8
+0.4
+
+-40
+
+y
+
+1.2
+
+y
+
+y
+
+20
+
+Objective
+
+40
+
+-20
+
+0.1
+
+-40
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+0
+
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+0
+
+Figure 9: Maximize the normalized heat flux on multiple points in Section 3.3.3. (A) The
+locations of the points to be optimized. (B) The optimization process of GA. (C) The optimization
+process of TO. Update (D–I) The best 6 designs.
+
+16
+
+GA and TO achieved similar objective values of ∼2 (Figs. 9B and C), and we show the top 6
+candidate designs (Figs. 9D to I). For each design, the objective values computed by the multifidelity
+DeepONet and the numerical solver are listed in Table 2. Among these designs, the best design
+(Fig. 9D) found by the multifidelity DeepONet is indeed the best with the optimal objective Jopt ≈
+1.987. We also compute the relative difference of other designs compared to this design, and most
+of the relative differences are within 3% (Table 2).
+Design
+
+Multifidelity DeepONet
+
+Numerical solver
+
+|J −Jopt |
+Jopt
+
+Fig. 9D
+Fig. 9E
+Fig. 9F
+Fig. 9G
+Fig. 9H
+Fig. 9I
+
+2.008
+1.996
+1.993
+1.990
+1.990
+1.990
+
+1.987
+1.928
+1.941
+1.961
+1.951
+1.964
+
+Optimal
+2.97%
+2.32%
+1.31%
+1.81%
+1.16%
+
+Table 2: Maximize the normalized heat flux on multiple points in Section 3.3.3. The
+objective values of the designs (Fig. 9) computed by the multifidelity DeepONet and the numerical
+solver.
+
+3.3.4
+
+Maximizing normalized heat flux on multiple points with a constraint on the
+number of pores
+
+In Section 3.3.3, the best design is the one in Fig. 9D, and the results show that if we add additional
+pores, then the objective becomes smaller. Here, we aim to investigate the best design given an
+extra constraint on the number of pores. Specifically, we require that
+No. of pores ≤ N
+for a given integer N .
+To consider this constraint, for GA, we simply return 0 as the objective if the design does not
+satisfy the constraint. For TO, the implementation is less straighforward, because the objective
+function needs to stay differentiable. We discuss how to implement the constraint in TO as follows.
+We implemented the constraint by adding a differentiable non-linear constraint on the sum of the
+projected density. Note that since the constraint is on the projected function using Eq. (3), the
+density is not fully binarized. In practice, we constrained the sum to be less than N − 0.5, which
+resulted in designs with less than N pores most of the time.
+Here, we consider three cases (N = 11, N = 9, and N = 7) and follow the same procedure
+as in Section 3.3.3 to find the best design for each case. For N = 11, the best 6 designs and the
+corresponding objective values are in Fig. 11 and Table 4, respectively. For N = 9, the best 6
+designs and the corresponding objective values are in Fig. 12 and Table 5, respectively. For N = 7,
+the best 6 designs and the corresponding objective values are in Fig. 13 and Table 6, respectively.
+The best designs for all the cases are listed in Fig. 10. It is interesting that the pore locations
+of the best design for N = 11 is a subset of the pore locations for the case without any constraint.
+This is also true for the pair of N = 11 and N = 9, and the pair of N = 9 and N = 7. For the
+value of the objective function, a stronger constraint on the number of pores makes the objective
+value smaller (Table 3).
+
+17
+
+No constraint
+40
+
+0.6
+
+40
+
+0.5
+
+0.5
+0.4
+
+0
+
+0.3
+
+0
+
+0.3
+
+-20
+
+0.2
+
+-20
+
+0.2
+
+0.1
+
+-40
+-40 -20
+
+0
+x
+
+20
+
+40
+
+N=9
+
+0.1
+
+-40
+
+0
+
+-40 -20
+
+0
+x
+
+20
+
+40
+
+N=7
+
+0.6
+
+40
+
+0.6
+
+40
+
+0.5
+
+0
+
+0.5
+0.4
+
+0
+
+0.3
+
+0
+
+0.3
+
+-20
+
+0.2
+
+-20
+
+0.2
+
+y
+
+0.4
+
+20
+
+y
+
+20
+
+y
+
+0.4
+
+20
+
+y
+
+20
+
+N = 11
+
+0.6
+
+0.1
+
+-40
+-40 -20
+
+0
+x
+
+20
+
+40
+
+0.1
+
+-40
+
+0
+
+-40 -20
+
+0
+x
+
+20
+
+40
+
+0
+
+Figure 10: Maximize the normalized heat flux on multiple points with a constraint on
+the number of pores in Section 3.3.4. The best designs for different values of N .
+
+N
+
+Multifidelity DeepONet
+
+Numerical solver
+
+No constraint
+
+2.008
+
+1.987
+
+11
+9
+7
+
+1.879
+1.820
+1.678
+
+1.857
+1.763
+1.639
+
+Table 3: Maximize the normalized heat flux on multiple points with a constraint on the
+number of pores in Section 3.3.4. The objective values of the designs in Fig. 10 computed by
+the multifidelity DeepONet and the numerical solver.
+
+18
+
+4
+
+Conclusion
+
+In this study, we developed a new version of DeepONet for learning efficiently from multifidelity
+datasets. A multifidelity DeepONet includes two independent DeepONets coupled by residual
+learning and input augmentation. We demonstrated that, compared to single-fidelity DeepONet,
+multifidelity DeepONet achieves one order of magnitude smaller error when using the same amount
+of high-fidelity data. By combining multifidelity DeepONet with genetic algorithms or topology
+optimization, we can reuse the trained network for fast inverse design of multiple objective functions.
+We have introduced two approaches of input augmentation, where Approach I uses the entire
+function of GL (v), and Approach II uses only the low-fidelity prediction at one point GL (v)(ξ). In
+this study, we find that Approach II is more accurate than Approach I, but there are also other
+possibilities that might be fruitful to explore: for example, using the low-fidelity solution in a local
+domain [ξ − ∆ξ, ξ + ∆ξ]. Moreover, the two sub-DeepONets used in the multifidelity DeepONet
+are “vanilla” DeepONets. Several extensions of DeepONet have been developed very recently,
+as discussed in the introduction, and these extensions may further improve the performance of
+multifidelity DeepONet.
+
+Acknowledgments
+This work was partially supported by MIT-IBM Watson AI Laboratory (Challenge No. 2415).
+RP is also supported in part by the U.S. Army Research Office through the Institute for Soldier
+Nanotechnologies at MIT under Award Nos. W911NF-18-2-0048 and W911NF-13-D-0001.
+
+A
+
+Best designs in Section 3.3.4
+Design
+
+Multifidelity DeepONet
+
+Numerical solver
+
+|J −Jopt |
+Jopt
+
+Fig. 11A
+Fig. 11B
+Fig. 11C
+Fig. 11D
+Fig. 11E
+Fig. 11F
+
+1.879
+1.879
+1.873
+1.872
+1.869
+1.866
+
+1.857
+1.815
+1.840
+1.815
+1.826
+1.826
+
+Optimal
+2.26%
+0.92%
+2.26%
+1.67%
+1.67%
+
+Table 4: Maximize the normalized heat flux on multiple points with a constraint on
+the number of pores in Section 3.3.4. The objective values of the designs (Fig. 11) computed
+by the multifidelity DeepONet and the numerical solver.
+
+References
+[1] George Em Karniadakis, Ioannis G Kevrekidis, Lu Lu, Paris Perdikaris, Sifan Wang, and Liu
+Yang. Physics-informed machine learning. Nature Reviews Physics, 3(6):422–440, 2021.
+[2] Maziar Raissi, Paris Perdikaris, and George E Karniadakis. Physics-informed neural networks:
+A deep learning framework for solving forward and inverse problems involving nonlinear partial
+differential equations. Journal of Computational physics, 378:686–707, 2019.
+19
+
+A
+
+0.5
+
+B
+
+0.5
+
+40
+
+0.4
+
+0.4
+
+20
+
+20
+
+0.3
+
+0.3
+0
+
+0.3
+y
+
+0
+
+y
+
+y
+
+0.5
+40
+
+0.4
+20
+
+0.2
+
+0.2
+
+-20
+
+-20
+
+0.1
+
+0.1
+
+-40
+
+0.1
+
+-40
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+D
+
+0
+
+0.5
+
+-40
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+E
+
+0
+
+0.5
+
+40
+
+-40
+
+0.4
+0.3
+y
+
+y
+
+0
+
+0.2
+
+0.2
+-20
+
+0.1
+
+0.1
+
+0.1
+
+-40
+40
+
+0
+
+0.2
+-20
+
+-40
+0
+
+0
+
+20
+0.3
+
+-20
+
+20
+
+40
+
+0.4
+
+0.3
+
+0
+x
+
+20
+
+0.5
+
+20
+
+-20
+
+0
+x
+
+40
+
+0.4
+20
+
+-40
+
+-20
+
+F
+
+40
+
+0
+
+0
+
+0.2
+
+-20
+
+y
+
+C
+
+40
+
+-40
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+0
+
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+0
+
+Figure 11: Maximize the normalized heat flux on multiple points with a constraint on
+the number of pores in Section 3.3.4. The best 6 designs for N = 11.
+A
+
+0.5
+
+B
+
+0.5
+
+40
+
+0.4
+
+0.4
+
+20
+
+20
+
+0.3
+
+0.3
+0
+
+0.3
+y
+
+0
+
+y
+
+y
+
+0.5
+40
+
+0.4
+20
+
+0.2
+
+0.2
+
+-20
+
+-20
+
+0.1
+
+0.1
+
+-40
+
+0.1
+
+-40
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+D
+
+0
+
+0.5
+
+-40
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+E
+
+0
+
+0.5
+
+40
+
+-40
+
+0.4
+
+0
+
+0.2
+-20
+
+0.1
+-40
+
+40
+
+0
+
+0.2
+
+0.1
+20
+
+0.3
+y
+
+y
+
+0.3
+0
+
+-20
+
+0
+x
+
+0
+
+20
+
+0.2
+
+-20
+
+40
+
+0.4
+
+0.3
+
+-40
+
+20
+
+0.5
+
+20
+
+-40
+
+0
+x
+
+40
+
+0.4
+20
+
+-20
+
+-20
+
+F
+
+40
+
+0
+
+0
+
+0.2
+
+-20
+
+y
+
+C
+
+40
+
+0.1
+-40
+
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+0
+
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+Figure 12: Maximize the normalized heat flux on multiple points with a constraint on
+the number of pores in Section 3.3.4. The best 6 designs for N = 9.
+20
+
+0
+
+Design
+
+Multifidelity DeepONet
+
+Numerical solver
+
+|J −Jopt |
+Jopt
+
+Fig. 12A
+Fig. 12B
+Fig. 12C
+Fig. 12D
+Fig. 12E
+Fig. 12F
+
+1.820
+1.810
+1.798
+1.798
+1.797
+1.788
+
+1.763
+1.760
+1.747
+1.759
+1.711
+1.758
+
+Optimal
+0.17%
+0.91%
+0.23%
+2.95%
+0.28%
+
+Table 5: Maximize the normalized heat flux on multiple points with a constraint on
+the number of pores in Section 3.3.4. The objective values of the designs (Fig. 12) computed
+by the multifidelity DeepONet and the numerical solver.
+
+0.5
+
+0
+
+0.3
+
+-20
+
+0.1
+
+-40
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+D
+
+0.7
+40
+
+0.2
+0.1
+
+-40
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+0
+
+40
+
+0.1
+
+-40
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+-20
+
+0
+x
+
+20
+
+40
+
+0.6
+0.5
+
+20
+
+0.4
+
+0
+
+0.3
+
+-20
+
+0.2
+0.1
+
+-40
+
+0
+
+-40
+
+-20
+
+0
+x
+
+20
+
+40
+
+Figure 13: Maximize the normalized heat flux on multiple points with a constraint on
+the number of pores in Section 3.3.4. The best 6 designs for N = 7.
+Design
+
+Multifidelity DeepONet
+
+Numerical solver
+
+|J −Jopt |
+Jopt
+
+Fig. 13A
+Fig. 13B
+Fig. 13C
+Fig. 13D
+Fig. 13E
+Fig. 13F
+
+1.708
+1.680
+1.678
+1.677
+1.677
+1.666
+
+1.633
+1.572
+1.639
+1.568
+1.556
+1.572
+
+0.366%
+4.087%
+Optimal
+4.331%
+5.064%
+4.087%
+
+Table 6: Maximize the normalized heat flux on multiple points with a constraint on
+the number of pores in Section 3.3.4. The objective values of the designs (Fig. 13) computed
+by the multifidelity DeepONet and the numerical solver.
+21
+
+0
+
+0.7
+40
+
+0.3
+0.2
+
+0.1
+
+F
+
+0.4
+
+-20
+
+0.2
+
+-40
+
+0.5
+
+0
+
+0.3
+
+-40
+
+0.6
+
+20
+
+0.4
+
+0
+
+0
+
+0.7
+
+y
+
+-20
+
+20
+
+40
+
+0.4
+0.3
+
+0
+x
+
+E
+
+0.5
+
+0
+
+0.1
+-20
+
+0.5
+
+-20
+
+0.2
+
+-40
+
+0.6
+
+20
+
+0.3
+
+-40
+
+0.6
+
+20
+
+0.4
+
+0
+
+0
+
+0.7
+40
+
+0.5
+
+-20
+
+0.2
+
+C
+
+0.6
+
+20
+
+0.4
+y
+
+y
+
+0.7
+40
+
+0.6
+
+20
+
+y
+
+B
+
+y
+
+0.7
+40
+
+y
+
+A
+
+0
+
+[3] Lu Lu, Xuhui Meng, Zhiping Mao, and George Em Karniadakis. Deepxde: A deep learning
+library for solving differential equations. SIAM Review, 63(1):208–228, 2021.
+[4] Guofei Pang, Lu Lu, and George Em Karniadakis. fpinns: Fractional physics-informed neural
+networks. SIAM Journal on Scientific Computing, 41(4):A2603–A2626, 2019.
+[5] Dongkun Zhang, Lu Lu, Ling Guo, and George Em Karniadakis. Quantifying total uncertainty
+in physics-informed neural networks for solving forward and inverse stochastic problems. Journal of Computational Physics, 397:108850, 2019.
+[6] Lu Lu, Raphael Pestourie, Wenjie Yao, Zhicheng Wang, Francesc Verdugo, and Steven G
+Johnson. Physics-informed neural networks with hard constraints for inverse design. SIAM
+Journal on Scientific Computing, 43(6):B1105–B1132, 2021.
+[7] Jeremy Yu, Lu Lu, Xuhui Meng, and George Em Karniadakis.
+Gradient-enhanced
+physics-informed neural networks for forward and inverse pde problems. arXiv preprint
+arXiv:2111.02801, 2021.
+[8] Yuyao Chen, Lu Lu, George Em Karniadakis, and Luca Dal Negro. Physics-informed neural
+networks for inverse problems in nano-optics and metamaterials. Optics express, 28(8):11618–
+11633, 2020.
+[9] Alireza Yazdani, Lu Lu, Maziar Raissi, and George Em Karniadakis. Systems biology informed
+deep learning for inferring parameters and hidden dynamics. PLoS computational biology,
+16(11):e1007575, 2020.
+[10] Mitchell Daneker, Zhen Zhang, George Em Karniadakis, and Lu Lu. Systems biology: Identifiability analysis and parameter identification via systems-biology informed neural networks.
+arXiv preprint arXiv:2202.01723, 2022.
+[11] Lu Lu, Pengzhan Jin, and George Em Karniadakis. Deeponet: Learning nonlinear operators for
+identifying differential equations based on the universal approximation theorem of operators.
+arXiv preprint arXiv:1910.03193, 2019.
+[12] Lu Lu, Pengzhan Jin, Guofei Pang, Zhongqiang Zhang, and George Em Karniadakis. Learning
+nonlinear operators via DeepONet based on the universal approximation theorem of operators.
+Nature Machine Intelligence, 3(3):218–229, 2021.
+[13] Zongyi Li, Nikola Kovachki, Kamyar Azizzadenesheli, Burigede Liu, Kaushik Bhattacharya,
+Andrew Stuart, and Anima Anandkumar. Fourier neural operator for parametric partial
+differential equations. arXiv preprint arXiv:2010.08895, 2020.
+[14] Lu Lu, Xuhui Meng, Shengze Cai, Zhiping Mao, Somdatta Goswami, Zhongqiang Zhang, and
+George Em Karniadakis. A comprehensive and fair comparison of two neural operators (with
+practical extensions) based on fair data. arXiv preprint arXiv:2111.05512, 2021.
+[15] Huaiqian You, Yue Yu, Marta D’Elia, Tian Gao, and Stewart Silling. Nonlocal kernel
+network (nkn): a stable and resolution-independent deep neural network. arXiv preprint
+arXiv:2201.02217, 2022.
+[16] Nathaniel Trask, Ravi G Patel, Ben J Gross, and Paul J Atzberger. Gmls-nets: A framework
+for learning from unstructured data. arXiv preprint arXiv:1909.05371, 2019.
+22
+
+[17] Zongyi Li, Nikola Kovachki, Kamyar Azizzadenesheli, Burigede Liu, Kaushik Bhattacharya,
+Andrew Stuart, and Anima Anandkumar. Neural operator: Graph kernel network for partial
+differential equations. arXiv preprint arXiv:2003.03485, 2020.
+[18] Ravi G Patel, Nathaniel A Trask, Mitchell A Wood, and Eric C Cyr. A physics-informed operator regression framework for extracting data-driven continuum models. Computer Methods
+in Applied Mechanics and Engineering, 373:113500, 2021.
+[19] Pengzhan Jin, Shuai Meng, and Lu Lu. Mionet: Learning multiple-input operators via tensor
+product. arXiv preprint arXiv:2202.06137, 2022.
+[20] Shengze Cai, Zhicheng Wang, Lu Lu, Tamer A Zaki, and George Em Karniadakis.
+Deepm&mnet: Inferring the electroconvection multiphysics fields based on operator approximation by neural networks. Journal of Computational Physics, 436:110296, 2021.
+[21] Zhiping Mao, Lu Lu, Olaf Marxen, Tamer A Zaki, and George Em Karniadakis. Deepm&mnet
+for hypersonics: Predicting the coupled flow and finite-rate chemistry behind a normal
+shock using neural-network approximation of operators. Journal of Computational Physics,
+447:110698, 2021.
+[22] Guang Lin, Christian Moya, and Zecheng Zhang. Accelerated replica exchange stochastic
+gradient langevin diffusion enhanced bayesian deeponet for solving noisy parametric pdes.
+arXiv preprint arXiv:2111.02484, 2021.
+[23] Christian Moya, Shiqi Zhang, Meng Yue, and Guang Lin. Deeponet-grid-uq: A trustworthy
+deep operator framework for predicting the power grid’s post-fault trajectories. arXiv preprint
+arXiv:2202.07176, 2022.
+[24] Yibo Yang, Georgios Kissas, and Paris Perdikaris. Scalable uncertainty quantification for deep
+operator networks using randomized priors. arXiv preprint arXiv:2203.03048, 2022.
+[25] Lizuo Liu and Wei Cai. Multiscale deeponet for nonlinear operators in oscillatory function
+spaces for building seismic wave responses. arXiv preprint arXiv:2111.04860, 2021.
+[26] Lizuo Liu and Wei Cai. Deeppropnet–a recursive deep propagator neural network for learning
+evolution pde operators. arXiv preprint arXiv:2202.13429, 2022.
+[27] Somdatta Goswami, Minglang Yin, Yue Yu, and George Em Karniadakis. A physics-informed
+variational deeponet for predicting crack path in quasi-brittle materials. Computer Methods
+in Applied Mechanics and Engineering, 391:114587, 2022.
+[28] Sifan Wang, Hanwen Wang, and Paris Perdikaris. Learning the solution operator of parametric partial differential equations with physics-informed deeponets. Science advances,
+7(40):eabi8605, 2021.
+[29] P Clark Di Leoni, Lu Lu, Charles Meneveau, George Karniadakis, and Tamer A Zaki. Deeponet prediction of linear instability waves in high-speed boundary layers. arXiv preprint
+arXiv:2105.08697, 2021.
+[30] Chensen Lin, Zhen Li, Lu Lu, Shengze Cai, Martin Maxey, and George Em Karniadakis.
+Operator learning for predicting multiscale bubble growth dynamics. The Journal of Chemical
+Physics, 154(10):104118, 2021.
+23
+
+[31] Chensen Lin, Martin Maxey, Zhen Li, and George Em Karniadakis. A seamless multiscale
+operator neural network for inferring bubble dynamics. Journal of Fluid Mechanics, 929,
+2021.
+[32] Julian D Osorio, Zhicheng Wang, George Karniadakis, Shengze Cai, Chrys Chryssostomidis,
+Mayank Panwar, and Rob Hovsapian. Forecasting solar-thermal systems performance under
+transient operation using a data-driven machine learning approach based on the deep operator
+network architecture. Energy Conversion and Management, 252:115063, 2022.
+[33] Minglang Yin, Ehsan Ban, Bruno V Rego, Enrui Zhang, Cristina Cavinato, Jay D Humphrey,
+and George Em Karniadakis. Simulating progressive intramural damage leading to aortic
+dissection using deeponet: an operator–regression neural network. Journal of the Royal Society
+Interface, 19(187):20210670, 2022.
+[34] Minglang Yin, Enrui Zhang, Yue Yu, and George Em Karniadakis. Interfacing finite elements
+with deep neural operators for fast multiscale modeling of mechanics problems. arXiv preprint
+arXiv:2203.00003, 2022.
+[35] Samuel Lanthaler, Siddhartha Mishra, and George Em Karniadakis. Error estimates for DeepOnets: A deep learning framework in infinite dimensions. arXiv preprint arXiv:2102.09618,
+2021.
+[36] Beichuan Deng, Yeonjong Shin, Lu Lu, Zhongqiang Zhang, and George Em Karniadakis. Convergence rate of DeepONets for learning operators arising from advection-diffusion equations.
+arXiv preprint arXiv:2102.10621, 2021.
+[37] Carlo Marcati and Christoph Schwab. Exponential convergence of deep operator networks for
+elliptic partial differential equations. arXiv preprint arXiv:2112.08125, 2021.
+[38] M Giselle Fernández-Godino, Chanyoung Park, Nam-Ho Kim, and Raphael T Haftka. Review
+of multi-fidelity models. arXiv preprint arXiv:1609.07196, 2016.
+[39] Xuhui Meng and George Em Karniadakis. A composite neural network that learns from
+multi-fidelity data: Application to function approximation and inverse pde problems. Journal
+of Computational Physics, 401:109020, 2020.
+[40] Lu Lu, Ming Dao, Punit Kumar, Upadrasta Ramamurty, George Em Karniadakis, and Subra
+Suresh. Extraction of mechanical properties of materials through deep learning from instrumented indentation. Proceedings of the National Academy of Sciences, 117(13):7052–7062,
+2020.
+[41] Raphaël Pestourie, Youssef Mroueh, Chris Rackauckas, Payel Das, and Steven G Johnson.
+Physics-enhanced deep surrogates for pdes. arXiv preprint arXiv:2111.05841, 2021.
+[42] John M Ziman. Electrons and phonons: the theory of transport phenomena in solids. Oxford
+university press, 2001.
+[43] Nianbei Li, Jie Ren, Lei Wang, Gang Zhang, Peter Hänggi, and Baowen Li. Colloquium:
+Phononics: Manipulating heat flow with electronic analogs and beyond. Reviews of Modern
+Physics, 84(3):1045, 2012.
+[44] Supradeep Narayana and Yuki Sato. Heat flux manipulation with engineered thermal materials.
+Physical review letters, 108(21):214303, 2012.
+24
+
+[45] Muamer Kadic, Tiemo Bückmann, Robert Schittny, and Martin Wegener. Metamaterials
+beyond electromagnetism. Reports on Progress in physics, 76(12):126501, 2013.
+[46] Subhayan De, Malik Hassanaly, Matthew Reynolds, Ryan N King, and Alireza Doostan. Bifidelity modeling of uncertain and partially unknown systems using deeponets. arXiv preprint
+arXiv:2204.00997, 2022.
+[47] Thomas Bäck, David B Fogel, and Zbigniew Michalewicz. Evolutionary computation 1: Basic
+algorithms and operators. CRC press, 2018.
+[48] Félix-Antoine Fortin, François-Michel De Rainville, Marc-André Gardner, Marc Parizeau, and
+Christian Gagné. DEAP: Evolutionary algorithms made easy. Journal of Machine Learning
+Research, 13:2171–2175, jul 2012.
+[49] Krister Svanberg. A class of globally convergent optimization methods based on conservative
+convex separable approximations. SIAM journal on optimization, 12(2):555–573, 2002.
+[50] Rasmus E Christiansen and Ole Sigmund. Inverse design in photonics by topology optimization:
+tutorial. JOSA B, 38(2):496–509, 2021.
+[51] Günter Klambauer, Thomas Unterthiner, Andreas Mayr, and Sepp Hochreiter. Selfnormalizing neural networks. In Proceedings of the 31st international conference on neural
+information processing systems, pages 972–981, 2017.
+[52] Diederik P Kingma and Jimmy Ba. Adam: A method for stochastic optimization. arXiv
+preprint arXiv:1412.6980, 2014.
+[53] Lucas Lindsay, Ankita Katre, Andrea Cepellotti, and Natalio Mingo. Perspective on ab initio
+phonon thermal transport. Journal of Applied Physics, 126(5):050902, 2019.
+[54] Jesús Carrete, Bjorn Vermeersch, Ankita Katre, Ambroise van Roekeghem, Tao Wang,
+Georg KH Madsen, and Natalio Mingo. almabte: A solver of the space–time dependent
+boltzmann transport equation for phonons in structured materials. Computer Physics Communications, 220:351–362, 2017.
+[55] Giuseppe Romano. Efficient calculations of the mode-resolved ab-initio thermal conductivity
+in nanostructures. arXiv preprint arXiv:2105.08181, 2021.
+[56] Giuseppe Romano. Openbte: a solver for ab-initio phonon transport in multidimensional
+structures. arXiv preprint arXiv:2106.02764, 2021.
+
+25
+
+

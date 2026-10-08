@@ -1,0 +1,2230 @@
+MIONet: Learning multiple-input operators via tensor product
+Pengzhan Jin1 , Shuai Meng2 , and Lu Lu2,*
+1
+
+arXiv:2202.06137v1 [cs.LG] 12 Feb 2022
+
+2
+
+School of Mathematical Sciences, Peking University, Beijing 100871, China
+Department of Chemical and Biomolecular Engineering, University of Pennsylvania,
+Philadelphia, PA 19104, USA
+*
+Corresponding author. Email: lulu1@seas.upenn.edu
+
+Abstract
+As an emerging paradigm in scientific machine learning, neural operators aim to learn operators, via neural networks, that map between infinite-dimensional function spaces. Several
+neural operators have been recently developed. However, all the existing neural operators are
+only designed to learn operators defined on a single Banach space, i.e., the input of the operator is a single function. Here, for the first time, we study the operator regression via neural
+networks for multiple-input operators defined on the product of Banach spaces. We first prove
+a universal approximation theorem of continuous multiple-input operators. We also provide
+detailed theoretical analysis including the approximation error, which provides a guidance of
+the design of the network architecture. Based on our theory and a low-rank approximation, we
+propose a novel neural operator, MIONet, to learn multiple-input operators. MIONet consists
+of several branch nets for encoding the input functions and a trunk net for encoding the domain
+of the output function. We demonstrate that MIONet can learn solution operators involving
+systems governed by ordinary and partial differential equations. In our computational examples,
+we also show that we can endow MIONet with prior knowledge of the underlying system, such
+as linearity and periodicity, to further improve the accuracy.
+
+1
+
+Introduction
+
+Scientific machine learning (SciML) field grows rapidly in recent years, where deep learning techniques are developed and applied to solve problems in computational science and engineering [11].
+As an active area of research in SciML, different methods have been developed to solve ordinary and
+partial differential equations (ODEs and PDEs) by parameterizing the solutions via neural networks
+(NNs), such as physics-informed NNs (PINNs) [48, 30, 35, 37, 47], deep Ritz method [43], and deep
+Galerkin method [40]. These methods have shown promising results in diverse applications, such
+as fluid mechanics [38], optics [4], systems biology [44, 5], and biomedicine [14]. However, these
+methods solve one specific instance of the PDE, and one needs to train a new neural network given
+a new initial condition, boundary condition, or forcing term, which is computationally costly and
+time consuming.
+Another approach is applying neural networks (called neural operators) to learn solution operators of PDEs, mapping from an input function v (e.g., initial condition, boundary condition, or
+forcing term) to the PDE solution u. This regression for the solution operator G is formulated as
+G : X → Y,
+
+1
+
+v 7→ u,
+
+where X and Y are two infinite-dimensional Banach spaces of functions and u = G(v). We aim to
+learn G via NNs from a training dataset, i.e., some pairs (v, G(v)) ∈ X × Y . Once a neural operator
+is trained, obtaining a solution G(v) for a new instance of v requires only a forward pass of the
+network.
+Several approaches of neural operators have been recently proposed such as deep operator
+network (DeepONet) [26, 27, 28] and Fourier neural operator (FNO) [20, 28], graph kernel network [21, 46], and others [33, 1, 41, 36]. Among these approaches, DeepONet has been applied
+and demonstrated good performance in diverse applications, such as high-speed boundary layer
+problems [7], multiphysics and multiscale problems of hypersonics [31] and electroconvection [2],
+multiscale bubble growth dynamics [22, 23], fractional derivative operators [27], stochastic differential equations [27], solar-thermal system [34], and aortic dissection [45]. Several extensions of
+DeepONet have also been developed, such as Bayesian DeepONet [24], DeepONet with proper
+orthogonal decomposition (POD-DeepONet) [28], multiscale DeepONet [25], neural operator with
+coupled attention [13], and physics-informed DeepONet [42, 9].
+Despite the progress of neural operators in computational tests, our theoretical understanding is
+lagging behind. The current theoretical analysis of neural operators focuses on the approximation
+capability such as the universal approximation theorems for DeepONet [3, 27] and FNO [17]. Recent
+theoretical works show that DeepONet [6, 19] and FNO [16] may break the curse of dimensionality
+(CoD) in some problems, and DeepONet can approximate the solution operators of elliptic PDEs
+with exponential accuracy [32]. These results demonstrate the efficient approximation capability
+of DeepONet and FNO. One main difference between DeepONet and FNO is that the theory of
+FNO requires that the input function v and the output function u should be defined on the same
+domain [16, 17], but the theory of DeepONet does not have this restriction [3, 27, 6, 19, 32].
+However, all the existing neural operators are only designed to learn operators defined on a
+single Banach space X, i.e., the input of the operator is a single function. The theory of universal
+approximation for operators has only been proved for operators defined on a single Banach space.
+We note that some theoretical work [17] allows that the input function to be a vector-valued
+function, i.e., the input could be v = (v1 , v2 , . . . ), but it still requires that all components of the
+input function vi must be defined on the same domain. This limitation of the input space prohibits
+us to learn a wide range of useful operators, e.g., the PDE solution operator mapping from both
+the initial condition and boundary condition to the PDE solution, as the initial condition and
+boundary condition are defined on two different domains (the initial domain and the boundary
+domain, respectively).
+To overcome this limitation, in this work, we first study theoretically the approximation theory
+of the operator regression for a multiple-input operator G defined on the product of Banach spaces:
+G : X1 × X2 × · · · × Xn → Y,
+where X1 , X2 , · · · , Xn are n different input Banach spaces, and Y is the output Banach space. For
+example, X1 can be the function space of all initial conditions, X2 can be the function space of
+all boundary conditions, and X3 can be the function space of all forcing terms, etc. Based on our
+theory, we then propose a novel neural operator, MIONet, to learn multiple-input operators. We
+verify in our computational results that MIONet can learn solution operators involving systems
+governed by ODEs and PDEs. We also discuss how we can endow MIONet with prior knowledge
+of the underlying system, such as linearity and periodicity, to further improve the accuracy.
+This paper is organized as follows. In Section 2, we prove the approximation theory for multipleinput operator regression. Then we propose MIONet based on the theory in Section 3. Subsequently, we test MIONet on several problems of ODEs and PDEs in Section 4. Finally, Section 5
+summarizes this work.
+2
+
+2
+
+Approximation theory
+
+Our goal is to learn a (typically nonlinear) operator mapping from a product of n Banach spaces
+(input spaces) to another Banach space (output space). These spaces are typically infinite dimensional. We first define the main notations used through out this paper. Denote the space
+comprised of all the continuous maps mapping from a metric space X to a metric space Y as
+C(X, Y ), and define C(X) := C(X, R). Let X1 , X2 , · · · , Xn and Y be n + 1 Banach spaces, and
+Ki ⊂ Xi (i = 1, · · · , n) is a compact set. Then we aim to learn a continuous operator
+G : K1 × · · · × Kn → Y,
+
+(v1 , · · · , vn ) 7→ u,
+
+where vi ∈ Ki and u = G(v1 , · · · , vn ). Such G form the space C(K1 × · · · × Kn , Y ), which is studied
+in this paper.
+In this section, we prove the approximation theory of continuous multiple-input operators by
+first illustrating our basic idea using the example of multilinearity on finite-dimensional spaces
+in Section 2.1. We then introduce the techniques of Schauder basis and canonical projection for
+infinite-dimensional spaces in Section 2.2, based on which we present the main theory of nonlinear
+operators in Section 2.3 with more detailed analysis in Section 2.4. We also provide a view of the
+theory through the tensor product of Banach spaces in Section 2.5. All the proofs can be found in
+Appendix A.
+
+2.1
+
+Multilinear operators defined on finite-dimensional Banach spaces
+
+We first use a simple case to illustrate the main idea of our theoretical approach: multilinear operators defined on finite-dimensional Banach spaces. Specifically, we consider a multilinear operator
+G : X1 × · · · × Xn → Y,
+where X1 , · · · , Xn are Banach spaces of finite dimensions d1 , · · · , dn .
+i
+⊂ Xi be a basis of Xi , and thus for each vi ∈ Xi , there exists a coordinate
+Let {φij }dj=1
+representation:
+di
+X
+vi =
+αji φij
+j=1
+
+for some vector αi = (α1i , α2i , · · · , αdi i ) ∈ Rdi . Because G is multilinear, for any input (v1 , · · · , vn ),
+
+G(v1 , · · · , vn ) = G 
+
+d1
+X
+j1 =1
+
+αj11 φ1j1 , · · · ,
+
+
+
+dn
+X
+
+αjnn φnjn  =
+
+jn =1
+
+d1
+X
+j1 =1
+
+dn
+X
+
+···
+
+
+G φ1j1 , · · · , φnjn αj11 · · · αjnn ,
+
+jn =1
+
+
+
+
+
+where uj1 ···jn = G φ1j1 , · · · , φnjn ∈ Y is the output of G for the input φ1j1 , · · · , φnjn . For convenience and clarity, for u = (uj1 ···jn )d1 ×···×dn ∈ Y d1 ×···×dn , we use the notation uh· · · i to represent
+the multilinear map
+d1
+dn
+X
+X
+uhα1 , · · · , αn i :=
+···
+uj1 ···jn αj11 · · · αjnn .
+j1 =1
+
+jn =1
+
+Hence, a multilinear operator defined on finite-dimensional Banach spaces can be represented as:
+
+(1)
+G(v1 , · · · , vn ) = G φ1j1 , · · · , φnjn d ×···×d hα1 , · · · , αn i.
+1
+
+3
+
+n
+
+Next we discuss the main idea of the approximation theory of G, i.e., how to construct a
+surrogate model G̃θ (parameterized by the parameters θ) to approximate G. We note that αi in
+Eq.
+directly for vi , and thus to approximate G, it is sufficient to approximate
+ (1) can be computed
+
+1
+n
+G φj1 , · · · , φjn
+. We consider Y = C(K) for a compact set K ⊂ Rd , and then we can
+d1 ×···×dn
+
+construct G̃θ as
+G̃θ :Rd1 × · · · × Rdn → C(K),
+(α1 , · · · , αn ) 7→ f˜θ hα1 , · · · , αn i,
+where f˜θ ∈ C(K, Rd1 ×···×dn ) is a function class parameterized by parameters θ. It is easy to
+show
+multilinear and can approximate G arbitrarily well as long as f˜θ approximates
+  that G̃θ is 
+1
+n
+G φj1 , · · · , φjn
+well, which can be achieved by choosing f˜θ as neural networks.
+d1 ×···×dn
+
+2.2
+
+Schauder basis and canonical projections for infinite-dimensional spaces
+
+To deal with infinite-dimensional spaces, we introduce the Schauder basis and canonical projections.
+We refer the reader to [8] for more details.
+Definition 1 (Schauder basis). Let X be an infinite-dimensional normed linear space. A sequence
+{ei }∞
+i=1 in X is called a Schauder basis of X, if for every x ∈ X there is a unique sequence of
+scalars {ai }∞
+i=1 , called the coordinates of x, such that
+x=
+
+∞
+X
+
+ai ei .
+
+i=1
+
+We show two useful examples of Schauder basis as follows.
+Example 1. Faber-Schauder basis of C[0, 1]. Given distinct points {ti }∞
+i=1 which is a dense
+subset in [0, 1] with t1 = 0, t2 = 1. Let e1 (t) = 1, e2 (t) = t, and ek+1 is chosen as an element, such
+that e1 , · · · , ek , ek+1 is a basis of the (k + 1)-dimensional space which consists of all the piecewise
+linear functions with grid points {ti }k+1
+i=1 .
+Example 2. Fourier basis of L2 [0, 1]. Any orthogonal basis in a separable Hilbert space is a
+Schauder basis.
+We denote the coordinate functional of ei by e∗i , and thus
+x=
+
+∞
+X
+
+e∗i (x)ei ,
+
+∀x ∈ X.
+
+i=1
+
+Then for a constant n, the canonical projection Pn is defined as
+!
+∞
+n
+X
+X
+∗
+Pn (x) = Pn
+ei (x)ei =
+e∗i (x)ei .
+i=1
+
+i=1
+
+We have the following property for Pn , according to which, we can represent points in an infinitedimensional Banach space by finite coordinates within a sufficiently small projection error.
+
+4
+
+Property 1 (Canonical projection). Assume that K is a compact set in a Banach space X equipped
+with a Schauder basis and corresponding canonical projections Pn , then we have
+lim sup kx − Pn (x)k = 0.
+
+n→∞ x∈K
+
+For convenience, we decompose the Pn as
+Pn = ψn ◦ ϕn ,
+where ϕn : X → Rn and ψn : Rn → X are defined as
+ϕn (x) = (e∗1 (x), · · · , e∗n (x))T ,
+
+ψn (α1 , · · · , αn ) =
+
+n
+X
+
+αi ei .
+
+i=1
+
+The ϕn (x) are essentially the truncated coordinates for x. Moreover, sometimes we can further
+replace {e1 , · · · , en } with an equivalent basis for the decomposition of Pn , i.e.,
+ϕ̂n (x) = Q(e∗1 (x), · · · , e∗n (x))T ,
+
+ψ̂n (α1 , · · · , αn ) = (e1 , · · · , en )Q−1 (α1 , · · · , αn )T ,
+
+with a nonsingular matrix Q ∈ Rn×n . For example, when applying the Faber-Schauder basis
+(Example 1), instead of using the coordinates based on the sequence {ei }∞
+i=1 , we use the function
+values evaluated at certain grid points as the coordinates, which is the same as the linear element
+basis in the finite element method.
+
+2.3
+
+Main theorems: Approximation theory for multiple-input operators
+
+Here, we present the main approximation theorems in Theorem 1 and Corollary 1.
+Theorem 1. Suppose that X1 , · · · , Xn , Y are Banach spaces, Ki ⊂ Xi are compact sets, and Xi
+have a Schauder basis with canonical projections Pqi = ψqi ◦ ϕiq . Assume that G : K1 × · · · × Kn → Y
+is a continuous operator, then for any  > 0, there exist positive integers pi , qi , continuous vector
+functions gi ∈ C(Rqi , Rpi ), and u = (uj1 ···jn ) ∈ Y p1 ×···×pn , such that
+sup
+vi ∈Ki
+
+G(v1 , · · · , vn ) − u g1 (ϕ1q1 (v1 )), · · · , gn (ϕnqn (vn ))
+
+< .
+
+(2)
+
+Corollary 1. The conclusion in Theorem 1 can also be expressed in the following equivalent forms.
+(i) There exist positive integers pi , qi , r, continuous vector functions gi ∈ C(Rqi , Rpi ), u ∈ Y r ,
+and W ∈ Rp1 ×···×pn ×r , such that
+sup
+vi ∈Ki
+
+G(v1 , · · · , vn ) − W g1 (ϕ1q1 (v1 )), · · · , gn (ϕnqn (vn )), u
+
+< .
+
+(3)
+
+If {ei } is a Schauder basis for Y , we can further have u = (e1 , e2 , · · · , er )T .
+(ii) There exist positive integers p, qi , continuous functions gji ∈ C(Rqi ), uj ∈ Y , such that
+sup
+vi ∈Ki
+
+G(v1 , · · · , vn ) −
+
+p
+X
+
+gj1 (ϕ1q1 (v1 )) · · · gjn (ϕnqn (vn )) · uj < .
+
+j=1
+
+5
+
+(4)
+
+The relations between these three results are as follows. We first prove (2); in (3), we treat
+gi and u in (2) symmetrically and combine them via a tensor; and (4) is simply a summation of
+products. In fact, when Y is a space of continuous function approximated by fully-connected neural
+networks (FNNs), (2) and (3) are technically equivalent, since W can be regarded as the final linear
+output layer of the FNN for approximating u. Therefore, we design two architectures in Section 3,
+one based on (2)/(3) and the other based on (4).
+Next we show two special cases of n = 1 based on theory above. In Example 3, we choose
+the Faber-Schauder basis as a Schauder basis. In Example 4, we have the universal approximation
+theorem for DeepONets.
+Example 3. Assume that K is a compact set in C[0, 1], G : K → C[0, 1] is a continuous operator,
+then for any  > 0, there exist positive integers q, r and a continuous map f : Rq → Rr , such that
+G(v) −
+
+r
+X
+i=1
+
+
+
+0
+1
+q−1
+fi v(
+), v(
+), · · · , v(
+) · ei < 
+q−1
+q−1
+q−1
+
+holds for all v ∈ K, where f = (fi ). {ei }ri=1 are chosen as the piecewise linear functions with grid
+j−1
+j
+i−1
+, and ei ( r−1
+) = δij . In fact, fi denotes the values of G(v) at r−1
+. This example is a
+points r−1
+direct conclusion of Example 1 and Corollary 1(i).
+Example 4 (DeepONet). As a special case, for n = 1 in Theorem 1, we obtain the universal
+approximation theorem for DeepONet (Theorem 2 in [27]).
+
+2.4
+
+Detailed analysis
+
+We first introduce Lemma 1 and Theorem 2, which are used to prove the main theorems in Section
+2.3.
+Lemma 1. Suppose that X1 , · · · , Xn , Y are Banach spaces, Ki ⊂ Xi are compact sets. Assume
+that G : K1 ×· · ·×Kn → Y is a continuous operator, then for any  > 0, there exist positive integers
+pi , continuous vector functionals ĝi ∈ C(Xi , Rpi ), and u ∈ Y p1 ×p2 ×···×pn , such that
+sup kG(v1 , · · · , vn ) − uhĝ1 (v1 ), · · · , ĝn (vn )ik < .
+vi ∈Ki
+
+Lemma 1 gives the approximation theory in the original infinite-dimensional Banach spaces.
+Next we extend to the following result.
+Theorem 2. Suppose that X1 , · · · , Xn , Y are Banach spaces, Ki ⊂ Xi are compact sets, Xi have
+a Schauder basis with canonical projections Pqi . Assume that G : K1 × K2 × · · · × Kn → Y
+is a continuous operator, then for any  > 0, there exist positive integers pi , continuous vector
+functionals ĝi ∈ C(Xi , Rpi ), and u ∈ Y p1 ×p2 ×···×pn , such that
+sup
+vi ∈Ki
+
+G(v1 , · · · , vn ) − uhĝ1 (Pq11 (v1 )), · · · , ĝn (Pqnn (vn ))i <  + M
+
+n
+X
+
+Li (qi )
+
+i=1
+
+holds for arbitrary positive integers qi , where
+Li (qi ) = sup
+
+vi ∈Ki
+
+ĝi ◦ Pqii (vi ) − ĝi (vi ) 1 ,
+
+Note that Li (qi ) → 0 as qi → ∞.
+6
+
+M = max kG(v1 , · · · , vn )k .
+vi ∈Ki
+
+(5)
+
+Theorem 1 can be derived immediately from Theorem 2 as long as we choose sufficiently large qi
+which makes Li small enough. In Eq.
+P (5), the first part of error “” is due to operator approximation,
+while the second part of error “M ni=1 Li (qi )” is due to the projection to finite-dimensional space.
+We note that Li depends on , and thus when  is small which makes Li converge slower, a large
+value of qi is needed.
+Next we show further analysis of these results, which also provides a guidance of the design of
+the network architectures in Section 3.
+Corollary 2 (Effect of a bias). In Theorem 2, if Y = C(K0 ) for compact K0 in a Banach space
+X0 , we take an additional bias b ∈ R, such that Eq. (5) becomes
+sup
+vi ∈Ki ,y∈K0
+
+|G(v1 , · · · , vn )(y) − f (y) ĝ1 (Pq11 (v1 )), · · · , ĝn (Pqnn (vn )) − b| <  + M
+
+n
+X
+
+Li (qi ),
+
+i=1
+
+where f ∈ C(K0 , Rp1 ×p2 ×···×pn ) and
+
+
+1
+M=
+max G(v1 , · · · , vn )(y) −
+min G(v1 , · · · , vn )(y) .
+vi ∈Ki ,y∈K0
+2 vi ∈Ki ,y∈K0
+Corollary 2 suggests us to add a bias, which makes the constant M smaller and thus decreases
+the error. In addition, we explore more characteristics of Theorem 1 for learning multiple operators.
+Corollary 3 (Approximation theory for multiple operators). Suppose that X1 , · · · , Xn , Y1 , · · · , Ym
+are Banach spaces, Ki ⊂ Xi are compact sets, Xi have a Schauder basis with canonical projections
+Pqi = ψqi ◦ ϕiq . Assume that Gj : K1 × · · · × Kn → Yj are continuous operators, then for any  > 0:
+(i) There exist positive integers pi , qi , continuous vector functions gi ∈ C(Rqi , Rpi ), and uj ∈
+Yjp1 ×p2 ×···×pn , such that
+sup
+vi ∈Ki
+
+Gj (v1 , · · · , vn ) − uj hg1 (ϕ1q1 (v1 )), · · · , gn (ϕnqn (vn ))i < ,
+
+j = 1, · · · , m.
+r
+
+(ii) There exist positive integers pi , qi , rj , continuous vector functions gi ∈ C(Rqi , Rpi ), uj ∈ Yj j ,
+and Wj ∈ Rp1 ×···×pn ×rj , such that
+sup
+vi ∈Ki
+
+Gj (v1 , · · · , vn ) − Wj hg1 (ϕ1q1 (v1 )), · · · , gn (ϕnqn (vn )), uj i < ,
+
+j = 1, · · · , m.
+
+If {ejk } is a Schauder basis for Yj , we can further have uj = (ej1 , ej2 , · · · , ejrj )T .
+(iii) There exist positive integers p, qi , continuous functions gki ∈ C(Rqi ), ujk ∈ Yj , such that
+sup
+vi ∈Ki
+
+Gj (v1 , · · · , vn ) −
+
+p
+X
+
+gk1 (ϕ1q1 (v1 )) · · · gkn (ϕnqn (vn )) · ujk < ,
+
+j = 1, · · · , m.
+
+k=1
+
+Corollary 3 can be easily obtained by replacing Y with Y1 × · · · × Ym in Theorem 1. We list it
+here to emphasize that multiple operators defined on the same product spaces can share the same gi
+or gji , which indicates a practical approximation method for operators mapping from X1 × · · · × Xn
+to Y1 × · · · × Ym .
+Corollary 4 (Linear case). In Theorem 1 and Corollary 1, if G is linear with respect to vi , then
+linear gi and gji is sufficient.
+7
+
+By Corollary 4, if we know the operator is linear with respect to vi , then we can choose gi or
+i
+gj as linear maps in practice to make the learning procedure easier and generalize better.
+Property 2. In Theorem 1 and Corollary 1, if gi = Wi · hi for Wi ∈ Rpi ×hi and hi ∈ C(Rqi , Rhi ),
+then Eqs. (2) and (3) can be rewritten as
+(i) supvi ∈Ki G(v1 , · · · , vn ) − ũhh1 (ϕ1q1 (v1 )), · · · , hn (ϕnqn (vn ))i < ,
+(ii) supvi ∈Ki G(v1 , · · · , vn ) − W̃ hh1 (ϕ1q1 (v1 )), · · · , hn (ϕnqn (vn )), ui < ,
+respectively, for a new ũ ∈ Y h1 ×···×hn and a new W̃ ∈ Rh1 ×···×hn ×r .
+Property 2 shows that the linear output layers of gi are allowed to be removed without loss
+of universality. For example, when gi are chosen as FNNs, then we can eliminate the redundant
+parameters of the last linear layer.
+Corollary 5 (Universal approximation theorem for functions). Assume that f : K1 × · · · × Kn → R
+is a continuous function for compact Ki ⊂ Rqi , σ is an activation function which satisfies the
+requirements for approximation theorem of fully-connected neural networks, then for any  > 0:
+(i) There exist integers pi , weights Wi ∈ Rpi ×qi , W ∈ Rp1 ×···×pn and biases bi ∈ Rpi , such that
+kf − W hσ(W1 (·) + b1 ), · · · , σ(Wn (·) + bn )ikC(K1 ×···×Kn ) < .
+(ii) There exist integer p, weights Wi ∈ Rpi ×qi , wji ∈ R1×pi and biases bi ∈ Rpi , such that
+f−
+
+p
+X
+
+
+
+
+wj1 σ(W1 (·) + b1 ) · wj2 σ(W2 (·) + b2 ) · · · wjn σ(Wn (·) + bn )
+
+j=1
+
+< .
+C(K1 ×···×Kn )
+
+When n = 1, Corollary 5 degenerates to the classical universal approximation theorem for fullyconnected neural networks with one hidden layer. Generally speaking, V1 ×· · ·×Vn can be regarded
+as a compact V ∈ Rq1 +···+qn , and thus f can also be approximated by FNNs. Compared to FNNs,
+the two new architectures in Corollary 5 divide the input components into several different groups.
+
+2.5
+
+View through the tensor product of Banach spaces
+
+We have presented all the main theorems and related analysis. Here, we provide another view of
+the theory through the tensor product of Banach spaces, which is optional to the reader, and it
+will not hinder the understanding of the subsequent content without reading this section. We also
+refer the reader to [39] for more details.
+Recall that we aim to learn a continuous operator
+G ∈ C(K, Y ),
+
+K = K1 × · · · × Kn ,
+
+where Ki is a compact set in a Banach space Xi . By the injective tensor product, we have
+ˆ ε Y,
+C(K, Y ) ∼
+= C(K)⊗
+
+8
+
+with the canonical linear map defined as
+J : C(K) ⊗ Y → C(K, Y )
+p
+X
+
+fj ⊗ uj 7→
+
+j=1
+
+p
+X
+
+fj · uj
+
+j=1
+
+Pp
+
+ˆ
+
+j=1 fj ⊗ uj ∈ C(K) ⊗ Y . Here, C(K)⊗ε Y is the completion of C(K) ⊗ Y
+Pp
+with the injective norm ε(µ) = supv∈K
+j=1 fj (v)uj , and we have the isometric isomorphism
+
+for representation µ =
+
+between C(K) ˆ
+⊗ε Y andPC(K, Y ), for convenience, still denoted as J. Then for G ∈ C(K, Y ) and
+any  > 0, there exists pj=1 fj ⊗ uj such that
+
+
+p
+p
+X
+X
+G−
+fj · uj
+= ε J −1 G −
+fj ⊗ uj  < .
+(6)
+j=1
+
+j=1
+
+C(K,Y )
+
+Furthermore, by repeating the following decomposition
+C(K1 × · · · × Kn ) ∼
+=C(K1 × · · · × Kn−1 , C(Kn ))
+∼
+⊗ε C(Kn ),
+=C(K1 × · · · × Kn−1 ) ˆ
+we obtain
+C(K1 × K2 × · · · × Kn , Y ) ∼
+⊗ε C(K2 ) ˆ
+⊗ε · · · ˆ
+⊗ε C(Kn ) ˆ
+⊗ε Y.
+= C(K1 ) ˆ
+
+(7)
+
+Similar to Eq. (6), we have
+G−
+
+p
+X
+
+fj1 · fj2 · · · fjn · uj
+
+j=1
+
+<
+
+(8)
+
+C(K,Y )
+
+for some fji ∈ C(Ki ) and uj ∈ Y . Note that C(Ki ), as a continuous function space on compact Ki ,
+P∞ i i
+i
+has a Schauder basis, denoted as {gki }∞
+k=1 αjk gk , then there exist positive integers
+k=1 . Let fj =
+pi such that
+kG − uhg1 , · · · , gn ikC(K,Y ) < 
+(9)
+
+
+T
+Pp
+1
+n
+for gi = g1i , · · · , gpi i , u =
+. Furthermore, if Y has a Schauder
+j=1 αjk1 · · · αjkn uj
+p1 ×···×pn
+P∞
+basis {ek } and uj = k=1 βjk ek , there exists a r such that
+kG − W hg1 , · · · , gn , eikC(K,Y ) < 
+(10)
+P
+
+p
+1 · · · αn β
+for e = (e1 , · · · , er )T , W =
+α
+∈ Rp1 ×···×pn ×r . Hence, we have also objk
+n+1
+j=1 jk1
+jkn
+tained the three approximation formulas (8–10) corresponding to Eqs. (2–4), with additional information that the components of gi and e are all basis functions.
+Next we analyze the complexity of the approximation in terms of tensor rank. The operator
+G in Eq. (10) is discretely represented by a tensor W ∈ Rp1 ×···×pn ×r , since gi and e are basis.
+The number of parameters of W grows exponentially with respect to n, so directly using W in
+computation is too expensive for large n. However, if we rewrite W as
+
+
+p
+p
+X
+X
+1
+n
+
+
+a1j ⊗ · · · ⊗ anj ⊗ bj
+W =
+αjk1 · · · αjkn βjkn+1 =
+j=1
+
+j=1
+
+9
+
+i ) ∈ Rpi , b = (β ) ∈ Rr , then we have
+for aij = (αjk
+j
+jk
+
+W hg1 , · · · , gn , ei =
+
+p
+X
+
+fj1 · fj2 · · · fjn · uj
+
+(11)
+
+j=1
+
+Ppi
+
+Pr
+
+i gi , u =
+for fji = k=1 αjk
+j
+k=1 βjk ek . Here, W in Eq. (11) is a tensor of rank at most p. From
+k
+this point of view, Eq. (8) also gives a low-rank approximation by the tensor
+
+µ=
+
+p
+X
+
+fj1 ⊗ · · · ⊗ fjn ⊗ uj
+
+j=1
+
+of rank at most p. We note that it is usually difficult to determine the rank of high-order tensors,
+which is NP-hard [10], but in some cases there exist some relationships between the dimension of
+W and its rank p. For example, if W ∈ Rp1 ×p2 ×p3 , then the rank of W has an upper bound [15, 18]:
+rank(W ) ≤ min{p1 p2 , p1 p3 , p2 p3 }.
+In short, we have a more general viewpoint for our results. Assume that Y = C(K0 ) for a
+compact set K0 in a Banach space X0 , then depending on the level of decomposition applied, we
+have the following cases:
+
+(standard NN) (12)
+
+ C(K1 × K2 × · · · × Kn × K0 ),
+C(K1 × K2 × · · · × Kn , Y ) = C(K1 × K2 × · · · × Kn ) ˆ
+⊗ε C(K0 ),
+(DeepONet)
+(13)
+
+
+C(K1 ) ˆ
+⊗ε C(K2 ) ˆ
+⊗ε · · · ˆ
+⊗ε C(Kn ) ˆ
+⊗ε C(K0 ). (MIONet)
+(14)
+We discuss how the three different representations lead to different network architectures as follows.
+• In Eq. (12), we first combine together all the inputs from all the spaces and then pass them
+into a function (i.e., a machine learning model) to approximate G. When we restrict the
+model to be a neural network, then it is a standard NN such as FNN, residual neural network
+(ResNet), convolutional neural network (CNN), etc.
+• In Eq. (13), we first split the input and output space, and have one model for the input
+space and one model for the output space, and then combine them. When both models are
+standard NNs, this leads to the same architecture as DeepONet [27], but DeepONet only
+considers n = 1.
+• In Eq. (14), we split all the spaces with one model for each one, and then combine them to
+compute the output. This leads to our proposed MIONet in Section 3, where each model is
+a standard NN.
+
+3
+
+Operator regression methods
+
+Based on our theory, we propose a new neural operator, MIONet, for learning multiple-input
+operator regression.
+
+3.1
+
+Network architectures
+
+The architectures of MIONet are designed based on Theorem 1 and Corollary 1 with Y = C(K0 )
+for a compact set K0 ⊂ Rd . We design two slightly different versions of MIONet according to
+different formulas as follows.
+10
+
+MIONet (high-rank). We first construct the architecture according to Eqs. (2) and (3). Note
+that the architecture induced by Eq. (3) is technically equivalent to Eq. (2) as we discussed in Section
+2.3. Specifically, we use f ∈ C(K0 , Rp1 ×···×pn ) to denote the u in Eq. (2), and we approximate gi
+and f by independent neural networks denoted by g̃i (called branch net i) and f̃ (called trunk net).
+We also add a trainable bias b ∈ R according to Corollary 2. Then the network is
+*
++
+G̃(v1 , · · · , vn )(y) = f̃ (y)
+|{z}
+
+trunk
+
+g̃1 (ϕ1q1 (v1 )), · · · , g̃n (ϕnqn (vn ))
+|
+|
+{z
+}
+{z
+}
+branch1
+
++ b.
+
+(15)
+
+branchn
+
+MIONet has n independent branch nets and one trunk net. The ith branch net g̃i encodes the
+input function vi , and the trunk net f̃ encodes the input y. The output tensor of the trunk net has
+a high rank as we discussed in Section 2.5. We note that the last linear layer of each branch net
+can be removed by Property 2 to reduce the number of parameters. As a special case, if the image
+space Y is finite dimensional, we also show the corresponding MIONet in Appendix B.
+MIONet (low-rank; the default version). We then construct MIONet according to Eq. (4).
+Specifically, gi = (g1i , · · · , gpi )T ∈ C(Rqi , Rp ) and f = (u1 , · · · , up )T ∈ C(K0 , Rp ) are approximated
+by neural networks g̃i (called branch net i) and f̃ (called trunk net). Then the network (Fig. 1) is
+
+
+
+G̃(v1 , · · · , vn )(y) = S g̃1 (ϕ1q1 (v1 ))
+|
+{z
+}
+branch1
+
+···
+
+g̃n (ϕnqn (vn ))
+|
+{z
+}
+branchn
+
+
+f̃ (y)  + b,
+|{z}
+
+(16)
+
+trunk
+
+where
+is the Hadamard product (i.e., element-wise product), S is the summation of all the
+components of a vector, and b ∈ R is a trainable bias. This MIONet is a low-rank version of
+the MIONet (high-rank) above, which greatly reduces the number of parameters of the trunk net.
+Furthermore, if the output function is also defined on a product space, e.g., C(K0 ) = C(K01 ×K02 ),
+we can choose to further decompose it into C(K01 ) ˆ
+⊗ε C(K02 ), and the corresponding MIONet can
+be built similarly.
+Connections to DeepONet. Our proposed MIONet is related to DeepONet. When there is
+only one input function, i.e., n = 1, MIONet becomes DeepONet with one branch net and one
+trunk net.
+Remark. In this work, we mainly consider MIONet (low-rank), as MIONet (high-rank) is computationally expensive. We note that MIONet is a high-level architecture, where the neural networks
+g̃i and f̃ can be chosen as any valid NNs, such as FNN, ResNet, CNN, etc., depending on the specific problem. All the techniques developed for DeepONet in [28] can be directly used for MIONet.
+For example, we can encode the periodicity in the trunk net to ensure that the predict functions
+from MIONet are always periodic. We refer the reader to [28] for more details.
+
+3.2
+
+Other computational details
+
+Data. One data point in the dataset is comprised of input functions and their corresponding
+output function, i.e., (v1 , · · · , vn , G(v1 , · · · , vn )). In the first step of MIONet, we project the input
+functions vi onto finite-dimensional spaces as stated in Eqs. 15 and 16, which can be done separately
+
+11
+
+𝒢 𝑣1 , … , 𝑣𝑛 𝑦
+Sum
+
++
+
+Element-wise product
+
+
+
+Branch net1
+
+……
+
+Branch net𝑛
+
+𝜑𝑞11 𝑣1
+
+Coordinate projection
+
+𝜑𝑞𝑛𝑛 𝑣𝑛
+
+𝑣1
+
+Trunk net
+
+𝑦
+
+𝑣𝑛
+
+Figure 1: Architecture of MIONet. All the branch nets and the trunk net have the same
+number of outputs, which are merged together via the Hadamard product and then a summation.
+before the network training. Hence, the network input in practice is (ϕ1q1 (v1 ), · · · , ϕnqn (vn )), and
+then the dataset takes the form
+
+N
+
+
+
+
+
+
+
+
+
+k
+k
+n
+k
+1
+k
+
+
+T = ϕq1 (v1 ), · · · , ϕqn (vn ), yk , G v1 , · · · , vn (yk )
+,
+(17)
+
+
+{z }
+| {z } |{z} |
+
+
+{z
+}
+ |branch
+
+trunk
+branch
+output
+
+n
+
+1
+
+k=1
+
+where yk ∈ K0 ⊂ Rd is a single point location in the domain of the output function.
+Training.
+
+For a training dataset T , in this study we use a standard mean squared error (MSE):
+N
+
+1 X
+MSE =
+|sk − G̃(v1k , · · · , vnk )(yk )|2 .
+N
+k=1
+
+We also provides alternative losses via numerical integration in Appendix C.
+Inference. For new input functions v1 , · · · , vn , the prediction is simply given by G̃(v1 , · · · , vn ).
+We note that G̃(v1 , · · · , vn ) is a function given by neural networks, which can be evaluated at
+arbitrary points without interpolation.
+
+4
+
+Numerical results
+
+To demonstrate the capability of MIONet, we learn three different operators of ODEs and PDEs.
+In the experiments, we directly evaluate the function values at uniform grid points as the input
+of branch nets, i.e., each ϕ takes 100 equidistant sampling points in [0, 1] for each input function.
+The branch and trunk nets are all chosen as fully-connected neural networks (FNNs) unless noted
+otherwise. Each branch or trunk net has the same number of neurons (i.e., width) for each layer.
+12
+
+The activation in all networks is set to ReLU. We train all the networks by the Adam optimizer [12].
+To evaluate the performance of the networks, we compute the L2 relative error of the predictions,
+and for each case, five independent training trials are performed to compute the mean error and
+the standard deviation. The code in this study is implemented by using the library DeepXDE [29],
+and is publicly available from the GitHub repository https://github.com/lu-group/mionet.
+MIONet is the first neuron operator designed for multiple inputs with theoretical guarantees,
+so there is no other network that we can directly compare MIONet with. In order to compare
+MIONet with DeepONet, we simply concatenate all the input functions together as the input of
+DeepONet branch net.
+
+4.1
+
+An ODE system
+
+We first consider a nonlinear ODE system:
+du1
+= u2 ,
+dt
+
+du2
+= −f1 (t) sin(u1 ) + f2 (t),
+dt
+
+t ∈ [0, 1],
+
+with an initial condition u1 (0) = u2 (0) = 0. We learn the operator mapping from f1 and f2 to one
+of the ODE solutions u1 :
+G : (f1 , f2 ) 7→ u1 .
+To generate the dataset, f1 and f2 are both sampled from a Gaussian random field (GRF)
+GP(0, kl (x1 , x2 )),
+where the covariance kernel kl (x1 , x2 ) = exp(−kx1 − x2 k2 /2l2 ) is the Gaussian kernel with a lengthscale parameter l. Here, we choose l = 0.2. We set the number of functions in the training/test set
+to 1000, and for each couple of (f1 , f2 ) we get the numerical solution of u1 at 100 equidistant grid
+points in [0, 1]. We train the networks for 100000 epochs with learning rate 0.001.
+MIONet has the L2 relative error of 1.69% (Table 1), which outperforms DeepONet with almost
+the same number of parameters (2.41%). We also perform a grid search for the depth and width
+to find the best accuracy of DeepONet, and the best DeepONet accuracy is 2.26%, which is still
+worse than MIONet.
+
+MIONet
+DeepONet (same size)
+DeepONet (best)
+
+Depth
+
+Width
+
+No. of parameters
+
+L2 relative error
+
+2
+2
+2
+
+200
+312
+300
+
+161K
+161K
+151K
+
+1.69 ± 0.13%
+2.41 ± 0.27%
+2.26 ± 0.14%
+
+Table 1: MIONet and DeepONet for an ODE system. DeepONet (same size) has the same
+number of parameters as MIONet. DeepONet (best) is the best result chosen from depth 2–5 and
+width 100–400.
+
+4.2
+
+A diffusion-reaction system
+
+We consider a nonlinear diffusion-reaction system
+
+
+∂u
+∂
+∂u
+=
+D(x)
++ ku2 + g(x),
+∂t
+∂x
+∂x
+
+13
+
+x ∈ [0, 1], t ∈ [0, 1],
+
+with zero initial and boundary conditions, where D(x) = 0.01(|f (x)| + 1) and k = 0.01 is the
+reaction rate. We learn the operator
+G : (D, g) 7→ u.
+In the dataset, f and g are generated by GRF with length scale 0.2. We set the number of
+couples of (D, g) in the training dataset to 1000 and test dataset to 5000, and for each couple we
+solve u in a grid with 100 × 100 equidistant points. We train each case for 100000 epochs with
+learning rate 0.001.
+The error of MIONet is significantly less than that of DeepONet of similar size and also the
+best DeepONet (Table 2). In Fig. 2, we show an example of the inputs and the corresponding PDE
+solution. We also show the prediction and point-wise error of DeepONet and MIONet.
+
+MIONet
+DeepONet (same size)
+DeepONet (best)
+
+Depth
+
+Width
+
+Parameters
+
+L2 relative error
+
+2
+2
+2
+
+200
+312
+400
+
+161K
+161K
+242K
+
+1.97 ± 0.11%
+5.25 ± 0.38%
+5.18 ± 0.11%
+
+Table 2: MIONet and DeepONet for a diffusion-reaction system. DeepONet (same size)
+has the same number of parameters as MIONet. DeepONet (best) is the best DeepONet result
+chosen from depth 2–5 and width 100–400.
+
+4.3
+
+An advection-diffusion system
+
+We consider an advection-diffusion system
+∂u ∂u
+∂2u
++
+− D(x) 2 = 0,
+∂t
+∂x
+∂x
+
+x ∈ [0, 1], t ∈ [0, 1],
+
+with the periodic boundary condition and initial condition u0 (x) = u(x, 0) = f1 (sin2 (πx)), where
+D(x) = 0.05|f2 (sin2 (πx)| + 0.05 is the diffusion coefficient. We aim to learn the operator
+G : (D, u0 ) 7→ u.
+In the dataset, f1 and f2 are sampled from a GRF with the length scale 0.5. The training/test
+dataset consists of 1000 couples of (D, u0 ). For each (D, u0 ), we solve the solution u numerically
+in a grid of size 100 × 100, and randomly select 100 values of u out of the 10000 grid points. We
+train each case for 100000 epochs with learning rate 0.0002.
+Here, we show how to encode the prior information of this problem. Since the operator G is
+linear with respect to the initial condition u0 , we choose the branch net for u0 in MIONet to be a
+linear network, i.e., a linear layer without bias. Moreover, because the solution u is periodic with
+respect to x, we decompose the single trunk net to two independent networks, one for x and one
+for t. For the trunk net of x, we apply a periodic layer as the input of FNN [28]:
+Trunk(x) = FNN(cos(2πx), sin(2πx), cos(4πx), sin(4πx)),
+
+x ∈ R.
+
+It is easy to check that by using these cos and sin features, MIONet is automatically periodic with
+respect to x. We present the illustration of the modified MIONet in Fig. 3.
+The accuracy of different networks are shown in Table 3. MIONet performs significantly better than DeepONet (same size) and DeepONet (best). By encoding the periodicity information,
+MIONet (periodic) obtains the smallest prediction error. An example of prediction of MIONet
+(periodic) is shown in Fig. 4.
+14
+
+0.25
+0.00
+0.25
+
+0.010
+0.0
+
+0.2
+
+0.4
+
+x
+
+0.6
+
+0.8
+
+1.0
+
+t
+
+D(x)
+
+0.030
+
+0.02
+0.01
+
+g(x)
+
+Reference
+
+1
+
+0.03
+
+0.5
+
+0.050
+0.090
+
+0.0
+
+0.2
+
+0.4
+
+x
+
+0.6
+
+0.8
+
+MIONet
+
+1
+
+0
+
+1.0
+
+0
+
+0.5
+
+x
+
+Error
+
+1
+
+0.030
+
+1
+
+0.015
+
+0.050
+
+0.010
+t
+
+t
+
+0.010
+0.5
+
+0.5
+0.005
+
+0.090
+0
+
+0
+
+0.5
+
+x
+
+1
+
+DeepONet
+
+1
+
+0.125
+
+0
+
+0
+
+0.5
+
+x
+
+1
+
+Error
+
+1
+
+0.030
+
+0.010
+t
+
+t
+
+0.050
+
+0.5
+0.005
+
+0.090
+0
+
+0
+
+0.5
+
+x
+
+1
+
+0.000
+
+0.015
+
+0.010
+0.5
+
+0.125
+
+0.125
+
+0
+
+0
+
+0.5
+
+x
+
+1
+
+0.000
+
+Figure 2: Example of the diffusion-reaction system. (Top) Examples of the input functions
+(left) and the reference solution (right). (Middle) MIONet prediction and corresponding absolute
+error. (Bottom) DeepONet prediction and corresponding absolute error.
+
+MIONet
+MIONet (periodic)
+DeepONet (same size)
+DeepONet (best)
+
+Depth
+
+Width
+
+Parameters
+
+L2 relative error
+
+3
+3
+3
+3
+
+300
+248
+343
+300
+
+422K
+422K
+424K
+332K
+
+1.98 ± 0.07%
+1.29 ± 0.09%
+7.83 ± 0.49%
+7.70 ± 0.69%
+
+Table 3: MIONet and DeepONet for the advection-diffusion system. MIONet (periodic)
+has a periodic layer for the trunk net of x. MIONet, MIONet (periodic), and DeepONet (same
+size) have the same number of parameters. DeepONet (best) is the best DeepONet chosen from
+depth 2–5 and width 100–400.
+15
+
+
+……
+
+
+……
+
+Trunk net
+
+Trunk net2
+
+FNN
+
+(cos 2𝜋𝑥 , sin 2𝜋𝑥 , cos 4𝜋𝑥 , sin 4𝜋𝑥 )
+(𝑥, 𝑡)
+
+𝑡
+
+𝑥
+
+0.12
+0.11
+0.10
+0.09
+0.08
+
+u0(x)
+
+D(x)
+
+Figure 3: Architecture of the modified MIONet for the advection-diffusion system.
+There are two trunk nets, one for x and one for t. The trunk net of x has a periodic layer.
+
+0.0
+
+0.2
+
+0.4
+
+x
+
+0.6
+
+0.8
+
+0.0
+
+0.2
+
+Reference
+
+1
+
+1.0
+
+0.25
+0.00
+0.25
+0.50
+0.75
+1.00
+
+0.2
+
+0.4
+
+x
+
+0.6
+
+0.8
+
+0.2
+
+MIONet
+
+1
+
+0.5
+
+0.5
+
+x
+
+1
+
+0.5
+
+0.6
+
+0
+1.0
+
+0.010
+
+t
+
+t
+
+t
+0
+
+0.015
+
+0.2
+
+0.6
+
+0
+
+Error
+
+1
+
+0.2
+0.5
+
+1.0
+
+0
+
+0.5
+
+x
+
+1
+
+0.005
+0
+
+1.0
+
+0
+
+0.5
+
+x
+
+1
+
+Figure 4: Prediction of MIONet (periodic) for the advection-diffusion system.
+
+16
+
+0.000
+
+5
+
+Conclusions
+
+In this study, we aim to learn an operator mapping from a product of multiple Banach spaces
+to another Banach space. Our main contribution is that for the first time, we provide universal
+approximation theorems for multiple-input operator regression based on tensor product of Banach
+spaces. Based on the theory and a low-rank tensor approximation, we propose a new network
+architecture, MIONet, which consists of multiple branch nets for encoding the input functions and
+one trunk net for encoding the domain of the output function. To show the effectiveness of MIONet,
+we have performed three experiments including an ODE system, a diffusion-reaction system and
+an advection-diffusion system. We also show that it is flexible to customize MIONet to encode the
+prior knowledge.
+In future work, more experiments should be done to test the performance of MIONet on diverse problems. Moreover, MIONet can be viewed as an extension of DeepONet from a single
+branch net to multiple branch nets, and thus recent developments and extensions of DeepONet
+(see the discussion in the introduction) can be directly applied to MIONet. For example, similar
+to DeepONet with proper orthogonal decomposition (POD-DeepONet) [28], we can employ POD
+in MIONet to develop POD-MIONet. We can also embed physics into the loss function [42, 9] of
+MIONet to develop physics-informed MIONet. These techniques will further improve the accuracy
+and efficiency of MIONet.
+
+A
+
+Proofs in this study
+
+Proof of Property 1. Since X is a Banach space, Pn is uniformly bounded by the basis constant
+C. For any  > 0, we choose finite points {xi }ki=1 ⊂ K, such that the union of open balls ∪ki=1 B(xi , δ)
+
+covers K, where δ = 2(1+C)
+. There exists a large integer m ∈ N∗ such that kxi − Pn (xi )k < 2 holds
+for all 1 ≤ i ≤ k and n ≥ m. When n ≥ m, for any x ∈ K, assume that x ∈ B(xj , δ), then
+kx − Pn (x)k = k(I − Pn )(x − xj ) + xj − Pn (xj )k
+≤ kI − Pn k · kx − xj k + kxj − Pn (xj )k
+
+
+< (1 + C) ·
++
+2(1 + C) 2
+= .
+
+Proof of Lemma 1. As G is uniformly continuous on K1 × · · · × Kn , there exists a δ > 0 such
+that kG(v1 , · · · , vn ) − G(v10 , · · · , vn0 )k <  holds for all vi , vi0 ∈ Ki , kvi − vi0 k < δ, 1 ≤ i ≤ n. Due to
+i
+⊂ Ki such that
+the compactness of Ki , we can choose {νji }pj=1
+pi
+[
+
+B(νji , δ) ⊃ Ki ,
+
+(18)
+
+j=1
+
+where B(νji , δ) denotes the open ball centered at νji with radius δ, 1 ≤ i ≤ n. Now define g̃i : Xi →
+Rpi as
+g̃i (x) = (ReLU(δ − kx − ν1i k), ReLU(δ − kx − ν2i k), · · · , ReLU(δ − kx − νpi i k))T ,
+
+17
+
+and ĝi (x) : Xi → Rpi as
+ĝi (x) =
+
+g̃i (x)
+,
+kg̃i (x)k1 + d(x, Ki )
+
+where ReLU(x) := max(x, 0), and d(x, Ki ) := inf x0 ∈Ki kx − x0 k represents the distance between x
+and Ki . ĝi is in fact the normalization of g̃i on Ki , and the condition (18) guarantees that ĝi (x)
+is well defined everywhere, i.e., kg̃i (x)k1 is nonzero on Ki while d(x, Ki ) is nonzero outside Ki .
+Moreover, define u ∈ Y p1 ×p2 ×···×pn as
+u = (G(νj11 , νj22 , · · · , νjnn ))p1 ×p2 ×···×pn .
+We will show that the constructed ĝi and u are what we need.
+Denote ĝi = (ĝi1 , · · · , ĝipi )T and define Ai [v] = {j ∈ {1, 2, · · · , pi }|kνji − vk < δ} for v ∈ Ki .
+Given arbitrarily vi ∈ Ki , we have
+kG(v1 , · · · , vn ) − uhĝ1 (v1 ), · · · , ĝn (vn )ik
+= G(v1 , · · · , vn ) −
+
+X
+
+G(νj11 , νj22 , · · · , νjnn ) · ĝ1j1 (v1 ) · · · ĝnjn (vn )
+
+j1 ,··· ,jn
+
+X
+
+=
+
+G(v1 , · · · , vn ) · ĝ1j1 (v1 ) · · · ĝnjn (vn ) −
+
+j1 ,··· ,jn
+
+X
+
+=
+
+X
+
+G(νj11 , νj22 , · · · , νjnn ) · ĝ1j1 (v1 ) · · · ĝnjn (vn )
+
+j1 ,··· ,jn
+
+(G(v1 , · · · , vn ) − G(νj11 , νj22 , · · · , νjnn )) · ĝ1j1 (v1 ) · · · ĝnjn (vn )
+
+j1 ,··· ,jn
+
+(G(v1 , · · · , vn ) − G(νj11 , νj22 , · · · , νjnn )) · ĝ1j1 (v1 ) · · · ĝnjn (vn )
+
+X
+
+=
+
+ji ∈Ai [vi ]
+1≤i≤n
+
+X
+
+≤
+
+G(v1 , · · · , vn ) − G(νj11 , νj22 , · · · , νjnn ) · ĝ1j1 (v1 ) · · · ĝnjn (vn )
+
+ji ∈Ai [vi ]
+1≤i≤n
+
+X
+
+<
+
+ · ĝ1j1 (v1 ) · · · ĝnjn (vn )
+
+ji ∈Ai [vi ]
+1≤i≤n
+
+=.
+
+Proof of Theorem 2. For any  > 0, there exist pi , ĝi , u as defined in the proof of Lemma 1,
+such that
+sup kG(v1 , · · · , vn ) − uhĝ1 (v1 ), · · · , ĝn (vn )ik < .
+vi ∈Ki
+
+18
+
+Denote M = maxvi ∈Ki kG(v1 , · · · , vn )k, and then for positive integers qi ,
+uhĝ1 ◦ Pq11 (v1 ), · · · , ĝn ◦ Pqnn (vn )i − uhĝ1 (v1 ), · · · , ĝn (vn )i
+X
+
+=
+
+G(νi11 , νi22 , · · · , νinn ) · (ĝ1i1 ◦ Pq11 (v1 ) · · · ĝnin ◦ Pqnn (vn ) − ĝ1i1 (v1 ) · · · ĝnin (vn ))
+
+i1 ,··· ,in
+
+X
+
+≤M
+
+ĝ1i1 ◦ Pq11 (v1 ) · · · ĝnin ◦ Pqnn (vn ) − ĝ1i1 (v1 ) · · · ĝnin (vn )
+
+i1 ,··· ,in
+n
+X
+
+X
+
+=M
+
+
+
+k−1
+Y
+
+
+i1 ,··· ,in k=1
+n
+X X
+
+≤M
+
+k−1
+Y
+
+n
+Y
+
+
+
+n X
+X
+
+≤M
+
+i
+
+j=1
+
+j=k+1
+
+k−1
+Y
+
+n
+Y
+
+
+k=1 i1 ,··· ,in
+
+i
+
+j=k+1
+
+ĝjj ◦ Pqjj (vj ) ·
+i
+
+ĝjj ◦ Pqjj (vj ) ·
+
+j=1
+
+
+
+
+
+ĝjj (vj ) · ĝkik ◦ Pqkk (vk ) − ĝkik (vk ) 
+
+j=1
+
+i1 ,··· ,in k=1
+
+=M
+
+i
+
+ĝjj ◦ Pqjj (vj ) ·
+
+
+
+
+n
+X
+X
+
+
+
+n
+Y
+
+
+i
+
+ĝjj (vj ) · ĝkik ◦ Pqkk (vk ) − ĝkik (vk ) 
+
+i
+
+ĝjj (vj ) · ĝkik ◦ Pqkk (vk ) − ĝkik (vk ) 
+
+j=k+1
+
+ĝkik ◦ Pqkk (vk ) − ĝkik (vk )
+
+k=1 ik
+n
+X
+
+=M
+
+ĝk ◦ Pqkk (vk ) − ĝk (vk )
+
+k=1
+
+Note that
+
+1
+
+.
+
+i
+i ĝj (x) ∈ [0, 1] for all x ∈ Xj . Therefore,
+
+P
+
+G(v1 , · · · , vn ) − uhĝ1 (Pq11 (v1 )), · · · , ĝn (Pqnn (vn ))i
+≤ kG(v1 , · · · , vn ) − uhĝ1 (v1 ), · · · , ĝn (vn )ik +
+uhĝ1 (Pq11 (v1 )), · · · , ĝn (Pqnn (vn ))i − uhĝ1 (v1 ), · · · , ĝn (vn )i
+n
+X
+ĝk ◦ Pqkk (vk ) − ĝk (vk )
+< + M
+≤ + M
+
+k=1
+n
+X
+
+1
+
+Lk (qk ).
+
+k=1
+
+Proof of Theorem 1. By Theorem 2, for any  > 0, there exist positive integers pi , qi , continuous
+vector functionals ĝi ∈ C(Xi , Rpi ), and u ∈ Y p1 ×p2 ×···×pn , such that
+sup
+vi ∈Ki
+
+G(v1 , · · · , vn ) − uhĝ1 (Pq11 (v1 )), · · · , ĝn (Pqnn (vn ))i < .
+
+Now define
+gi = ĝi ◦ ψqi i ,
+and then we obtain this theorem.
+
+19
+
+Proof of Corollary 1.
+(2)⇒(4): Denote gi = (gji ), and we have
+X
+
+uhg1 , · · · , gn i =
+
+gj11 · · · gjnn uj1 ···jn ,
+
+j1 ,··· ,jn
+
+which is indeed the form (4) by rearrangement and relabeling of the summation.
+(4)⇒(3): Denote gi = (gji ), u = (uj ), and then
+p
+X
+
+gj1 · · · gjn uj =
+
+j=1
+
+X
+
+δj1 ···jn+1 gj11 · · · gjnn ujn+1 = (δj1 ···jn+1 )hg1 , · · · , gn , ui,
+
+j1 ,··· ,jn+1
+
+where δj1 ···jn+1 is equal to 1 if j1 = · · · = jn+1 , otherwise it is 0. Moreover, if uj is approximated
+P
+by ũj = rk=1 αkj ek , denote ũ = (ũj ), e = (ej ), and then
+(δj1 ···jn+1 )hg1 , · · · , gn , ũi = W hg1 , · · · , gn , ei,
+P
+j
+where W = ( jn+1 δj1 ···jn+1 αkn+1 ).
+(3)⇒(2): Denote W = (wj1 ···jn+1 ), u = (uj ), so
+W hg1 , · · · , gn , ui = ũhg1 , · · · , gn i,
+P
+where ũ = ( jn+1 wj1 ···jn+1 ujn+1 ).
+Proof of Corollary 2. Replace G(v1 , · · · , vn ) by G(v1 , · · · , vn ) − b in Theorem 2, where
+
+
+1
+b=
+max G(v1 , · · · , vn )(y) +
+min G(v1 , · · · , vn )(y) .
+vi ∈Ki ,y∈K0
+2 vi ∈Ki ,y∈K0
+
+Proof of Corollary 3.
+
+Replace Y by Y1 × · · · × Ym in Theorem 1.
+
+Proof of Corollary 4. Without loss of generality, assume that G is linear with respect to v1 ,
+that is, there is a continuous operator defined on X1 × K2 × · · · × Kn which is linear with respect
+to v1 and equal to G limited on K1 × · · · × Kn , and for convenience we still denote it as G. Suppose
+that {ei }, {e∗i } are the Schauder basis and coordinate functionals of X1 . For  > 0, according to
+the continuity of G and Property 1, there exists a positive integer q1 such that
+sup
+vi ∈Ki
+
+
+G(v1 , v2 , · · · , vn ) − G(Pq11 (v1 ), v2 , · · · , vn ) < .
+2
+
+Denote M = maxv1 ∈K1 ,1≤j≤q1 |e∗j (v1 )|. Now define continuous operators Gj : K2 × · · · × Kn → Y as
+Gj (v2 , · · · , vn ) = G(ej , v2 , · · · , vn ),
+
+1 ≤ j ≤ q1 .
+
+Then by Corollary 3, there exist positive integers pi , qi , continuous vector functions gi ∈ C(Rqi , Rpi ),
+and uj = (ujk2 ···kn ) ∈ Y p2 ×···×pn , 2 ≤ i ≤ n, 1 ≤ j ≤ q1 , such that
+sup
+vi ∈Ki
+
+Gj (v2 , · · · , vn ) − uj hg2 (ϕ2q2 (v2 )), · · · , gn (ϕnqn (vn ))i <
+20
+
+
+,
+2q1 M
+
+j = 1, · · · , q1 .
+
+Let p1 = q1 , u = (ukk12 ···kn ) ∈ Y p1 ×···×pn , g1 : Rq1 → Rq1 is the identity map, then
+G(Pq11 (v1 ), v2 , · · · , vn ) − uhg1 (ϕ1q1 (v1 )), · · · , gn (ϕnqn (vn ))i
+q1
+X
+
+=
+
+e∗j (v1 )G(ej , v2 , · · · , vn ) −
+
+j=1
+
+≤
+
+q
+1
+X
+
+q1
+X
+
+e∗j (v1 )uj hg2 (ϕ2q2 (v2 )), · · · , gn (ϕnqn (vn ))i
+
+j=1
+
+|e∗j (v1 )| · G(ej , v2 , · · · , vn ) − uj hg2 (ϕ2q2 (v2 )), · · · , gn (ϕnqn (vn ))i
+
+j=1
+
+<q1 · M ·
+
+
+
+= .
+2q1 M
+2
+
+Therefore,
+sup
+vi ∈Ki
+
+G(v1 , · · · , vn ) − uhg1 (ϕ1q1 (v1 )), · · · , gn (ϕnqn (vn ))i <
+
+
+
++ = ,
+2 2
+
+where g1 is linear. The proofs for the other two cases are similar.
+i
+i )
+Proof of Property 2. Assume that Wi = (wji )pi = (wjk
+pi ×hi , hi = (Hj )hi , then for u =
+(uj1 ···jn ) ∈ Y p1 ×p2 ×···×pn ,
+X
+uhg1 , · · · , gn i =
+uj1 ···jn (wj11 h1 ) · · · (wjnn hn )
+j1 ,··· ,jn
+
+=
+
+X
+
+uj1 ···jn (
+
+X
+
+j1 ,··· ,jn
+
+=
+
+X
+
+k
+
+(
+
+X
+
+X
+wjnn k Hkn )
+wj11 k Hk1 ) · · · (
+k
+
+uj1 ···jn wj11 k1 · · · wjnn kn )Hk11 · · · Hknn
+
+k1 ,··· ,kn j1 ,··· ,jn
+
+=ũhh1 , · · · , hn i,
+P
+where ũ = ( j1 ,··· ,jn uj1 ···jn wj11 k1 · · · wjnn kn )h1 ×···×hn . Briefly speaking, the linear output layers of gi
+can be merged into u. The proof for the other case is similar.
+Proof of Corollary 5. We take Xi = Rqi and Y = R in Lemma 1. Then the corollary can
+be obtained by the universal approximation theorem for fully-connected neural networks with one
+hidden layer and Property 2.
+
+B
+
+MIONet for finite-dimensional image space
+
+Corollary 1(i) also gives the approximation theorem for the operators projecting onto both finitedimensional domain and image space. Given (v1 , · · · , vn , G(v1 , · · · , vn )), we first transform them to
+a training set
+{ϕ1q1 (v1k ), · · · , ϕnqn (vnk ), ϕYm (G(v1k , · · · , vnk ))}N
+k=1 ,
+Y
+∗
+∗
+T
+by determining basis elements {ei }m
+i=1 for Y with ϕm (x) = (e1 (x), · · · , em (x)) . Then the loss
+function can be written as
+
+MSE =
+
+N
+
+m
+2
+1 X Y
+ϕm (G(v1k , · · · , vnk )) − Wi hg̃1 (ϕ1q1 (v1k )), · · · , g̃n (ϕnqn (vnk ))i
+−b ,
+mN
+i=1
+2
+k=1
+
+21
+
+where g̃i : Rqi → Rpi are neural networks to be trained, Wi ∈ Rp1 ×···×pn , b = (bi ) ∈ Rm are
+trainable weights and bias respectively. After training, we make prediction by
+G̃(v1 , · · · , vn ) =
+
+m
+X
+
+
+Wi hg̃1 (ϕ1q1 (v1 )), · · · , g̃n (ϕnqn (vn ))i + bi · ei .
+
+i=1
+
+C
+
+Loss function via numerical integration
+
+Suppose that Y = C[0, 1]. For T = {v1k , · · · , vnk , G(v1k , · · · , vnk )}N
+k=1 , the general loss function can be
+computed as
+N
+1 X
+I(G(v1k , · · · , vnk ) − G̃(v1k , · · · , vnk )),
+L(T ) =
+N
+k=1
+
+where I(·) is a numerical integration. For example, for xk uniformly sampled on [0, 1] (0 = x0 <
+· · · < xm = 1), we have the following choices of I(·):
+• rectangle rule:
+1
+Irec (f ) =
+m
+• trapezoidal rule:
+1
+Itra (f ) =
+m
+
+
+!
+m
+X
+xk−1 + xk
+f
+,
+2
+k=1
+
+m
+X
+k=1
+
+• Monte Carlo integration:
+1
+Imon (f ) =
+m
+
+f (xk−1 ) + f (xk )
+2
+m
+X
+
+!
+,
+
+!
+f (xk ) .
+
+k=1
+
+For a high-dimensional integration, Monte Carlo integration usually performs better.
+
+References
+[1] K. Bhattacharya, B. Hosseini, N. B. Kovachki, and A. M. Stuart. Model reduction and neural
+networks for parametric PDEs. arXiv preprint arXiv:2005.03180, 2020.
+[2] S. Cai, Z. Wang, L. Lu, T. A. Zaki, and G. E. Karniadakis. DeepM&Mnet: Inferring the
+electroconvection multiphysics fields based on operator approximation by neural networks.
+Journal of Computational Physics, 436:110296, 2021.
+[3] T. Chen and H. Chen. Universal approximation to nonlinear operators by neural networks with
+arbitrary activation functions and its application to dynamical systems. IEEE Transactions
+on Neural Networks, 6(4):911–917, 1995.
+[4] Y. Chen, L. Lu, G. E. Karniadakis, and L. Dal Negro. Physics-informed neural networks for
+inverse problems in nano-optics and metamaterials. Optics Express, 28(8):11618–11633, 2020.
+[5] M. Daneker, Z. Zhang, G. E. Karniadakis, and L. Lu. Systems biology: Identifiability analysis
+and parameter identification via systems-biology informed neural networks. arXiv preprint
+arXiv:2202.01723, 2022.
+22
+
+[6] B. Deng, Y. Shin, L. Lu, Z. Zhang, and G. E. Karniadakis. Convergence rate of DeepONets for learning operators arising from advection-diffusion equations. arXiv preprint
+arXiv:2102.10621, 2021.
+[7] P. C. Di Leoni, L. Lu, C. Meneveau, G. Karniadakis, and T. A. Zaki. DeepONet prediction of
+linear instability waves in high-speed boundary layers. arXiv preprint arXiv:2105.08697, 2021.
+[8] M. Fabian, P. Habala, P. Hájek, V. Montesinos, and V. Zizler. Banach space theory: the basis
+for linear and nonlinear analysis. Springer Science & Business Media, 2011.
+[9] S. Goswami, M. Yin, Y. Yu, and G. E. Karniadakis. A physics-informed variational DeepONet
+for predicting crack path in quasi-brittle materials. Computer Methods in Applied Mechanics
+and Engineering, 391:114587, 2022.
+[10] H. Johan. Tensor rank is NP-complete. Journal of Algorithms, 4(11):644–654, 1990.
+[11] G. E. Karniadakis, I. G. Kevrekidis, L. Lu, P. Perdikaris, S. Wang, and L. Yang. Physicsinformed machine learning. Nature Reviews Physics, 3(6):422–440, 2021.
+[12] D. P. Kingma and J. Ba. Adam: A method for stochastic optimization. In 3rd International
+Conference on Learning Representations, ICLR 2015, San Diego, CA, USA, May 7-9, 2015,
+Conference Track Proceedings, 2015.
+[13] G. Kissas, J. Seidman, L. F. Guilhoto, V. M. Preciado, G. J. Pappas, and P. Perdikaris.
+Learning operators with coupled attention. arXiv preprint arXiv:2201.01032, 2022.
+[14] G. Kissas, Y. Yang, E. Hwuang, W. R. Witschey, J. A. Detre, and P. Perdikaris. Machine
+learning in cardiovascular flows modeling: Predicting arterial blood pressure from non-invasive
+4D flow MRI data using physics-informed neural networks. Computer Methods in Applied
+Mechanics and Engineering, 358:112623, 2020.
+[15] T. G. Kolda and B. W. Bader. Tensor decompositions and applications. SIAM Review,
+51(3):455–500, 2009.
+[16] N. Kovachki, S. Lanthaler, and S. Mishra. On universal approximation and error bounds for
+Fourier neural operators. Journal of Machine Learning Research, 22:Art–No, 2021.
+[17] N. Kovachki, Z. Li, B. Liu, K. Azizzadenesheli, K. Bhattacharya, A. Stuart, and A. Anandkumar.
+Neural operator: Learning maps between function spaces.
+arXiv preprint
+arXiv:2108.08481, 2021.
+[18] J. B. Kruskal. Rank, decomposition, and uniqueness for 3-way and n-way arrays. Multiway
+data analysis, pages 7–18, 1989.
+[19] S. Lanthaler, S. Mishra, and G. E. Karniadakis. Error estimates for DeepONets: A deep
+learning framework in infinite dimensions. arXiv preprint arXiv:2102.09618, 2021.
+[20] Z. Li, N. Kovachki, K. Azizzadenesheli, B. Liu, K. Bhattacharya, A. Stuart, and A. Anandkumar. Fourier neural operator for parametric partial differential equations. arXiv preprint
+arXiv:2010.08895, 2020.
+[21] Z. Li, N. Kovachki, K. Azizzadenesheli, B. Liu, K. Bhattacharya, A. Stuart, and A. Anandkumar. Neural operator: Graph kernel network for partial differential equations. arXiv preprint
+arXiv:2003.03485, 2020.
+23
+
+[22] C. Lin, Z. Li, L. Lu, S. Cai, M. Maxey, and G. E. Karniadakis. Operator learning for predicting
+multiscale bubble growth dynamics. The Journal of Chemical Physics, 154(10):104118, 2021.
+[23] C. Lin, M. Maxey, Z. Li, and G. E. Karniadakis. A seamless multiscale operator neural network
+for inferring bubble dynamics. Journal of Fluid Mechanics, 929, 2021.
+[24] G. Lin, C. Moya, and Z. Zhang. Accelerated replica exchange stochastic gradient Langevin
+diffusion enhanced Bayesian DeepONet for solving noisy parametric PDEs. arXiv preprint
+arXiv:2111.02484, 2021.
+[25] L. Liu and W. Cai. Multiscale DeepONet for nonlinear operators in oscillatory function spaces
+for building seismic wave responses. arXiv preprint arXiv:2111.04860, 2021.
+[26] L. Lu, P. Jin, and G. E. Karniadakis. DeepONet: Learning nonlinear operators for identifying differential equations based on the universal approximation theorem of operators. arXiv
+preprint arXiv:1910.03193, 2019.
+[27] L. Lu, P. Jin, G. Pang, Z. Zhang, and G. E. Karniadakis. Learning nonlinear operators
+via DeepONet based on the universal approximation theorem of operators. Nature Machine
+Intelligence, 3(3):218–229, 2021.
+[28] L. Lu, X. Meng, S. Cai, Z. Mao, S. Goswami, Z. Zhang, and G. E. Karniadakis. A comprehensive and fair comparison of two neural operators (with practical extensions) based on fair
+data. arXiv preprint arXiv:2111.05512, 2021.
+[29] L. Lu, X. Meng, Z. Mao, and G. E. Karniadakis. DeepXDE: A deep learning library for solving
+differential equations. SIAM Review, 63(1):208–228, 2021.
+[30] L. Lu, R. Pestourie, W. Yao, Z. Wang, F. Verdugo, and S. G. Johnson. Physics-informed neural
+networks with hard constraints for inverse design. SIAM Journal on Scientific Computing,
+43(6):B1105–B1132, 2021.
+[31] Z. Mao, L. Lu, O. Marxen, T. A. Zaki, and G. E. Karniadakis. DeepM&Mnet for hypersonics:
+Predicting the coupled flow and finite-rate chemistry behind a normal shock using neuralnetwork approximation of operators. Journal of Computational Physics, 447:110698, 2021.
+[32] C. Marcati and C. Schwab. Exponential convergence of deep operator networks for elliptic
+partial differential equations. arXiv preprint arXiv:2112.08125, 2021.
+[33] N. H. Nelsen and A. M. Stuart. The random feature model for input-output maps between
+Banach spaces. SIAM Journal on Scientific Computing, 43(5):A3212–A3243, 2021.
+[34] J. D. Osorio, Z. Wang, G. Karniadakis, S. Cai, C. Chryssostomidis, M. Panwar, and R. Hovsapian. Forecasting solar-thermal systems performance under transient operation using a datadriven machine learning approach based on the deep operator network architecture. Energy
+Conversion and Management, 252:115063, 2022.
+[35] G. Pang, L. Lu, and G. E. Karniadakis. fPINNs: Fractional physics-informed neural networks.
+SIAM Journal on Scientific Computing, 41(4):A2603–A2626, 2019.
+[36] R. G. Patel, N. A. Trask, M. A. Wood, and E. C. Cyr. A physics-informed operator regression framework for extracting data-driven continuum models. Computer Methods in Applied
+Mechanics and Engineering, 373:113500, 2021.
+24
+
+[37] M. Raissi, P. Perdikaris, and G. E. Karniadakis. Physics-informed neural networks: A deep
+learning framework for solving forward and inverse problems involving nonlinear partial differential equations. Journal of Computational Physics, 378:686–707, 2019.
+[38] M. Raissi, A. Yazdani, and G. E. Karniadakis. Hidden fluid mechanics: Learning velocity and
+pressure fields from flow visualizations. Science, 367(6481):1026–1030, 2020.
+[39] R. A. Ryan. Introduction to tensor products of Banach spaces, volume 73. Springer, 2002.
+[40] J. Sirignano and K. Spiliopoulos. DGM: A deep learning algorithm for solving partial differential equations. Journal of computational physics, 375:1339–1364, 2018.
+[41] N. Trask, R. G. Patel, B. J. Gross, and P. J. Atzberger. GMLS-Nets: A framework for learning
+from unstructured data. arXiv preprint arXiv:1909.05371, 2019.
+[42] S. Wang, H. Wang, and P. Perdikaris. Learning the solution operator of parametric partial
+differential equations with physics-informed DeepONets. Science Advances, 7(40):eabi8605,
+2021.
+[43] E. Weinan and B. Yu. The deep Ritz method: A deep learning-based numerical algorithm for
+solving variational problems. Communications in Mathematics and Statistics, 6(1), 2018.
+[44] A. Yazdani, L. Lu, M. Raissi, and G. E. Karniadakis. Systems biology informed deep learning
+for inferring parameters and hidden dynamics. PLoS Computational Biology, 16(11):e1007575,
+2020.
+[45] M. Yin, E. Ban, B. V. Rego, E. Zhang, C. Cavinato, J. D. Humphrey, and G. Em Karniadakis.
+Simulating progressive intramural damage leading to aortic dissection using DeepONet: an
+operator–regression neural network. Journal of the Royal Society Interface, 19(187):20210670,
+2022.
+[46] H. You, Y. Yu, M. D’Elia, T. Gao, and S. Silling. Nonlocal kernel network (NKN): a stable
+and resolution-independent deep neural network. arXiv preprint arXiv:2201.02217, 2022.
+[47] J. Yu, L. Lu, X. Meng, and G. E. Karniadakis. Gradient-enhanced physics-informed neural
+networks for forward and inverse PDE problems. arXiv preprint arXiv:2111.02801, 2021.
+[48] D. Zhang, L. Lu, L. Guo, and G. E. Karniadakis. Quantifying total uncertainty in physicsinformed neural networks for solving forward and inverse stochastic problems. Journal of
+Computational Physics, 397:108850, 2019.
+
+25
+
+

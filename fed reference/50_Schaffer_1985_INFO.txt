@@ -1,0 +1,20 @@
+Reference 50: Schaffer (1985)
+
+Title: Multiple objective optimization with vector evaluated genetic algorithms
+Authors: J. David Schaffer
+Published: Proceedings of the 1st International Conference on Genetic Algorithms, 1985
+(Note: Paper lists 1984, but proceedings published 1985)
+
+Links:
+- ACM DOI: https://dl.acm.org/doi/10.5555/645511.657079
+- ResearchGate: https://www.researchgate.net/publication/220885605_Multiple_Objective_Optimization_with_Vector_Evaluated_Genetic_Algorithms
+- Semantic Scholar: https://www.semanticscholar.org/paper/69d6c6305c2cc2283f5a8a92316803800ecb6b7f
+
+This is a foundational paper in multi-objective optimization using genetic algorithms.
+It introduced the Vector Evaluated Genetic Algorithm (VEGA) approach.
+
+To obtain the PDF:
+1. Access through institutional library using the DOI link
+2. Check ResearchGate for full-text access
+3. Search Google Scholar for alternative sources
+4. Visit university library with access to ACM Digital Library archives

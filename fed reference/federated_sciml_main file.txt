@@ -1,0 +1,2011 @@
+Federated scientific machine learning for approximating functions
+and solving differential equations with data heterogeneity
+Handi Zhang1,† , Langchen Liu2,† , and Lu Lu2,3,*
+
+arXiv:2410.13141v1 [cs.LG] 17 Oct 2024
+
+1
+
+Graduate Group in Applied Mathematics and Computational Science, University of
+Pennsylvania, Philadelphia, PA 19104, USA
+2
+Department of Statistics and Data Science, Yale University, New Haven, CT 06511, USA
+3
+Wu Tsai Institute, Yale University, New Haven, CT 06510, USA
+†
+These authors contributed equally to this work.
+*
+Corresponding author. Email: lu.lu@yale.edu
+
+Abstract
+By leveraging neural networks, the emerging field of scientific machine learning (SciML)
+offers novel approaches to address complex problems governed by partial differential equations
+(PDEs). In practical applications, challenges arise due to the distributed essence of data, concerns about data privacy, or the impracticality of transferring large volumes of data. Federated
+learning (FL), a decentralized framework that enables the collaborative training of a global
+model while preserving data privacy, offers a solution to the challenges posed by isolated data
+pools and sensitive data issues. Here, this paper explores the integration of FL and SciML to
+approximate complex functions and solve differential equations. We propose two novel models:
+federated physics-informed neural networks (FedPINN) and federated deep operator networks
+(FedDeepONet). We further introduce various data generation methods to control the degree of
+non-independent and identically distributed (non-iid) data and utilize the 1-Wasserstein distance
+to quantify data heterogeneity in function approximation and PDE learning. We systematically
+investigate the relationship between data heterogeneity and federated model performance. Additionally, we propose a measure of weight divergence and develop a theoretical framework to
+establish growth bounds for weight divergence in federated learning compared to traditional
+centralized learning. To demonstrate the effectiveness of our methods, we conducted 10 experiments, including 2 on function approximation, 5 PDE problems on FedPINN, and 3 PDE
+problems on FedDeepONet. These experiments demonstrate that proposed federated methods
+surpass the models trained only using local data and achieve competitive accuracy of centralized
+models trained using all data.
+
+Keywords: federated learning; scientific machine learning; function approximation; physicsinformed neural networks; operator learning; data heterogeneity
+
+1
+
+Introduction
+
+With the development of big data and the growth of computing resources, machine learning has been
+widely used to perform classification, clustering, and regression tasks, and tackle complex problems
+across scientific fields. The universal approximation theorem of neural networks has established a
+solid theoretical basis for deep learning. This has led to the widespread adoption of neural networks
+
+1
+
+for solving partial differential equations (PDEs) in scientific machine learning (SciML), in contrast
+to traditional numerical methods such as the finite difference and finite element methods, which
+are computationally expensive.
+Physics-informed neural networks (PINNs) [1, 2, 3] have emerged as a groundbreaking framework within SciML, offering a novel solution to both forward and inverse problems governed by
+PDEs. By integrating the PDE loss into the neural network’s loss function, PINNs enable effective and accurate handling of these complex problems. Despite the great potential, PINNs still
+require further enhancements to improve prediction accuracy, computational efficiency, and training robustness. To address some of the challenges in practice, researchers have proposed a series
+of extensions to the vanilla PINN framework, targeting performance improvement from various
+angles. For instance, the use of meta-learning has led to the discovery of better loss functions [4],
+and the development of gradient-enhanced PINNs has enabled the incorporation of gradient information from the PDE residual into the loss function [5]. Different methods have been devised
+to automatically adjust the weights of these loss terms to optimize the performance, effectively
+balancing the contributions of PDE and initial/boundary conditions [6, 7]. Other techniques, such
+as residual-based adaptive sampling [8] and multiscale Fourier features [9] were also applied to improve PINN accuracy. User-friendly libraries and toolboxes have also been developed to facilitate
+further research in PINNs [2, 10].
+In addition to approximating functions, neural networks can also approximate the mappings
+between infinite-dimensional function spaces, i.e., operator learning. The deep operator network
+(DeepONet) has exhibited impressive performance in effectively approximating the operators involved in various PDE [11, 12]. Once the network is trained, it only requires a forward pass to derive
+the PDE solution for a new input, even in the extrapolation scenario [13]. DeepONet has found
+successful applications in diverse fields such as multiscale bubble dynamics [14], brittle fracture
+analysis [15], solar-thermal systems forecasting [16], electroconvection [17], and fast multiscale modeling [18]. Moreover, researchers have proposed several extensions of DeepONet in recent studies,
+including DeepONet incorporating proper orthogonal decomposition [19], physics-informed DeepONet [20], multifidelity DeepONet [21], multiple-input DeepONet [22], Fourier-DeepONet [23, 24],
+and DeepONet integrated with uncertainty quantification [25]. Recently, the distributed approaches
+of DeepONet have also been studied by researchers, such as D2NO [26] to handle heterogeneous
+input function spaces.
+However, although SciML has significant achievements and diverse applications across various
+domains, challenges arise in real-world applications due to the distributed essence of data and privacy issues. A relevant example is atmospheric science, where extensive data from observations
+and numerical models is used. People obtain large volumes of observations from remote sensing
+(e.g., satellites and radars) and conventional platforms (e.g., weather stations, aircraft, radiosondes,
+ships, and buoys) from different devices and store the data in various forms at different agencies.
+Unfortunately, most existing SciML models do not apply to these critical situations due to the
+absence of capabilities in decentralized learning. In some other cases, the underlying data could
+be privacy-sensitive and thus might be restricted from being aggregated to protect proprietary
+information. This concern is also common in subsurface energy applications. Proprietary technology, confidentiality clauses, and regulatory requirements typically limit data sharing while concerns
+surrounding reserve estimates, geopolitical sensitivity, and operational risks reinforce the need for
+data privacy. To address these issues, researchers explore the distributed training methods that
+utilize data across different resources while maintaining privacy for private domain data. With this
+motivation, federated learning (FL), introduced by McMahan et al. [27], comes to play an essential
+role.
+Federated learning is a decentralized ML setting, where many clients collaboratively train a com2
+
+mon ML model under the orchestration of a central server while keeping the training data decentralized [27]. In this framework, while preserving data privacy by keeping the data on clients, significant
+reductions in data transfer volume are also achieved by coordinating updates with a central server
+via aggregation and broadcasting, leading to lower communication costs and better robustness. Federated learning has been widely used in privacy-sensitive fields, such as healthcare [28, 29, 30, 31],
+finance [32, 33, 34] and Internet of things [35]. This essential direction emphasizes how to prevent indirect leakage of local data and thus preserve privacy. For example, differential privacy is
+widely used for data privacy protection [36, 37]. Geyer et al. introduced randomized mechanisms
+such as random sub-sampling and distorting to protect client’s data [38]. In real applications of
+federated learning, another critical aspect is communication efficiency, which directly inspires several communication efficient algorithms including Federated Averaging (FedAvg) [27], FedAvg with
+momentum [39], and adaptive federated optimizers (FedAdagrad, FedAdam, FedYogi) [40].
+This paper explored the novel applications of federated learning in SciML, including function
+approximation, solving PDEs, and learning operators. Specifically, we proposed the federated averaging algorithm with local Adam update (FedAvg-Adam) and formulated the federated versions
+of PINN (FedPINN) and DeepONet (FedDeepONet) to solve scientific problems. Moreover, we
+proposed to utilize 1-Wasserstein distance (W1 ) to quantify the level of non-independent and identically distributed (non-iid) nature of client data in approximation tasks and solving PDEs with
+PINNs. To simulate the non-iid setting in regression tasks, we proposed various data generation
+methods for one- and two-dimensional problems, which partition the original dataset into a certain
+number of subsets and then distribute to two or multiple clients for federated training. Unlike the
+domain partition method for generating non-iid datasets for function approximation and FedPINN,
+we control the non-iid level in operator learning by creating different functional spaces to sample the
+functions. Then, to quantitatively study the differences between federated learning and traditional
+centralized learning, we introduce the weight divergence to measure the difference between models
+and theoretically analyze the upper bound of the weight divergence under several assumptions.
+In the numerical experiments, we demonstrate that the federated model outperforms the extrapolating models and gradually approaches the centralized model with a smaller W1 distance
+and less data heterogeneity between clients. This phenomenon not only applies to the function approximation tasks and PINNs but also generalizes to operator learning. Besides, empirical results
+show that the weight divergence positively correlates with the non-iid level and thus explains the
+performance degradation of federated models when the data are highly heterogeneous. For operator learning, another interesting result is that the FedDeepONet is insensitive to communication
+efficiency.
+The paper is organized as follows. In Section 2, after briefly introducing the fundamental idea of
+federated scientific machine learning (FedSciML), we present the FedAvg-Adam used in the training
+procedure, different data generation methods, and the 1-Wasserstein distance as the measurement of
+data heterogeneity. Subsequently, in Section 3, we introduce the definition of weight divergence and
+then provide a theoretical analysis of the growth bound of weight divergence between the FedSciML
+model and the centralized model. In Section 4, we provide experiments for function approximation
+tasks, including 1D/2D functions with two clients and 2D functions learned by multi-clients. In
+Section 5, we test the performance of proposed methods for various types of PDEs that cover both
+forward and inverse problems, including the Poisson equation, Helmholtz equation, Allen-Cahn
+equation, the inverse problem of 2D Navier-Stokes equation and the inverse problem of inferring
+the space-dependent reaction rate in a diffusion-reaction system. In Section 6, after introducing the
+architecture of DeepONet, we test FedDeepONet on learning the antiderivative operator, diffusionreaction equation, and burgers equation. Moreover, we explore DeepONet’s insensitivity property
+concerning different numbers of local iterations. Finally, we conclude the paper and discuss some
+3
+
+future directions in Section 7.
+
+2
+
+Methods
+
+This section briefly explains federated scientific machine learning, including the non-iid setting of
+federated learning and the federated averaging algorithm for training (Sec. 2.1). Additionally, we
+introduce the concept of 1-Wasserstein distance for quantifying data heterogeneity in regression
+tasks, and we provide different methods for partitioning and assigning data to simulate the non-iid
+distribution for local datasets (Sec. 2.2).
+
+2.1
+
+Federated scientific machine learning
+
+Figure 1: Workflow of federated scientific machine learning for approximating operators
+and solving differential equations. (Top) In FedSciML, the training data is distributed across
+K clients. (Bottom) Each client has its model and dataset. The models are trained through a
+collaborative training procedure, which includes (1) the aggregation from local models to the server
+model and (2) the broadcast from the server model back to local models.
+
+4
+
+Federated learning is a method that allows multiple devices or clients to collaboratively learn
+a global model while keeping their raw data localized. In this framework, each participating client
+has its private dataset and updates the global model by performing local computations on the
+data and exchanging model updates with a central server. An application of this concept is federated scientific machine learning (FedSciML), which applies federated learning to scientific machine
+learning problems.
+We illustrate the workflow of FedSciML in Fig. 1. FedSciML aims to learn a function, a PDE,
+or an operator (probably with data heterogeneity) by training on multiple local datasets stored in
+local clients without direct communications. In this study, we focus on data heterogeneity. First,
+a training dataset is generated using proposed methods and distributed among numerous clients
+to simulate the heterogeneous and decentralized setting. Then, each client interacts with other
+clients indirectly via a collaborative training procedure. This procedure consists of an aggregation
+stage from local clients to the server and a subsequent broadcast stage from the server back to
+local clients. Generally, federated learning algorithms exchange the parameters (i.e., the weights
+and biases of the neural networks) between models at specific communication frequencies to train
+the server model. Because of the implicit usage of local datasets, the server model demonstrates
+satisfactory generalizability while preserving local data privacy.
+The following sections briefly overview the learning objectives in federated scientific machine
+learning and introduce different types of non-iid data in applications. We then present the federated averaging algorithm with local Adam update (FedAvg-Adam) for collaboratively training a
+global model with data distributed across multiple local clients. It is important to note that FedDeepONet [41] already combines FL and DeepONet. Our work extends the incorporation of FL to
+PINNs and function approximation problems, further examining the impact of data heterogeneity
+on FedSciML.
+2.1.1
+
+Problem formulation
+
+In federated learning, we formulate the optimization problem as
+min L(θ) =
+θ
+
+K
+X
+k=1
+
+Nk
+Lk (θ)
+N
+
+with
+
+Lk (θ) =
+
+1 X
+ℓ(θ; di ),
+Nk
+di ∈Dk
+
+where L and Lk are the federated server loss and the k-th client loss. K denotes the number
+of clients.
+Dk denotes the dataset of client k and Nk = |Dk | is the number of data of client k.
+P
+N = k Nk is the total number of data, and ℓ(θ; di ) is the pointwise loss of the prediction based
+on data sample di made by weights θ. Specifically, in FedSciML, we usually take ℓ as the squared
+error loss so that Lk measures the mean square error of the client k.
+The key idea of federated learning is to accommodate the challenges arising from non-iid data
+distributions across clients, communication constraints, and heterogeneous computing resources.
+Previous studies have examined the classification of non-iid data systems, encompassing diverse
+client distributions and violations of independence, and various algorithms have been proposed to
+address non-iid data (see a review paper [42]). Let Pi (x) and Pi (y) denote the probability distribution of the feature and label data for client i, respectively, and Pi (·|·) represent the conditional
+probability. We illustrate four types of non-iid data caused by non-identical distributions in Table 1. It is worth noting that, in addition to heterogeneous probability distributions, both quantity
+skew and dataset imbalance can also result in non-identical data. This work primarily focuses on
+data heterogeneity caused by covariance shifts.
+
+5
+
+Table 1: Type of non-IID data.
+
+2.1.2
+
+Type
+
+Distribution
+
+Covariance shift
+Prior probability shift
+Concept drift
+Concept shift
+
+Pi (x) ̸= Pj (x), Pi (y|x) = Pj (y|x)
+Pi (y) ̸= Pj (y), Pi (x|y) = Pj (x|y)
+Pi (y) = Pj (y), Pi (x|y) ̸= Pj (x|y)
+Pi (x) = Pj (x), Pi (y|x) ̸= Pj (y|x)
+
+Federated averaging algorithm with local Adam update (FedAvg-Adam)
+
+Let us consider a random fraction of clients, denoted as C, to receive the current model parameters.
+Additionally, η represents a fixed learning rate for each client k, and E is the number of local epochs
+for each client. In our numerical experiments, we set C to 100% to ensure the participation of all
+clients in the communication round, meaning there will be one broadcast and one aggregation.
+The FedAvg algorithm [27] consists of mainly two stages. At the l-th global epoch, the algorithm
+performs the following actions:
+(a) Server-to-client broadcasting of the current server model:
+θkl,0 = θl ,
+
+for k = 1, · · · , K.
+
+(b) Local gradient computation for E steps:
+gki = ∇Lk (θkl,i−1 ),
+
+for k = 1, · · · , K and i = 1, · · · , E,
+
+(c) Global aggregation of all locally updated results:
+θl+1 ← θl − η
+
+K
+X E
+X
+k=1 i=1
+
+Nk i
+g .
+N k
+
+(1)
+
+Here, θkl,i denotes the local model for client k at global epoch l and local epoch i, and θl denotes
+the global or server model at global epoch l.
+In the generalized FedAvg method (also known as FedOPT) [40], the federated update procedure
+extends to various methods to perform local update and aggregation, where the extension consists
+of Client-OPT and Server-OPT. Each local client will perform the local update by
+θkl,i+1 = Client-OPT(θkl,i , gki+1 , η, l),
+
+for i = 0, · · · , E − 1.
+
+This gives the total local change by
+∆lk = θkl,E − θkl,0 .
+The aggregation step is then defined using the difference in local model parameters
+∆l+1 =
+
+K
+X
+Nk
+k=1
+
+N
+
+∆lk ,
+
+and
+
+θl+1 = Server-OPT(θl , −∆l+1 , η, l).
+
+(2)
+
+In the context of this general framework, vanilla FedAvg (Eq. (1)) is a special case of Fed-OPT
+where both the Client-OPT and Server-OPT (Eq. (2)) implement gradient descent. The empirical
+6
+
+results presented in this paper show that the Adam optimizer performs better than SGD. In our
+study, we introduce FedAvg-Adam (Algorithm 1), in which we replace gradient descent with the
+Adam optimizer for updating the local model in all experiments. We then average the change of
+all local clients to update the global model. Additionally, it is easy to show that our algorithm
+is equivalent to Fed-OPT, with Adam as the Client-OPT optimizer and gradient descent as the
+Server-OPT optimizer. In practice, we averaged the local model directly instead of averaging the
+change to update the server model.
+Algorithm 1: FedAvg-Adam.
+Input: Initial model θ0 ; K clients indexed by k; local epochs E; learning rate η
+1 for l = 0, 1, 2 · · · do
+2
+for k = 1, · · · , K in parallel do
+3
+Initialize local model θkl,0 ← θl
+4
+for i = 1, · · · , E do
+5
+Compute the local stochastic gradient gk (θkl,i−1 )
+6
+θkl,i ← Adam(gki , η)
+7
+end
+8
+Compute the total local change ∆lk ← θkl,E − θkl,0
+9
+end
+P
+PK Nk l,E
+Nk l
+l+1 ←
+10
+Do global aggregation θl+1 ← θl + K
+k=1 N ∆k , or equivalently θ
+k=1 N θk
+11 end
+
+2.2
+
+Data generation and quantification of data heterogeneity
+
+Before detailing our proposed data generation methods, we introduce the Wasserstein distance
+as a metric for assessing data heterogeneity in regression tasks. To simulate a federated setting
+for function approximation, solving PDEs, or learning operators, we develop corresponding data
+generation methods for one-dimensional and two-dimensional cases, addressing scenarios with two
+and multiple clients. For function approximation and differential equation solving, we partition
+the original dataset into several subdomains along the axes and distribute them to local clients
+(Sec. 2.2.2 and Sec. 2.2.3). Additionally, in the context of operator learning—where the model is
+trained on multiple functions sampled from a specific functional space—we introduce an alternative approach to quantify and manage the level of non-iid by generating functions from different
+functional spaces (Sec. 2.2.4).
+2.2.1
+
+1-Wasserstein distance for quantifying data heterogeneity
+
+To quantify the difference between the distributions of clients, we consider the 1-Wasserstein distance. Let (M, d) denote a metric space. The general form of the Wasserstein distance between
+two probability measures µ and ν on M with finite p-moments is given by
+
+1/p
+Z
+p
+Wp (µ, ν) =
+inf
+d(x, y) dγ(x, y)
+,
+γ∈Γ(µ,ν)
+
+where Γ(µ, ν) is the set of all couplings of µ and ν. We can simplify the 1-Wasserstein distance
+when p = 1 to
+W1 (µ, ν) = inf |x − y|dγ(x, y),
+(3)
+γ∈Γ(µ,ν)
+
+7
+
+R
+where
+the coupling γ is the joint probability measure on M ×M with marginals M γ(x, y)dy = µ(x),
+R
+M γ(x, y)dx = µ(y).
+For p = 1, W1 is equivalent to the Earth Mover’s Distance (EMD). In the subsequent implementation, rather than directly working with Eq. (3), we compute the discretized W1 distance
+to measure the level of non-iid in datasets by using the Python Optimal Transport package [43].
+Specifically, consider discrete samples obtained through random sampling or uniform grids from
+µ and ν with finite dimensions. We have two sample distributions µn1 and νn2 , where n1 and n2
+represent the number of sample points in each distribution. The POT package then computes the
+W1 distance by solving the EMD problem, defined as
+W1 (µn1 , νn2 ) = min ⟨γ, M⟩F ,
+γ
+
+T
+
+s.t. γ1 = a, γ 1 = b, γ ≥ 0,
+where M ∈ Rn1 ×n2 is the Euclidean distance matrix between µn1 and νn2 , and mij represents the
+distance between the i-th data point from the first distribution and the j-th data point from the
+second distribution. a ∈ Rn1 and b ∈ Rn2 are the sample weights of µn1 and νn2 . The optimization
+problem seeks to solve the minimal cost of transport between the two distributions, subject to the
+cost matrix M and the sample weights a and b.
+When there are three or more clients, i.e., K ≥ 3, we compute the mean pairwise W1 distance
+to quantify the data heterogeneity among all clients as
+K−1
+
+W1 =
+
+K
+
+X X
+1
+W1 (µi , µj ).
+(K − 2)(K − 1)
+
+(4)
+
+i=1 j=i+1
+
+2.2.2
+
+1D data generation
+
+In the context of function approximation and solving differential equations, suppose the total
+number of data points is N . We aim to partition the original dataset into smaller subdomains and
+assign them to K local clients.
+In the 1D case, let {xi ∈ I, i = 1, . . . , N } represent N data points sampled from an interval
+I ⊂ R. Let n denote the number of subdomains assigned to each client. The dataset is first
+divided into n subdomains, after which each client alternately receives data, as illustrated in the
+first column of Fig. 2A. The resulting local datasets are denoted as {Ωk }K
+k=1 , with |Dk | = Nk . If N
+mod (nK) ̸= 0, the remaining sample points are sequentially assigned to the local clients. The last
+column in Fig. 2A shows the variation in the W1 distance, calculated from Eq. (3), as the number
+of subdomains n increases. This demonstrates that increasing the number of partitions reduces the
+W1 distance in scenarios with two clients, indicating a higher degree of iid.
+2.2.3
+
+2D data generation
+
+For the 2D dataset, we adopt two distinct methods for assigning data to clients: the x-partition and
+the xy-partition. Given N data points sampled from a 2D region D ⊂ R2 , denoted as {(xi , yi ) ∈
+D, i = 1, . . . , N }, along with the number of clients K and the number of subdomains n per axis,
+we define the data generation methods as follows.
+• The x-partition method divides the x coordinate into n subintervals while leaving the y
+coordinate unchanged. This approach is analogous to the 1D data generation process, as it
+operates exclusively on the first axis (Fig. 2B).
+8
+
+Figure 2: Visualization of data generation methods. (A) Data generation for 1D data with
+two clients in different data heterogeneity. From left to right, the level of iid increases. The last
+column is the change of W1 distance for different numbers of subdomains. (B) 2D data with
+x-partition and two clients. (C) 2D data with xy-partition and two clients. (D) 2D data with
+xy-partition and three clients. The last column shows the mean pairwise W1 distance change for
+three, four, and five clients. (E) Visualization of a data generation method for operator learning.
+From the first column to the third column, functions are sampled from different functional spaces.
+
+9
+
+• The xy-partition method divides both the x and y coordinates into n subintervals, resulting
+in n2 subdomains. These subdomains are then assigned to clients in an alternating manner.
+Fig. 2C illustrates the xy-partition data generation for two clients, while Fig. 2D depicts the
+case involving multiple clients.
+We compare the disparities between the two methods of generating 2D data and detail the corresponding changes in W1 in the final column of Figs. 2B–D. For the xy-partition generation method,
+we generate all datasets from the entire domain using Hammersley sampling, a low-discrepancy
+method based on the Hammersley sequence. Our results indicate that the difference in W1 between the xy-partition and x-partition methods becomes negligible as the number of subdomains
+increases. Therefore, the data generation approach in subsequent experiments may depend on
+the specific problem setting. For the 2D time-independent problem, we employ the xy-partition
+method. Conversely, for the time-dependent problem with 1D in space, the x-partition method in
+space coordinate is more appropriate, as it allows each client to be distinguished based solely on
+the spatial domain.
+Our proposed data generation method is also adaptable to multiclient experiments. In the
+multiclient scenario, we employ the mean pairwise W1 distance, as defined in Eq. (4), as a measure
+of data heterogeneity. We visualize the data distributions and compute the mean pairwise W1 for
+three, four, and five clients (Fig. 2D), demonstrating that the multiclient case follows a similar
+trend to the two-client case. However, the non-iidness becomes more pronounced as the number of
+clients increases.
+2.2.4
+
+Data generation for operator learning
+
+Operator learning aims to learn linear and nonlinear operators that map input functions to output
+functions, i.e., the mapping between two infinite-dimensional functional spaces. In the federated
+operator learning scenario, suppose the total number of training functions is N , and the number
+N
+of local clients is K. Each local client has Nk = K
+functions generated from various functional
+spaces. We choose the Chebyshev polynomial space as the generating space for both training and
+testing functions, defined by
+p(x) =
+
+M
+X
+
+ai Ti (x),
+
+ai ∈ [−1, 1],
+
+i=0
+
+where Ti is the Chebyshev polynomial of the first kind. The number of terms M is set to 10 to
+avoid the computational cost associated with high-order polynomials.
+The non-iid level across different functional spaces is controlled by varying the number of nonzero
+basis functions in the Chebyshev polynomial. For the case of two clients, one client is assigned the
+first n nonzero basis functions (i.e., forward direction), while the other client is assigned the last n
+nonzero basis functions (i.e., inverse direction):
+Client 1: D ∼ PChebyshev (n, forward) =
+Client 2: D ∼ PChebyshev (n, inverse) =
+
+n
+X
+
+ai Ti (x),
+i=0
+M
+−1
+X
+
+ai Ti (x),
+
+i=M −n−1
+
+where n ∈ [1, 10]. This method controls the non-iid level by setting different supports for the
+Chebyshev polynomials, increasing the iid level as n increases. The rationale is that functions
+10
+
+generated from Chebyshev spaces with larger n values will more closely approximate functions
+generated from the full Chebyshev space (Fig. 2E). Thus, in the two-client scenario—where one
+client’s data is generated using the forward method and the other using the inverse method—the
+data distributions on each client exhibit greater similarity as n increases, validating the effectiveness
+of this non-iid control method for operator learning.
+For three clients, the first client is supported by the first n basis functions, the second client by
+the middle n basis functions, and the third client by the last n basis functions:
+Client 1: D ∼ PChebyshev (n, forward) =
+
+n
+X
+
+ai Ti (x),
+
+i=0
+⌊ M2+n ⌋
+
+X
+
+Client 2: D ∼ PChebyshev (n, middle) =
+
+ai Ti (x),
+
+i=⌊ M2−n ⌋
+M
+−1
+X
+
+Client 3: D ∼ PChebyshev (n, inverse) =
+
+ai Ti (x).
+
+i=M −n−1
+
+3
+
+Theory
+
+This section aims to quantify the differences between federated learning and traditional centralized
+learning. To achieve this, we first introduce the general definition of weight divergence, followed
+by a specification of the relative and absolute weight divergence used to measure the differences
+between the centralized and federated models (Sec. 3.1). Subsequently, we present the growth
+bound of weight divergence for the federated model under several assumptions and a detailed
+analysis (Sec. 3.2).
+
+3.1
+
+Weight divergence
+
+Weight divergence in federated learning measures the relative difference between the weights learned
+by the centralized and federated optimization algorithms. First introduced in Ref. [44], weight
+divergence is strongly associated with data heterogeneity. The definition of weight divergence,
+denoted as EW D , is as follows:
+θN N 1 − θN N 0
+EW D :=
+,
+∥θN N 0 ∥
+where θN N 0 and θN N 1 represent the weights of two neural networks. We emphasize that the term
+“relative weight divergence” better fits this definition. Therefore, in this section, we will use the
+term weight divergence to refer to the absolute weight divergence, which is defined as
+EW D := θN N 1 − θN N 0 .
+In this paper, we take N N 1 as the federated model updated by FedAvg and N N 0 as the model
+updated by centralized SGD. The weight divergence comparing the difference between FedAvg and
+SGD is thus defined as
+EW D := θFedAvg − θSGD .
+l,E
+Given the multi-round nature of federated optimization, we introduce the notation EW
+D to represent
+the weight divergence between the federated model at the l-th global epoch and the E-th local
+
+11
+
+epoch, and the centralized model at the l × E-th epoch. This ensures a fair comparison between
+the federated and centralized models.
+Fig. 3 provides a simple illustration of weight divergence during the updating process for two
+clients over two communication rounds. As shown in the figure, the neural network parameters
+are initialized at step 0. In subsequent steps, the global model is updated after two local gradient
+descent steps followed by one aggregation. The difference between the centralized model and
+FedAvg increases as more rounds of federated learning are performed.
+
+Figure 3: Visualization of weight divergence in federated learning. The black dashed line
+represents the gradient descent for the centralized model. The blue and orange lines correspond to
+the gradient descents for two clients in federated learning, while the green line depicts the gradient
+descent of the global model using the FedAvg algorithm.
+Previous works have studied the convergence of federated learning [44, 45, 46], PINNs [47], and
+DeepONets [48] separately under reasonable assumptions. Specifically, for the analysis of federated
+learning, weight divergence [44] is a critical factor that deteriorates the accuracy of federated
+models. Existing research has demonstrated that, after a finite number of synchronization rounds,
+weight divergence remains bounded [44]. FedProx [45], an adapted federated aggregation algorithm
+incorporating weight divergence as a regularization term, has also proven highly effective in various
+federated learning tasks.
+This work focuses on typical scientific machine learning scenarios and extends the discussion to
+derive an upper bound on the divergence between federated and centralized learning. Specifically,
+we will show in Sec. 3.2 that, under certain assumptions, after E rounds of local updates, the weight
+divergence is linearly bounded by the local epoch E. Notably, the growth bound is independent of
+the data heterogeneity across federated clients.
+
+3.2
+
+Growth bound of weight divergence
+
+We consider a scientific machine learning problem min L(x) with dataset D. Our goal is to compare
+the performance of solving this problem using a centralized SGD algorithm for E epochs and solving
+
+12
+
+it under the federated learning scheme using the FedAvg algorithm for E local epochs per global
+synchronization, both with the same learning rate η. The initialization of the two models is assumed
+to be identical. We assume full participation in federated learning with K clients. Let {Dk }K
+k=1
+represent the datasets of each client, where D = ∪K
+k=1 Dk . Each client k solves the problem L based
+on its local dataset Dk . Additionally, we impose the following bounded gradient assumption on the
+squared error loss ℓ of the neural network:
+Assumption 1. The gradient ∇ℓ(θ; d) is bounded during network training, i.e., there exists M > 0
+such that ∀θ and ∀d ∈ D, ∥∇ℓ(θ, d)∥ ≤ M .
+Given Assumption 1, we present the following theorem as the main result for the growth bound
+of the weight divergence.
+Theorem 3.1. Consider a federated learning (FL) model with one global aggregation after E local
+1,E
+epochs and a learning rate η. Let EWD
+denote the weight divergence of the FL model compared to a
+centralized model with the same initialization,
+learning rate, and trained for E epochs. The dataset
+S
+of the centralized model D satisfies D = k Dk . Then, the weight divergence is bounded by a linear
+relation with E:
+1,E
+≤ 2ηM E.
+EWD
+l,E
+between a
+The conclusion can also be extended to the l-th global epoch. The weight divergence EWD
+federated model with l global epoch and E local epoch, and a centralized model with l × E epoch is
+bounded by
+l,E
+EWD
+≤ 2ηM El.
+
+4
+
+Function approximation
+
+This section tests the federated neural networks in conducting function approximation tasks. For
+all following experiments, we use the Python library DeepXDE [2] to implement the algorithms
+and train the neural networks. Codes for this study will be available in GitHub repository https:
+//github.com/lu-group/federated-sciml.
+We use two baselines to evaluate the performance of federated methods comprehensively. We
+use the centralized neural networks that are directly trained on the whole dataset as the first
+baseline model as a reference of lower error bound, and we use the extrapolation scenario where
+each client is trained only on local data without aggregation step during training as the reference
+of error upper bound. Despite minimal fluctuations, we anticipate the federated error to lie within
+the range of two baseline errors. With an increase in the level of iid data, we expect the errors of
+baseline models and federated methods to converge. The detailed hyperparameters used in training
+for all later experiments are summarized in Table 4.
+
+4.1
+
+1D function approximation
+
+First, we consider the Gramacy & Lee (2012) function [49] as the one-dimensional example, which
+is defined as
+sin(10πx)
+f (x) = (x − 1)4 +
+, x ∈ [0.5, 2.5].
+2x
+We translate this function to [−1, 1] for later experiment and the normalized function becomes
+f (x) = (x + 0.5)4 −
+13
+
+sin(10πx)
+.
+(2x + 3)
+
+In this example, to generate different levels of data heterogeneity, the number of partitions for each
+client varies from 1 to 50 over 200 uniformly distributed sample points within [−1, 1]. We use the
+1D data generation method for two clients in Fig. 2A to build the dataset for both clients.
+When the value of W1 decreases, the difference in the data distribution between two clients
+decreases, and the L2 relative errors between the prediction results and actual values also decrease
+(Fig. 4A). Apart from prediction errors, we also consider weight divergence, which is one of the
+factors that can impact the performance of federated learning on non-iid data. We found that
+the data heterogeneity between the two clients is positively correlated with the weight divergence
+between the neural networks of the two clients (Fig. 4B).
+
+Figure 4: Approximating the Gramacy & Lee function in Section 4.1. (A) L2 relative
+error for different number of subdomains and W1 distances. (B) Weight divergence of hidden layers
+for different numbers of subdomains and W1 distances. (C) Examples include (left) 2 subdomains
+with high data heterogeneity and (right) 100 subdomains with low data heterogeneity. The shaded
+areas represent the subdomain partitions for two clients.
+Fig. 4C are two examples of the approximated results of the Gramacy & Lee function with
+14
+
+high data heterogeneity and low heterogeneity scenarios. The data assigned to the two clients are
+represented by orange and blue shadow areas, respectively. In the extrapolation baselines, local
+models are trained only on local datasets without communication with the other, which implies
+that predicting the function on the whole domain is likely to fail. For example, for client 1 with left
+half training data points, the model performs good approximation on the left half function but falls
+on the right half function. On the contrary, the federated model can capture information about
+the whole domain via aggregating and broadcasting the parameters from local models. Moreover,
+when the data distributions of local clients are almost identical (Fig. 4C Right), the performance
+of the federated model and extrapolating baselines is similar to the centralized model.
+
+4.2
+
+2D function approximation
+
+Then we consider the Schaffer function in two-dimension [50], defined as
+f (x, y) = 0.5 +
+
+sin2 (x2 − y 2 ) − 0.5
+,
+[1 + 0.001(x2 + y 2 )]2
+
+x ∈ [−1, 1], y ∈ [−1, 1].
+
+The Schaffer function in 2D is symmetric, concerning both coordinates within the domain. Thus,
+to facilitate the generation of data heterogeneity, we consider an asymmetric subdomain of the
+function and select the right upper corner of the original function, i.e., we sample the data from the
+subdomain of [0, 1] × [0, 1] (Fig. 5C). To generate different levels of data heterogeneity, we apply
+the x-partition 2D generation method ranges with the number of partitions ranging from 1 to 25.
+When the number of partitions increases and the value of W1 decreases, the level of data heterogeneity decreases correspondingly and improves L2 relative error from 10−1 to below 10−2 (Fig. 5A).
+This overall trend between the W1 and the performance of federated models is consistent with the
+1D function approximation in Sec. 2.2.2. In contrast, improving approximation capability depends
+on the difficulty level of the target functions. Besides, the positive correlation between the data
+heterogeneity and the weight divergence also holds, except for some fluctuations (Fig. 5B). Figs. 5D
+and E are comparisons of the absolute error of prediction from federated model and extrapolating
+baselines with high and low data heterogeneity. When there is a lack of communication among
+clients, the missing information in the extrapolation region inevitably causes more significant errors, especially in the case of high non-iid levels. On the contrary, the federated model can take
+advantage of data on both clients with aggregation and broadcast, thereby performing better for
+both high and low data heterogeneity.
+Moreover, to explore the effect of the number of clients on federated learning, we trained the
+federated models with three, four, and five local clients to approximate the Schaffer function. As
+the direct computation of W1 is not applicable for multiple clients scenario, we choose the mean
+pairwise W1 defined in Eq. (4) to quantify the data heterogeneity. For FedSciML with multiple
+clients, the trend that more considerable W1 results in larger L2 relative errors still holds, and the
+difference between extrapolating models and federated models becomes more prominent with more
+clients (Figs. 6A–C). We see that for multiple client scenarios, federated models and extrapolating
+baselines obtain more significant errors with increasing clients. As shown in Fig. 6D, the 2-client
+federated model has the most minor errors compared with the 5-client model. Besides, it is noted
+that the direct computation of W1 for two clients and mean pairwise W1 for multiclients inevitably
+give different W1 ranges, and therefore, four error lines are not aligned in the figure.
+
+15
+
+Figure 5: Approximating the Schaffer function with two clients in Section 4.2. (A) L2
+relative error for different number of subdomains and W1 distances. (B) Weight divergence of
+hidden layers for different numbers of subdomains and W1 distances. (C) The ground truth of
+the Schaffer function. (D and E) Comparison of federated model and two extrapolation baselines
+under (D) most non-iid and (E) most iid scenarios. The black dashed line visualizes the x-partition
+2D data generation for two clients.
+
+16
+
+Figure 6: Approximating the Schaffer function with multiple clients in Section 4.2.
+(A–C) L2 relative error for (A) three, (B) four, and (C) five clients for the different number
+of subdomains and mean pairwise W1 . (D) Comparison of the centralized baseline model and
+federated models with different numbers of clients.
+
+17
+
+5
+
+Physics-informed neural networks
+
+In this section, after briefly introducing PINNs, we apply the proposed FedPINN to five examples
+and compare the performance with vanilla PINN and extrapolation baseline models. Examples
+include time-independent PDE, including 1D Poisson problem (Sec. 5.2) and 2D Helmholtz equation (Sec. 5.3), time-dependent Allen-Cahn equation (Sec. 5.4), 2D inverse Navier-Stokes equation
+(Sec. 5.5), and inverse diffusion-reaction equation (Sec. 5.6). For the Allen-Cahn example, we also
+considered a multiclient scenario.
+
+5.1
+
+Introduction of PINN
+
+PINN [3] is a class of deep learning algorithms that seamlessly integrate data and abstract mathematical operators, including PDEs with or without missing physics. This method uses prior
+physical knowledge to guarantee accuracy, interpretability, and robustness for predictions, even for
+extrapolatory and generalization tasks.
+Consider a well-posed PDE defined on a bounded domain,
+F[u](x) = f (x), x ∈ Ω,
+with suitable boundary and initial conditions. We use a neural network û(θ) to represent the
+solution of the PDE. To embed the PDE into neural network training, we define one additional loss
+as
+Lr (θ; x) = ∥F[û(θ)](x) − f (x)∥22 .
+In this study, we enforce the hard boundary constraints for all examples [51]. Without specification,
+the default setting during training is hyperbolic tangent activation and Adam optimizer with a
+learning rate of 0.001. Table 4 summarizes the hyperparameters used to train neural networks.
+In FedPINN, the entire computational domain is partitioned into many subdomains, and each
+client has the information of a single subdomain. This shares some similarities with the domain
+decomposition methods for solving PDEs, such as PINNs with domain decomposition [52, 53, 54].
+However, FedPINN and domain decomposition methods are conceptually different. In domain
+decomposition, the partition of the computation domain must be known so that each subdomain
+knows its adjacent subdomains for information exchange, or there is a centralized server node
+to facilitate information exchange with all subdomains. However, in FedPINNs, knowledge of
+other local clients’ domain locations is not required. In this federated learning framework, domain
+locations from local clients remain concealed.
+
+5.2
+
+1D Poisson problem
+
+We consider the following 1D Poisson problem:
+−∆u =
+
+4
+X
+
+i sin(ix) + 8 sin(8x),
+
+x ∈ [0, π],
+
+i=1
+
+with Dirichlet boundary conditions
+u(0) = 0,
+
+u(π) = π.
+
+The exact solution is given by
+u(x) = x +
+
+4
+X
+sin(ix)
+
+i
+
+i=1
+
+18
+
++
+
+sin(8x)
+.
+8
+
+We sample 32 uniformly distributed points in the domain [0, π] as collocation points for the training
+data and apply the 1D data generation method with the number of partitions n ∈ [6, 8, 10, 16, 32]
+to simulate different levels of data heterogeneity.
+
+A
+
+Number 16of subdomains
+10
+
+32
+
+8
+
+6
+
+B
+
+Centralized
+Federated
+Client 1 Ex.
+Client 2 Ex.
+
+100
+
+6
+
+Weight divergence
+
+L2 relative error
+
+8
+
+Layer 1
+Layer 2
+Layer 3
+Layer 4
+
+100
+
+10 1
+
+Number 16of subdomains
+10
+
+32
+
+10 2
+
+10 3
+
+10 4
+
+2 × 10 1
+
+10 1
+
+3 × 10 1
+
+4 × 10 1
+
+W1 distance
+High data heterogeneity
+
+C
+
+4
+
+3 × 10 1
+
+4 × 10 1
+
+W1 distance
+Low data heterogeneity)
+
+D
+
+Ground truth
+Centralized
+Federated
+Client 1 Ex.
+Client 2 Ex.
+
+5
+
+2 × 10 1
+
+10 1
+
+Ground truth
+Centralized
+Federated
+Client 1 Ex.
+Client 2 Ex.
+
+3.0
+2.5
+2.0
+
+y
+
+y
+
+3
+1.5
+
+2
+1.0
+1
+
+0.5
+
+0
+
+0.0
+0.0
+
+0.5
+
+1.0
+
+1.5
+
+x
+
+2.0
+
+2.5
+
+3.0
+
+0.0
+
+0.5
+
+1.0
+
+1.5
+
+x
+
+2.0
+
+2.5
+
+3.0
+
+Figure 7: Solving the 1D Poisson equation in Section 5.2. (A) L2 relative error for different
+numbers of subdomains and W1 distances. (B) Weight divergence of hidden layers for different
+W1 values. (C and D) Comparison of the federated model, baseline model, and two extrapolation
+models under (C) the most non-iid and (D) the most iid scenarios.
+The accuracy achieved by both the extrapolation clients and the federated model decreases as
+the W1 distance between data distributions increases (Fig. 7A). The federated model outperforms
+the extrapolation models, which perform similarly to the centralized baseline when the W1 distance
+is small. The weight divergence across all four linear layers grows with increasing data heterogeneity
+(Fig. 7B). Fig. 7C and D are the predictive solutions of the federated, centralized baseline and the
+extrapolation models in the most non-iid and most iid settings. The federation of client models
+significantly improves solving the 1D Poisson system.
+
+19
+
+5.3
+
+2D Helmholtz equation
+
+Next, we consider the 2D Helmholtz equation over the square domain
+−uxx − uyy − k02 u = f,
+
+Ω = [0, 1]2 ,
+
+with the Dirichlet boundary conditions u(x, y) = 0 for (x, y) ∈ ∂Ω and source term f (x, y) =
+k02 sin(k0 x) sin(k0 y), where the wavenumber k0 = 2πn with n = 2. We use the collocation points
+density of 12 points per wavelength for the training data along each direction, i.e., the number of
+sample points is 24. Besides, to simulate different levels of data heterogeneity, we apply the 2D
+xy-partition with n ∈ [2, 4, 6, 10, 12, 24].
+For FedPINN, the increasing W1 corresponds to the increasing heterogeneity of two clients’ data
+distribution, resulting in larger L2 relative errors of the prediction results (Fig. 8A). As W1 decreases
+with an increasing number of subdomains, data distribution of local clients converges to the original
+dataset, and both the federated model and extrapolating baselines have improved performance.
+Apart from the prediction error, we also observe that the weight divergence of the second and third
+layers of the FNN is approximately positively correlated with W1 (Fig. 8B). However, the second
+layer is more sensitive than the third layer. Figs. 8D and E are examples of learned solutions
+in most non-iid and iid scenarios. In most non-iid cases (Fig. 8D), the data blocks generated by
+the xy-partition method are distinguished by the black dashed line, where the first client takes
+the bottom left and upper right blocks, and the second client takes the rest. In the extrapolation
+baselines, local models are trained only on local datasets without communication with the other,
+which demonstrates the weak performance of learning the solution in the extrapolating regions.
+For instance, for client 1, the model has a more significant absolute error in the bottom right and
+upper left areas, where it lacks information on these regions during training. The federated model,
+however, can aggregate the overall information within the domain well by efficient communication
+between local models.
+
+5.4
+
+Allen-Cahn equation
+
+We consider solving the Allen-Cahn equation, governed by
+∂u
+∂2u
+= d 2 + 5(u − u3 ),
+∂t
+∂x
+
+x ∈ [−1, 1],
+
+t ∈ [0, 1],
+
+with the initial condition u(x, 0) = x2 cos(πx) and boundary conditions u(−1, t) = u(1, t) = −1,
+where d is 0.001. We sample 8000 residual points within the domain and 400 points on the boundary for the training data. Additionally, we sample 800 residual points for the initial condition
+during training. Since the Allen-Cahn equation is time-dependent, rather than partitioning both
+the spatial and temporal domains, we consider only the partitioning of the spatial domain and
+apply the 1D data partition method with the number of subdomains n ∈ [2, 4, 6, 8, 10, 20, 32, 40].
+For the multiclient experiment, we consider three clients using the same partitioning method but
+with different numbers of subdomains, n ∈ [3, 6, 9, 12, 15, 18, 30, 60], ensuring that all clients retain complete temporal information over their assigned spatial domain. The number of training
+epochs, neural network structure, activation function, and learning rate are consistent across both
+the two-client and multiclient scenarios.
+The relationship between L2 relative errors and the W1 distance is consistent with the previous
+time-independent example (Figs. 9A and B). The FedPINN outperforms the baseline PINN in
+extrapolation scenarios, with both models improving as the level of iid increases. Higher levels of
+data heterogeneity between clients correspond to larger L2 relative errors, both in the two-client
+20
+
+Figure 8: Solving the 2D Helmholtz equation in Section 5.3. (A) L2 relative error for
+different number of subdomains and W1 distances. (B) Weight divergence of hidden layers for
+different numbers of subdomains and W1 distances. (C) The ground truth solution. (D and E)
+Comparisons of federated model and two extrapolation baselines under (D) most non-iid and (E)
+most iid scenarios.
+
+21
+
+and multiclient settings, where the W1 distance for the multiclient setting is computed using the
+mean pairwise W1 , as defined in Eq. (4).
+Fig. 9C shows the visualization of the ground truth solution, while Figs. 9D and E present
+two examples of the learned solutions in the most non-iid and most iid scenarios under the twoclient setting. Both clients have complete temporal information in this x-partition data generation
+method but differ only in spatial regions. For example, in most non-iid cases, the first client handles
+data points with x ∈ [−1, 0] and t ∈ [0, 1], while the second client handles x ∈ [0, 1] and t ∈ [0, 1].
+Figs. 9F and G display the absolute error of two extrapolation clients alongside the error of the
+corresponding federated server. Notably, federated learning significantly improves the performance
+of extrapolation clients, regardless of the level of data heterogeneity.
+
+5.5
+
+Inverse problem of the 2D Navier-Stokes equation
+
+We consider the inverse problem of the given Navier-Stokes equation of incompressible flow around
+the cylinder with Re = 100. The governing equations are
+ut + C1 (uux + vuy ) = −px + C2 (uxx + uyy ),
+vt + C1 (uvx + vvy ) = −py + C2 (vxx + vyy ),
+where u, v are x and y components of the velocity field, p is the pressure, C1 , C2 are unknown
+parameters. Here, we aim to infer the values of C1 and C2 from the dataset of u, v and p. The
+ground truth of C1 and C2 are 1 and 0.01. The geometry domain of interest is [1, 8] × [−2, 2] and
+the time domain is [0, 1]. We use 200 boundary points and 100 initial points. We use 700 in-domain
+mesh points additionally. We partition the spatial domain in this problem using the 2D x-partition
+method in Fig. 2A, with the number of subdomains n ∈ [2, 4, 6, 8, 10, 20].
+For this inverse problem, we average the gradients from clients in the aggregation step and the
+inferred values in the aggregation step. Hence, after a few iterations, the two clients will have
+a similar learned value for the variables of interest. Fig. 10 is the trend of predicted C1 and C2
+values versus the training epochs. We also record the minimum number of epochs the federated
+model needs to achieve the required accuracy on the two variables C1 and C2 in Table. 2. In
+general, achieving better accuracy requires more epochs for all three settings. Specifically, less data
+heterogeneity, i.e., more partitions, will lead to faster model convergence. We conclude that data
+heterogeneity negatively correlates with the convergence rate and the performance of the federated
+inverse problem. In Fig. 10A, the standard deviation of both unknown variables is much larger
+than the standard deviation of unknown variables in Figs. 10B and C. This offers strong evidence
+that data heterogeneity also relates to the stability of the federated model. Less data heterogeneity
+would lead to a more stable federated model.
+
+5.6
+
+Inverse problem of the diffusion-reaction system
+
+To further evaluate the performance of the proposed FedPINN in the inverse problem, we consider
+inferring the space-dependent reaction rate k(x) in the one-dimensional diffusion-reaction system
+λ
+
+∂2u
+− k(x)u = f,
+∂x2
+
+x ∈ [0, 1],
+
+with zero boundary condition u(x) = 0 at x = 0 and x = 1. The diffusion coefficient λ is 0.01, and
+f = sin(2πx) is the source term. The objective is to infer k(x) given measurements on the solute
+
+22
+
+Figure 9: Solving the Allen-Cahn equation with two and three clients in Section 5.4.
+(A) L2 relative error for different numbers of subdomains and W1 distances under the two-client
+setting. (B) L2 relative error for different numbers of subdomains and W1 distances under the
+multiclient setting. (C) Ground truth solution. (D and E) Comparison of federated model and
+two extrapolation baselines under most non-iid and most iid scenarios in the two-client setting. (F
+and G) Comparison of federated model and two extrapolation baselines under most non-iid and
+most iid scenarios in the multiclient setting.
+
+23
+
+Table 2: Comparison of computational costs of the 2D inverse Navier-Stokes equation
+in Section 5.5. Data in the table represents the least epochs for the target variable to achieve
+the error threshold during the learning process. Data heterogeneity varies by columns, and error
+thresholds vary by rows.
+Error threshold
+10%
+5%
+1%
+0.5%
+
+2 subdomains
+
+6 subdomains
+
+10 subdomains
+
+Centralized
+
+C1
+
+C2
+
+C1
+
+C2
+
+C1
+
+C2
+
+C1
+
+C2
+
+18k
+28k
+–
+–
+
+3.4k
+3.5k
+–
+–
+
+6.8k
+10.2k
+23.6k
+25.9k
+
+4.5k
+5.3k
+5.7k
+5.7k
+
+5.5k
+8.3k
+13k
+13.8k
+
+5.3k
+5.5k
+5.7k
+5.7k
+
+2.9k
+3.8k
+5.3k
+5.6k
+
+1k
+2.3k
+2.4k
+2.4k
+
+Figure 10: Solving the inverse Navier-Stokes problem with different data heterogeneity
+in Section 5.5. The predicted values of C1 and C2 converge to the true values. (A) The spatial
+domain is partitioned into two uniform subdomains. (B) Six subdomains. (C) Ten subdomains.
+
+24
+
+concentration u. The exact solution of this problem is
+
+
+(x − 0.5)2
+.
+k(x) = 0.1 + exp −0.5
+0.152
+For this inverse problem, given that the unknown k is a function of x instead of a constant number,
+we train another network to approximate k apart from the neural network for u. We use 24
+observations of u and 10 PDE residual points for training. In contrast, in the federated setting,
+the observation points are partitioned and assigned to different clients based on the 1D generation
+method in Section 2 with n ∈ [2, 4, 6, 8, 12, 24].
+For the inverse problem, the L2 relative errors for both k(x) and u(x) exhibit an increasing trend
+concerning the larger W1 (the first column of Figs. 11A and B), which is similar to the forward
+problem. However, no clear trend of weight divergence is observed in inferring the unknown k(x)
+(the second column of Fig. 11A). The last two columns present two examples of inferred k(x) and
+learned solution u(x) with high and low data heterogeneity.
+
+Figure 11: Solving the inverse diffusion-reaction problem in Section 5.6. (A) Results of
+the unknown function k(x). (B) Results of the PDE solution u(x). (First column) L2 relative error
+for different numbers of subdomains and W1 distances. (Second column) The weight divergence of
+hidden layers for different numbers of subdomains and W1 distances. (Third column) The federated
+model under the most non-iid setting. (Fourth column) The federated model under the most iid
+setting.
+
+6
+
+Operator learning
+
+In this section, after briefly explaining the setting of operator learning and the architecture of
+DeepONets, we test the performance of the proposed FedDeepONet with antiderivative equation
+(Sec. 6.2), diffusion-reaction equation (Sec. 6.3), and Burgers’ equation (Sec. 6.4). Moreover, we
+25
+
+explore the performance of FedDeepONet for different numbers of local iterations and find the
+insensitivity to communication efficiency under operator learning scenario (Sec. 6.5).
+
+6.1
+
+Introduction of DeepONet
+
+DeepONet [12] was developed to learn operators based on the universal approximation theorem of
+neural networks for operators. Consider two function spaces V and U, where a function v ∈ V is
+defined on the domain D ⊂ Rd :
+v : D ∋ x 7→ v(x) ∈ R,
+′
+
+and a function u ∈ U defined on the domain D′ ⊂ Rd :
+u : D′ ∋ ξ 7→ u(ξ) ∈ R.
+Let G be an operator that maps V to U:
+G : V → U,
+
+v 7→ u.
+
+DeepONet can be used to learn the operator G with two sub-networks: a trunk network and a
+branch network. For m scattered locations {x1 , x2 , . . . , xm } in D, the branch network takes the
+function evaluations [v(x1 ), v(x2 ), . . . , v(xm )] as the input, and the output of the branch network is
+[b1 (v), b2 (v), . . . , bp (v)], where p is the number of neurons. The trunk network takes ξ as the input
+and the outputs [t1 (ξ), t2 (ξ), . . . , tp (ξ)]. Then, by taking the inner product of trunk and branch
+outputs, the output of DeepONet is
+G(v)(ξ) =
+
+p
+X
+
+bk (v)tk (ξ) + b0 ,
+
+k=1
+
+where b0 ∈ R is a bias.
+
+6.2
+
+Antiderivative operator
+
+The first example is the ordinary differential equation defined by
+du(x)
+= v(x),
+dx
+
+x ∈ [0, 1],
+
+with an initial condition u(0) = 0. We use the DeepONet to learn the solution operator, i.e., the
+antiderivative operator
+Z
+x
+
+G : v(x) 7→ u(x) =
+
+v(τ )dτ.
+0
+
+The input functions v are sampled from the Chebyshev polynomial space defined in Sec. 2.2.4.
+For training datasets, different directions are chosen for two clients with the same number of
+basis functions, i.e., Ω1 ∼ PChebyshev (n, forward), Ω2 ∼ PChebyshev (n, inverse) with n ∈ [1, 10].
+Centralized and extrapolating models are trained with 200 functions, while the federated model
+is trained with 200 functions in total, where each client has 100 functions locally. After training,
+all models are tested on 1000 functions sampled from the entire Chebyshev polynomial space with
+M = 10. The reference solution u(x) of the ODE is obtained by Runge-Kutta (4,5).
+In a federated operator learning setting, the data heterogeneity decreases as the number of
+nonzero terms increases, which further results in the decrease of L2 relative error (Fig. 12A). Moreover, the performance of FedDeepONet exceeds the two extrapolating baselines while approximating
+26
+
+the centralized model with diminishing data heterogeneity. It is noted that in Fig. 12A there is a
+large improvement in error from 10−1 to 5 × 10−2 when n increases from 5 to 6. This may result
+from the fact that the total knowledge of the FedDeepONet, despite being distributed to two clients,
+can cover the full Chebyshev space. Another finding is that in the operator learning setting, the
+weight divergence for both trunk and branch layers is relatively less sensitive to the non-iid level
+change than approximating functions or learning a specific solution (Fig. 12B). Figs. 12C and D
+are two examples of the performance of given models with high data heterogeneity (n = 6) and low
+data heterogeneity (n = 10). As the extrapolation models are less satisfactory, the FedDeepONet
+can utilize the information on both clients without directly communicating local data and better
+perform in learning the antiderivative operator.
+
+Figure 12: Learning antiderivative operator in Section 6.2. (A) L2 relative error for different
+numbers of nonzero Chebyshev polynomial terms. (B) Weight divergence of hidden layers with
+respect to different numbers of nonzero Chebyshev polynomial terms. (C and D) Comparison of
+federated model and two extrapolation baselines for the number of nonzero Chebyshev polynomial
+terms (C) n = 6 and (D) n = 10.
+
+27
+
+6.3
+
+Diffusion-reaction equation
+
+The second example is the diffusion-reaction equation defined by
+∂u
+∂2u
+= D 2 + ku2 + v(x),
+∂t
+∂x
+
+x ∈ [0, 1], t ∈ [0, 1],
+
+with zero initial and boundary conditions. In this example, k and D are set at 0.01. DeepONet is
+trained to learn the mapping from the source term v(x) to the solution u(x, t):
+G : v(x) 7→ u(x, t).
+Models are trained with 500 functions, where each client has 250 functions locally, and tested on
+1000 functions. The training and testing of Chebyshev functional spaces follow the same setting
+as in Sec. 6.2. The reference solution u(x, t) is obtained by a second-order finite difference method
+with a mesh size of 101 × 101.
+We sampled the input functions v(x) for testing from the Chebyshev functional space with
+n = 10, and one example of v(x) and corresponding solution u(x, t) is visualized in the top row
+of Fig. 13. The bottom figures are the absolute errors of the predictions from FedDeepONet and
+extrapolation models, where the federated model outperforms the extrapolating baselines that are
+only trained locally. Besides, the error plot demonstrates that the performance of training only with
+the second client is worse than the training with the first client data, and an intuitive explanation
+can be the insufficient knowledge of the polynomial functional space by having nonzero terms in
+inverse order. This phenomenon indicates that the influence of local domain knowledge, i.e., how
+local data can represent the entire learning space, is more significant to the final performance of
+the federated model in the operator learning setting.
+
+6.4
+
+Burgers’ equation
+
+Finally, we consider the Burgers’ equation defined by
+∂u
+∂u
+∂2u
++u
+= ν 2,
+∂t
+∂x
+∂x
+
+x ∈ [0, 1],
+
+t ∈ [0, 1],
+
+with a periodic boundary condition and an initial condition u0 (x) = v(x). In this numerical
+experiment, ν is set at 0.1. The objective is to learn the operator mapping from initial condition
+v(x) to the solution u(x, t). The periodic function v(x) is sampled from the Chebyshev polynomial
+functional space with M = 10. Models are trained with 200 functions in total and tested on 500
+functions. The architecture of DeepONet is the same as the diffusion-reaction equation.
+The iid level increases as the number of nonzero terms increases, and the L2 relative error
+decreases (Fig. 14A). The improvement in error has a sharp decrease for client 2’s extrapolating
+scenarios but is relatively smooth for client 1, which is different from the diffusion reaction example.
+One reason is that for Burgers’ equation with large viscosity, the diffusive effects become more
+pronounced, and the system’s overall behavior becomes more diffusive, as shown in two examples
+of high and low data heterogeneity (Figs. 14D and E). The dominant influence of viscosity promotes
+a fast decay in the solution and thus undermines the effect of different input functional spaces.
+Moreover, we consider a multi-client scenario for Burgers’ equation, where the data generation
+and non-iid control follow Sec. 2.2.4. For multi-client cases, the error trend is consistent with
+previous experiments in that increasing the number of terms results in a more minor L2 relative
+error (Fig. 14B). Besides, the second client and third client exhibit similar error trends, both
+of which are worse than the first client. This demonstrates that the lack of knowledge greatly
+28
+
+Figure 13: Learning the diffusion-reaction equation in Section 6.3. The top figures are
+examples of testing function v(x) and ground truth solution u(x, t). The bottom is an example of a
+federated model and two extrapolation baselines for n = 10. The first column is the absolute error
+for FedDeepONet, and the rest are the absolute error of extrapolation baselines.
+
+29
+
+Figure 14: Learning the solution operator of Burgers’ equation in Section 6.4. (A) L2
+relative error for different numbers of nonzero Chebyshev polynomial terms for two clients. (B)
+L2 relative error for three clients’ different numbers of nonzero Chebyshev polynomial terms. (C)
+Comparison of federated model for 2 and 3 clients. (D and E) Examples of federated model and
+two extrapolation baselines for (D) n = 5 and (E) n = 10. The first column is the ground truth
+solution of one testing function, and the rest are absolute errors for FedDeepONet and extrapolation
+baselines.
+
+30
+
+influences extrapolating tasks but can be mediated with federated learning. Fig. 14C compares
+federated learning for two- and three-client settings. The performance of the federated model
+trained with three clients outperforms the federated model only with two clients for the same
+number of Chebyshev polynomial terms per client. The three-client setting has more information by
+introducing the middle nonzero terms. Moreover, as the number of terms increases, the performance
+of two and three clients converges to the centralized DeepONet.
+
+6.5
+
+Insensitivity of accuracy to communication frequency
+
+To further explore the property and advantage of combining federated learning with operator
+learning, we tested the performance of FedDeepONet with respect to the different number of local
+iterations E for learning the antiderivative operator and the diffusion-reaction operator. Given a
+fixed total number of iterations, we can control the communication frequency by tuning the local
+iterations, where this setting guarantees that for larger E, the required number of communication
+rounds is smaller. The hyperparameters for networks and optimizers are the same as in previous
+experiments. To explore the relationship between the accuracy of FedDeepONet and various communication frequencies, E is set to be [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000] with the total number
+of iterations fixed to be 50000. By doing so, local iterations can cover almost identical scenarios to centralized training (E = 1) and huge cases (E = 1000) and demonstrate the property of
+FedDeepONet more comprehensively.
+The performances of different E are very similar, even for E as large as 1000, for both learning
+antiderivative operator and diffusion reaction operator (Figs. 15A and B). Empirical results validate
+that federated operator learning can achieve a similar level of accuracy regardless of the number of
+local updates and thus is shown insensitive to the communication frequency. This invariant property
+can be practically meaningful. In real-life applications, the communication round composed of one
+aggregation and one broadcasting usually counts for a significant portion of the computational
+cost. With the insensitivity of accuracy to communication frequency, the FedDeepONet can be
+efficiently trained with significant local iterations and a small number of communications to achieve
+satisfactory accuracy.
+
+7
+
+Conclusions
+
+This paper presents the first systematic study of federated scientific machine learning (FedSciML)
+to approximate functions and solve differential equations. We first propose different data generation
+methods corresponding to diverse problem settings, where synthetic data can be generated with
+different non-iidness to accommodate the decentralized training scenario. Subsequently, we provide
+a quantitative measure of the level of data heterogeneity by using 1-Wasserstein distance and
+validate that smaller W1 distance, i.e., decreasing non-iid level, will result in smaller L2 relative
+errors for federated models in all tasks. We also found that as federated models outperform the
+baseline models that are only trained on local datasets without communication with other clients,
+and as W1 distance becomes small, such as 0.005, the performance of federated models converge to
+the centralized baseline model for both forward and inverse problems.
+To better interpret the performance of the federated model compared with the centralized
+model, we introduce the generalized weight divergence to quantify the difference and analyze the
+upper bound of weight divergence for federated models used in this paper. In the later numerical
+experiment, we calculated the weight divergence in different layers for different non-iid levels. We
+demonstrated that weight divergence exhibits a consistent trend with error change in function
+approximation and FedPINN. However, this tendency is not evident for FedDeepONet, which may
+31
+
+Figure 15: Learning operators with respect to different numbers of local iterations. L2
+relative error for different numbers of nonzero Chebyshev polynomial terms when training with
+different local epochs (E). (A) Antiderivative operator in Sec. 6.2. (B) Diffusion-reaction equation
+in Sec. 6.3.
+result from the different settings of operator learning and distinctive methods to control non-iid.
+Apart from the two-client scenario, we also study the performance of multiple clients and utilize
+the mean pairwise W1 distance as the quantifier of data heterogeneity. The results show a similar
+trend as the two-client case despite the error becoming more extensive as the number of clients
+increases, which we conjecture is caused by the increasing divergence among clients.
+This study is the first attempt to understand and build the FedSciML framework, and more
+work should be done theoretically and computationally. This study considers the FedAvg method
+in aggregating local model parameters. Still, the effect of different weights on local models and even
+adaptive updating algorithms can be investigated in future work. Although we provide a theoretical
+study of the upper bound in this paper, more theoretical analysis of FedSciML is required in future
+work.
+
+Acknowledgments
+This work was supported by the U.S. Department of Energy Office of Advanced Scientific Computing Research under Grants No. DE-SC0025592 and No. DE-SC0025593, and the U.S. National
+Science Foundation under Grant No. DMS-2347833.
+
+A
+
+Abbreviations and notations
+
+Table 3 lists the main abbreviations and notations used throughout this paper.
+
+B
+
+Neural network architectures
+
+Table 4 provides the summary of network size, activation function, and training epochs in experiments in Sections 4, 5 and 6. For the last three examples of training FedDeepONet, the size of
+32
+
+Table 3: Abbreviations and notations.
+αi
+G
+Ω
+D
+Dk
+l,E
+EW
+D
+{x1 , x2 , · · · , xm }
+[v(x1 ), v(x2 ), · · · , v(xm )]
+[b1 (v), b2 (v), · · · , bp (v)]
+ξ
+[t1 (ξ), t2 (ξ), · · · , tp (ξ)]
+F
+L
+Lk
+ℓ
+K
+E
+l
+N
+Nk
+n
+
+coefficient of i-th term in Chebyshev polynomials
+operator to learn
+domain of the PDE
+dataset of the federated model
+dataset of the k-th client of the federated model
+weight divergence at the l-th global epoch and E-th local epoch
+scattered sensors
+input of branch network
+output of branch network
+input of trunk network
+outputs of trunk network, where p is the number of neurons
+governing PDEs and/or physical constraints
+loss of the federated model
+loss of the k-th client of the federated model
+point-wise squared error loss
+number of clients
+number of local epochs
+number of global epochs
+total number of samples
+number of samples for client k
+number of subdomains in function approximation and PINNs
+number of nonzero Chebyshev polynomial terms in operator learning
+
+33
+
+hidden layers is the same for both trunk and branch nets, where the first layer’s dimension depends
+on the input dimension and number of sensors.
+Table 4: Network architectures and training settings.
+Examples
+Gramacy&Lee (Sec. 4.1)
+Schaffer (Sec. 4.2)
+1D Poisson (Sec. 5.2)
+2D Helmholtz (Sec. 5.3)
+Allen-Cahn (Sec. 5.4)
+Navier-Stokes (Inverse) (Sec. 5.5)
+Diffusion-reaction (Inverse) (Sec. 5.6)
+Antiderivative (Sec. 6.2)
+Diffusion-reaction (Sec. 6.3)
+Burgers’ (Sec. 6.4)
+
+C
+
+Width
+3
+3
+3
+3
+3
+6
+3
+2
+3
+2
+
+Depth
+64
+64
+20
+64
+64
+50
+20
+40
+100
+64
+
+Activation
+tanh
+tanh
+tanh
+sine
+sine
+tanh
+tanh
+ReLU
+ReLU
+ReLU
+
+Local epochs
+5
+5
+5
+5
+5
+1
+5
+5
+5
+5
+
+Global epochs
+3000
+3000
+1000
+2000
+10000
+40000
+20000
+10000
+10000
+10000
+
+Proof to Theorem 3.1
+
+Proof. We use the notation θi to represent the weights of the centralized model at the i-th epoch,
+and θki represent the weights of the federated k-th client model at the i-th local epoch.
+We have θ0 = θk0 , ∀k due to the same initialization of the centralized and federated models.
+Considering the one-epoch update of the centralized model, we have
+θj+1 = θj − η∇L(θj ; D)
+η X
+= θj −
+∇ℓ(θj ; di ).
+N
+
+(5)
+
+di ∈D
+
+Note Eq. (5) holds for any epoch i, we can sum up both sides of the equations for j = 0, 1, . . . , E − 1
+to get
+E−1
+η X X
+E
+0
+θ =θ −
+∇ℓ(θj ; di ).
+N
+di ∈D j=0
+
+Similarly, for the k-th client, the expression of the local model after E local epoch is
+θkE = θk0 −
+
+E−1
+η X X
+∇ℓ(θkj ; di ).
+Nk
+di ∈Dk j=0
+
+Hence, we can compute the norm of the difference in the weights between the centralized model
+and the client model by
+θE − θkE =
+
+E−1
+E−1
+η X X
+η X X
+∇ℓ(θj ; di ) −
+∇ℓ(θkj ; di )
+N
+Nk
+di ∈D j=0
+
+≤η
+
+E−1
+X
+j=0
+
+di ∈Dk j=0
+
+1 X
+1 X
+∇ℓ(θj ; di ) −
+∇ℓ(θkj ; di ) .
+N
+Nk
+di ∈D
+
+di ∈Dk
+
+34
+
+(6)
+
+Apply the norm inequalities to the quantity || N1
+bound the gradients by a constant:
+
+P
+
+j
+di ∈D ∇ℓ(θ ; di )||. Based on the assumption 1, we
+
+1 X
+1 X
+∇ℓ(θj ; di ) ≤
+∇ℓ(θj ; di )
+N
+N
+di ∈D
+
+di ∈D
+
+≤
+
+1 X
+M
+N
+di ∈D
+
+= M.
+A similar conclusion holds for || N1k
+
+P
+
+(7)
+
+j
+di ∈Dk ∇ℓ(θk ; di )||:
+
+1 X
+∇ℓ(θkj ; di ) ≤ M.
+Nk
+
+(8)
+
+di ∈Dk
+
+Consequently, we can improve Eq. (6) by Eq. (7) and Eq. (8):
+
+θ
+
+E
+
+− θkE
+
+E−1
+X
+
+1 X
+1 X
+∇ℓ(θkj ; di )
+∇ℓ(θj ; di ) −
+N
+Nk
+j=0
+di ∈Dk
+di ∈D
+
+
+E−1
+X
+X
+X
+1
+ 1
+∇ℓ(θkj ; di ) 
+≤η
+∇ℓ(θj ; di ) +
+N
+Nk
+≤η
+
+≤η
+
+E−1
+X
+
+di ∈Dk
+
+di ∈D
+
+j=0
+
+2M
+
+j=0
+
+= 2ηEM.
+1,E
+Now we look back to the weight divergence EWD
+. We have
+1,E
+EWD
+=
+
+E
+
+θ −
+
+K
+X
+Nk
+k=1
+
+≤
+
+K
+X
+k=1
+
+N
+
+θkE
+
+Nk E
+θ − θkE
+N
+
+≤ 2ηM E.
+The upper bound does not depend on the global epoch as long as the centralized and federated
+l,E
+models share the same initialization. Hence, for EWD
+with arbitrary global epoch l, it is easy to get
+l,E
+1,E
+EWD
+≤ l · EWD
+
+≤ 2ηM El.
+
+35
+
+References
+[1] Maziar Raissi, Paris Perdikaris, and George E Karniadakis. Physics-informed neural networks:
+A deep learning framework for solving forward and inverse problems involving nonlinear partial
+differential equations. Journal of Computational Physics, 378:686–707, 2019.
+[2] Lu Lu, Xuhui Meng, Zhiping Mao, and George Em Karniadakis. DeepXDE: A deep learning
+library for solving differential equations. SIAM Review, 63(1):208–228, 2021.
+[3] George Em Karniadakis, Ioannis G Kevrekidis, Lu Lu, Paris Perdikaris, Sifan Wang, and Liu
+Yang. Physics-informed machine learning. Nature Reviews Physics, 3(6):422–440, 2021.
+[4] Apostolos F Psaros, Kenji Kawaguchi, and George Em Karniadakis. Meta-learning PINN loss
+functions. Journal of Computational Physics, 458:111121, 2022.
+[5] Jeremy Yu, Lu Lu, Xuhui Meng, and George Em Karniadakis. Gradient-enhanced physicsinformed neural networks for forward and inverse PDE problems. Computer Methods in Applied
+Mechanics and Engineering, 393:114823, 2022.
+[6] Levi McClenny and Ulisses Braga-Neto. Self-adaptive physics-informed neural networks using
+a soft attention mechanism. arXiv preprint arXiv:2009.04544, 2020.
+[7] Xiaowei Jin, Shengze Cai, Hui Li, and George Em Karniadakis. NSFnets (Navier-Stokes
+flow nets): Physics-informed neural networks for the incompressible Navier-Stokes equations.
+Journal of Computational Physics, 426:109951, 2021.
+[8] Chenxi Wu, Min Zhu, Qinyang Tan, Yadhu Kartha, and Lu Lu. A comprehensive study
+of non-adaptive and residual-based adaptive sampling for physics-informed neural networks.
+Computer Methods in Applied Mechanics and Engineering, 403:115671, 2023.
+[9] Sifan Wang, Hanwen Wang, and Paris Perdikaris. On the eigenvector bias of Fourier feature
+networks: From regression to solving multi-scale PDEs with physics-informed neural networks.
+Computer Methods in Applied Mechanics and Engineering, 384:113938, 2021.
+[10] Zhongkai Hao, Jiachen Yao, Chang Su, Hang Su, Ziao Wang, Fanzhi Lu, Zeyu Xia, Yichi
+Zhang, Songming Liu, Lu Lu, et al. PINNacle: A comprehensive benchmark of physicsinformed neural networks for solving PDEs. arXiv preprint arXiv:2306.08827, 2023.
+[11] Lu Lu, Pengzhan Jin, and George Em Karniadakis. DeepONet: Learning nonlinear operators for identifying differential equations based on the universal approximation theorem of
+operators. arXiv preprint arXiv:1910.03193, 2019.
+[12] Lu Lu, Pengzhan Jin, Guofei Pang, Handy Zang, and George Karniadakis. Learning nonlinear
+operators via DeepONet based on the universal approximation theorem of operators. Nature
+Machine Intelligence, 3:218–229, 03 2021.
+[13] Min Zhu, Handi Zhang, Anran Jiao, George Em Karniadakis, and Lu Lu. Reliable extrapolation of deep neural operators informed by physics or sparse observations. Computer Methods
+in Applied Mechanics and Engineering, 412:116064, 2023.
+[14] Chensen Lin, Zhen Li, Lu Lu, Shengze Cai, Martin Maxey, and George Em Karniadakis.
+Operator learning for predicting multiscale bubble growth dynamics. The Journal of Chemical
+Physics, 154(10):104118, 2021.
+36
+
+[15] Somdatta Goswami, Minglang Yin, Yue Yu, and George Em Karniadakis. A physics-informed
+variational DeepONet for predicting crack path in quasi-brittle materials. Computer Methods
+in Applied Mechanics and Engineering, 391:114587, 2022.
+[16] Julian D. Osorio, Zhicheng Wang, George Karniadakis, Shengze Cai, Chrys Chryssostomidis,
+Mayank Panwar, and Rob Hovsapian. Forecasting solar-thermal systems performance under
+transient operation using a data-driven machine learning approach based on the deep operator
+network architecture. Energy Conversion and Management, 252, 12 2021.
+[17] Shengze Cai, Zhicheng Wang, Lu Lu, Tamer A Zaki, and George Em Karniadakis.
+DeepM&Mnet: Inferring the electroconvection multiphysics fields based on operator approximation by neural networks. Journal of Computational Physics, 436:110296, 2021.
+[18] Minglang Yin, Enrui Zhang, Yue Yu, and George Em Karniadakis. Interfacing finite elements
+with deep neural operators for fast multiscale modeling of mechanics problems. Computer
+Methods in Applied Mechanics and Engineering, page 115027, 2022.
+[19] Lu Lu, Xuhui Meng, Shengze Cai, Zhiping Mao, Somdatta Goswami, Zhongqiang Zhang,
+and George Em Karniadakis. A comprehensive and fair comparison of two neural operators
+(with practical extensions) based on fair data. Computer Methods in Applied Mechanics and
+Engineering, 393:114778, 2022.
+[20] Sifan Wang, Hanwen Wang, and Paris Perdikaris. Learning the solution operator of parametric partial differential equations with physics-informed DeepONets. Science Advances,
+7(40):eabi8605, 2021.
+[21] Lu Lu, Raphaël Pestourie, Steven G Johnson, and Giuseppe Romano. Multifidelity deep neural
+operators for efficient learning of partial differential equations with application to fast inverse
+design of nanoscale heat transport. Physical Review Research, 4(2):023210, 2022.
+[22] Pengzhan Jin, Shuai Meng, and Lu Lu. MIONet: Learning multiple-input operators via tensor
+product. arXiv preprint arXiv:2202.06137, 2022.
+[23] Min Zhu, Shihang Feng, Youzuo Lin, and Lu Lu. Fourier-DeepONet: Fourier-enhanced deep
+operator networks for full waveform inversion with improved accuracy, generalizability, and
+robustness. arXiv preprint arXiv:2305.17289, 2023.
+[24] Zhongyi Jiang, Min Zhu, and Lu Lu. Fourier-MIONet: Fourier-enhanced multiple-input neural
+operators for multiphase modeling of geological carbon sequestration. Reliability Engineering
+& System Safety, 251:110392, 2024.
+[25] Yibo Yang, Georgios Kissas, and Paris Perdikaris. Scalable uncertainty quantification for deep
+operator networks using randomized priors. arXiv e-prints, page arXiv:2203.03048, March
+2022.
+[26] Zecheng Zhang, Christian Moya, Lu Lu, Guang Lin, and Hayden Schaeffer. D2NO: Efficient
+handling of heterogeneous input function spaces with distributed deep neural operators. arXiv
+preprint arXiv:2310.18888, 2023.
+[27] Brendan McMahan, Eider Moore, Daniel Ramage, Seth Hampson, and Blaise Aguera y Arcas. Communication-efficient learning of deep networks from decentralized data. In Artificial
+Intelligence and Statistics, pages 1273–1282. PMLR, 2017.
+37
+
+[28] Lee Junghye, Sun Jimeng, Wang Fei, Wang Shuang, Jun Chi-Hyuck, and Jiang Xiaoqian.
+Privacy-preserving patient similarity learning in a federated environment: Development and
+analysis. JMIR Medical Informatics, 2018.
+[29] Theodora S Brisimi, Ruidi Chen, Theofanie Mela, Alex Olshevsky, Ioannis Ch Paschalidis,
+and Wei Shi. Federated learning of predictive models from federated electronic health records.
+International journal of medical informatics, 112:59–67, 2018.
+[30] Wenqi Li, Fausto Milletarı̀, Daguang Xu, Nicola Rieke, Jonny Hancox, Wentao Zhu, Maximilian Baust, Yan Cheng, Sébastien Ourselin, M Jorge Cardoso, et al. Privacy-preserving
+federated brain tumour segmentation. In Machine Learning in Medical Imaging: 10th International Workshop, MLMI 2019, Held in Conjunction with MICCAI 2019, Shenzhen, China,
+October 13, 2019, Proceedings 10, pages 133–141. Springer, 2019.
+[31] Li Huang, Andrew L Shea, Huining Qian, Aditya Masurkar, Hao Deng, and Dianbo Liu.
+Patient clustering improves efficiency of federated machine learning to predict mortality and
+hospital stay time using distributed electronic medical records. Journal of biomedical informatics, 99:103291, 2019.
+[32] Guodong Long, Yue Tan, Jing Jiang, and Chengqi Zhang. Federated learning for open banking.
+In Federated Learning: Privacy and Incentive, pages 240–254. Springer, 2020.
+[33] David Byrd and Antigoni Polychroniadou. Differentially private secure multi-party computation for federated learning in financial applications. In Proceedings of the First ACM International Conference on AI in Finance, pages 1–9, 2020.
+[34] Adel Nadjaran Toosi, Ruppa K Thulasiram, and Rajkumar Buyya. Financial option market
+model for federated cloud environments. In 2012 IEEE Fifth International Conference on
+Utility and Cloud Computing, pages 3–12. IEEE, 2012.
+[35] Dinh C Nguyen, Ming Ding, Pubudu N Pathirana, Aruna Seneviratne, Jun Li, and H Vincent
+Poor. Federated learning for internet of things: A comprehensive survey. IEEE Communications Surveys & Tutorials, 23(3):1622–1658, 2021.
+[36] Kang Wei, Jun Li, Ming Ding, Chuan Ma, Howard H Yang, Farhad Farokhi, Shi Jin, Tony QS
+Quek, and H Vincent Poor. Federated learning with differential privacy: Algorithms and
+performance analysis. IEEE Transactions on Information Forensics and Security, 15:3454–
+3469, 2020.
+[37] Stacey Truex, Ling Liu, Ka-Ho Chow, Mehmet Emre Gursoy, and Wenqi Wei. LDP-Fed: Federated learning with local differential privacy. In Proceedings of the Third ACM International
+Workshop on Edge Systems, Analytics and Networking, pages 61–66, 2020.
+[38] Robin C Geyer, Tassilo Klein, and Moin Nabi. Differentially private federated learning: A
+client level perspective. arXiv preprint arXiv:1712.07557, 2017.
+[39] Tzu-Ming Harry Hsu, Hang Qi, and Matthew Brown. Measuring the effects of non-identical
+data distribution for federated visual classification. arXiv preprint arXiv:1909.06335, 2019.
+[40] Sashank Reddi, Zachary Charles, Manzil Zaheer, Zachary Garrett, Keith Rush, Jakub
+Konečnỳ, Sanjiv Kumar, and H Brendan McMahan. Adaptive federated optimization. arXiv
+preprint arXiv:2003.00295, 2020.
+38
+
+[41] Christian Moya and Guang Lin. Fed-DeepONet: Stochastic gradient-based federated training
+of deep operator networks. Algorithms, 15(9):325, September 2022.
+[42] Peter Kairouz, H Brendan McMahan, Brendan Avent, Aurélien Bellet, Mehdi Bennis, Arjun Nitin Bhagoji, Kallista Bonawitz, Zachary Charles, Graham Cormode, Rachel Cummings,
+et al. Advances and open problems in federated learning. Foundations and Trends® in Machine Learning, 14(1–2):1–210, 2021.
+[43] Rémi Flamary, Nicolas Courty, Alexandre Gramfort, Mokhtar Z. Alaya, Aurélie Boisbunon,
+Stanislas Chambon, Laetitia Chapel, Adrien Corenflos, Kilian Fatras, Nemo Fournier, Léo
+Gautheron, Nathalie T.H. Gayraud, Hicham Janati, Alain Rakotomamonjy, Ievgen Redko,
+Antoine Rolet, Antony Schutz, Vivien Seguy, Danica J. Sutherland, Romain Tavenard, Alexander Tong, and Titouan Vayer. POT: Python optimal transport. Journal of Machine Learning
+Research, 22(78):1–8, 2021.
+[44] Yue Zhao, Meng Li, Liangzhen Lai, Naveen Suda, Damon Civin, and Vikas Chandra. Federated
+learning with non-iid data. arXiv preprint arXiv:1806.00582, 2018.
+[45] Tian Li, Anit Kumar Sahu, Manzil Zaheer, Maziar Sanjabi, Ameet Talwalkar, and Virginia
+Smith. Federated optimization in heterogeneous networks, 2020.
+[46] Xiang Li, Kaixuan Huang, Wenhao Yang, Shusen Wang, and Zhihua Zhang. On the convergence of FedAvg on non-iid data. In International Conference on Learning Representations,
+2020.
+[47] Yeonjong Shin. On the convergence of physics informed neural networks for linear secondorder elliptic and parabolic type PDEs.
+Communications in Computational Physics,
+28(5):2042–2074, June 2020.
+[48] Beichuan Deng, Yeonjong Shin, Lu Lu, Zhongqiang Zhang, and George Em Karniadakis. Convergence rate of DeepONets for learning operators arising from advection-diffusion equations,
+2021.
+[49] Robert B Gramacy and Herbert KH Lee. Cases for the nugget in modeling computer experiments. Statistics and Computing, 22:713–722, 2012.
+[50] J. Schaffer. Multiple objective optimization with vector evaluated genetic algorithms. Proceedings of the 1st International Conference on Genetic Algorithms, 1, 01 1984.
+[51] Lu Lu, Raphael Pestourie, Wenjie Yao, Zhicheng Wang, Francesc Verdugo, and Steven G
+Johnson. Physics-informed neural networks with hard constraints for inverse design. SIAM
+Journal on Scientific Computing, 43(6):B1105–B1132, 2021.
+[52] Ameya D Jagtap, Ehsan Kharazmi, and George Em Karniadakis. Conservative physicsinformed neural networks on discrete domains for conservation laws: Applications to forward
+and inverse problems. Computer Methods in Applied Mechanics and Engineering, 365:113028,
+2020.
+[53] Ameya D Jagtap and George E Karniadakis. Extended physics-informed neural networks
+(XPINNs): A generalized space-time domain decomposition based deep learning framework
+for nonlinear partial differential equations. In AAAI spring symposium: MLPS, volume 10,
+2021.
+39
+
+[54] Khemraj Shukla, Ameya D Jagtap, and George Em Karniadakis. Parallel physics-informed
+neural networks via domain decomposition. Journal of Computational Physics, 447:110683,
+2021.
+
+40
+
+

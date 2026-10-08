@@ -1,0 +1,933 @@
+Gradient-enhanced physics-informed neural networks for forward and
+inverse PDE problems
+Jeremy Yua , Lu Lub,∗, Xuhui Mengc , George Em Karniadakisc,d
+a St. Mark’s School of Texas, Dallas, TX 75230, USA
+b Department of Chemical and Biomolecular Engineering, University of Pennsylvania, Philadelphia, PA 19104, USA
+c Division of Applied Mathematics, Brown University, Providence, RI 02912, USA
+
+arXiv:2111.02801v1 [cs.LG] 1 Nov 2021
+
+d School of Engineering, Brown University, Providence, RI 02912, USA
+
+Abstract
+Deep learning has been shown to be an effective tool in solving partial differential equations (PDEs) through
+physics-informed neural networks (PINNs). PINNs embed the PDE residual into the loss function of the
+neural network, and have been successfully employed to solve diverse forward and inverse PDE problems.
+However, one disadvantage of the first generation of PINNs is that they usually have limited accuracy
+even with many training points. Here, we propose a new method, gradient-enhanced physics-informed
+neural networks (gPINNs), for improving the accuracy and training efficiency of PINNs. gPINNs leverage
+gradient information of the PDE residual and embed the gradient into the loss function. We tested gPINNs
+extensively and demonstrated the effectiveness of gPINNs in both forward and inverse PDE problems. Our
+numerical results show that gPINN performs better than PINN with fewer training points. Furthermore, we
+combined gPINN with the method of residual-based adaptive refinement (RAR), a method for improving
+the distribution of training points adaptively during training, to further improve the performance of gPINN,
+especially in PDEs with solutions that have steep gradients.
+Keywords: deep learning, partial differential equations, physics-informed neural networks,
+gradient-enhanced, residual-based adaptive refinement
+
+1. Introduction
+Deep learning has achieved remarkable success in diverse applications; however, its use in solving partial
+differential equations (PDEs) has emerged only recently. As an alternative method to traditional numerical
+PDE solvers, physics-informed neural networks (PINNs) [1, 2] solve a PDE via embedding the PDE into the
+loss of the neural network using automatic differentiation. The PINN algorithm is mesh-free and simple, and
+it can be applied to different types of PDEs, including integro-differential equations [3], fractional PDEs [4],
+and stochastic PDEs [5, 6]. Moreover, one main advantage of PINNs is that from the implementation point
+of view, PINNs solve inverse PDE problems as easily as forward problems. PINNs have been successfully
+employed to solve diverse problems in different fields, for example in optics [7, 8], fluid mechanics [9], systems
+biology [10], and biomedicine [11].
+Despite promising early results, there are still some issues in PINNs to be addressed. One open problem
+is how to improve the PINN accuracy and efficiency. There are a few aspects of PINNs that can be improved
+and have been investigated by researchers. For example, the residual points are usually randomly distributed
+in the domain or grid points on a lattice, and other methods of training point sampling and distribution
+have been proposed to achieve better accuracy when using the same number of training points, such as the
+residual-based adaptive refinement (RAR) [3] and importance sampling [12]. The standard loss function
+in PINNs is the mean square error, and Refs. [13, 14] show that a properly-designed non-uniform training
+point weighting can improve the accuracy. In PINNs, there are multiple loss terms corresponding to the
+PDE and initial/boundary conditions, and it is critical to balance these different loss terms [15, 16]. Domain
+decomposition can be used for problems in a large domain [17, 18, 19]. Neural network architectures can
+∗ Corresponding author. Email: lulu1@seas.upenn.edu
+
+Preprint submitted to Journal of LATEX Templates
+
+November 5, 2021
+
+also be modified to satisfy automatically and exactly the required Dirichlet boundary conditions [20, 21, 22],
+Neumann boundary conditions [23, 24], Robin boundary conditions [25], periodic boundary conditions [26, 8],
+and interface conditions [25]. In addition, if some features of the PDE solutions are known a-priori, it is
+also possible to encode them in network architectures, for example, multi-scale and high-frequency features
+[27, 28, 29, 10, 30]. Moreover, the constraints in PINNs are usually soft constraints, and hard constraints
+can be imposed by using the augmented Lagrangian method [8].
+In PINNs, we aim to train a neural network to minimize the PDE residual for each PDE, and thus we
+only use the PDE residual as the corresponding loss for each PDE. This idea is straightforward and used
+by many researchers in the area, and no attention has been paid to other types of losses for a PDE yet.
+However, if the PDE residual is zero, then it is clear that the gradient of the PDE residual should also be
+zero. The idea of using gradient information has been demonstrated to be useful in other methods such
+as Gaussian process regression [31]. In this work, we develop the gradient-enhanced PINN (gPINN), which
+uses a new type of loss functions by leveraging the gradient information of the PDE residual to improve the
+accuracy and training efficiency of PINNs. We also combine gPINN with the aforementioned RAR method
+to further improve the performance.
+The paper is organized as follows. In Section 2, after introducing the algorithm of PINN, we present the
+extension to gPINN and gPINN with RAR. In Section 3, we demonstrate the effectiveness of gPINN and
+RAR for eight different problems, including function approximation, forward problems of PDEs, and inverse
+PDE-based problems. We systematically compare the performance of PINN, gPINN, PINN with RAR, and
+gPINN with RAR. Finally, we conclude the paper in Section 4.
+2. Methods
+We first provide a brief overview of physics-informed neural networks (PINNs) for solving forward and
+inverse partial differential equations (PDEs) and then present the method of gradient-enhanced PINNs
+(gPINNs) to improve the accuracy and training efficiency of PINNs. Next we discuss how to use the residualbased adaptive refinement (RAR) method to further improve gPINNs.
+2.1. PINNs for solving forward and inverse PDEs
+We consider the following PDE for the solution u(x, t) parametrized by the parameters λ defined on a
+domain Ω:
+
+
+∂u
+∂2u
+∂2u
+∂u
+,...,
+;
+,...,
+; . . . ; λ = 0, x = (x1 , · · · , xd ) ∈ Ω,
+(1)
+f x;
+∂x1
+∂xd ∂x1 ∂x1
+∂x1 ∂xd
+with the boundary conditions
+B(u, x) = 0
+
+on
+
+∂Ω.
+
+We note that in PINNs the initial condition is treated in the same way as the Dirichlet boundary condition.
+To solve the PDE via PINNs, we first construct a neural network û(x; θ) with the trainable parameters
+θ to approximate the solution u(x). We then use the constraints implied by the PDE and the boundary
+conditions to train the network. Specifically, we use a set of points inside the domain (Tf ) and another set
+of points on the boundary (Tb ). The loss function is then defined as [2, 3]
+L(θ; T ) = wf Lf (θ; Tf ) + wb Lb (θ; Tb ) ,
+where
+Lf (θ; Tf ) =
+
+1 X
+f
+|Tf |
+x∈Tf
+
+
+x;
+
+∂ û
+∂ û
+∂ 2 û
+∂ 2 û
+,...,
+;
+,...,
+;...;λ
+∂x1
+∂xd ∂x1 ∂x1
+∂x1 ∂xd
+
+Lb (θ; Tb ) =
+
+1 X
+2
+|B(û, x)| .
+|Tb |
+x∈Tb
+
+and wf and wb are the weights.
+
+2
+
+2
+,
+
+(2)
+
+One main advantage of PINNs is that the same formulation can be used not only for forward problems
+but also for inverse PDE-based problems. If the parameter λ in Eq. (1) is unknown, and instead we have
+some extra measurements of u on the set of points Ti . Then we add an additional data loss [2, 3] as
+1 X
+|û(x) − u(x)|2
+Li (θ, λ; Ti ) =
+|Ti |
+x∈Ti
+
+to learn the unknown parameters simultaneously with the solution u. Our new loss function is then defined
+as
+L(θ, λ; T ) = wf Lf (θ, λ; Tf ) + wb Lb (θ, λ; Tb ) + wi Li (θ, λ; Ti ) .
+In this study, we choose the weights wf = wb = wi = 1. In some PDEs, it is possible to enforce the
+boundary conditions exactly and automatically by modifying the network architecture [20, 4, 25, 8], which
+eliminates the loss term of boundary conditions.
+2.2. Formulation of gradient-enhanced PINNs (gPINNs)
+In PINNs, we only enforce the PDE residual f to be zero; because f (x) is zero for any x, we know that
+the derivatives of f are also zero. Here, we propose the gradient-enhanced PINNs to enforce the derivatives
+of the PDE residual to be zero as well, i.e.,
+
+
+∂f ∂f
+∂f
+∇f (x) =
+,
+,··· ,
+= 0, x ∈ Ω.
+∂x1 ∂x2
+∂xd
+Then the loss function of gPINNs is:
+L = wf Lf + wb Lb + wi Li +
+
+d
+X
+
+wgi Lgi (θ; Tgi ) ,
+
+i=1
+
+where the loss of the derivative with respect to xi is
+1 X ∂f
+|Tgi |
+∂xi
+
+Lgi (θ; Tgi ) =
+
+2
+
+.
+
+(3)
+
+x∈Tgi
+
+∂f
+Here, Tgi is the set of residual points for the derivative ∂x
+. For example, for the Poisson’s equation ∆u = f
+i
+in 1D, the additional loss term is
+2
+1 X d3 u
+df
+Lg = wg
+.
+−
+|Tg |
+dx3
+dx
+x∈Tg
+
+For the Poisson’s equation in 2D, there are two additional loss terms:
+Lg1 = wg1
+
+1 X
+|Tg1 |
+
+∂3u
+∂f
+∂3u
++
+−
+3
+2
+∂x
+∂x∂y
+∂x
+
+2
+
+1 X
+|Tg2 |
+
+∂ 3 u ∂f
+∂3u
++
+−
+∂x2 ∂y
+∂y 3
+∂y
+
+2
+
+x∈Tg1
+
+Lg2 = wg2
+
+x∈Tg2
+
+,
+
+.
+
+As we will show in our numerical examples, by enforcing the gradient of the PDE residual, gPINN
+improves the accuracy of the predicted solutions for u and requires less training points. Moreover, gPINN
+∂u
+improves the accuracy of the predicted solutions for ∂x
+. Although Tf and Tgi (i = 1, · · · , d) can be different,
+i
+in this study we choose Tgi to be the same as Tf .
+2.3. Formulation of gPINN with residual-based adaptive refinement (RAR)
+The residual points Tf of PINNs are usually randomly distributed in the domain, and in Ref. [3] a residualbased adaptive refinement (RAR) method is developed to improve the distribution of residual points during
+the training process. In RAR, we adaptively add more residual points in the locations where the PDE
+residual is large during the network training. Here we combine RAR and gPINN to further improve the
+accuracy and training efficiency (Algorithm 1).
+3
+
+Algorithm 1: gPINN with RAR.
+Step 1 Train the neural network using gPINN on the training set T for a certain number of iterations.
+
+
+∂ û
+∂ û
+∂ 2 û
+∂ 2 û
+at random points in the
+Step 2 Compute the PDE residual f x; ∂x
+,
+.
+.
+.
+,
+;
+,
+.
+.
+.
+,
+;
+.
+.
+.
+;
+λ
+∂xd ∂x1 ∂x1
+∂x1 ∂xd
+1
+domain.
+Step 3 Add m new points to the training set T where the residual is the largest.
+Step 4 Repeat Steps 1, 2, and 3 for n times, or until the mean residual falls below a threshold E.
+
+3. Results
+We will apply our proposed gPINNs and gPINNs with RAR to solve several forward and inverse PDE
+problems. In all examples, we use the tanh as the activation function, and the other hyperparameters for
+each example are listed in Table 1.
+Section
+
+Depth
+
+Width
+
+Optimizer
+
+Learning rate
+
+# Iterations
+
+3.1
+3.2.1
+3.2.2
+3.3.1
+3.3.2
+3.4.1
+3.4.2
+
+4
+4
+4
+4
+4
+4
+5
+
+20
+20
+20
+20
+20
+32
+64
+
+Adam
+Adam
+Adam
+Adam
+Adam
+Adam + L-BFGS
+Adam + L-BFGS
+
+0.001
+0.001
+0.0001
+0.001
+0.0001
+0.001
+0.001
+
+10000
+20000
+100000
+50000
+200000
+20000
+20000
+
+Table 1: Hyperparameters used for each problem.
+
+3.1. Function approximation via a gradient-enhanced neural network (gNN)
+We first use a pedagogical example of function approximation to demonstrate the effectiveness of adding
+gradient information. We consider the following function
+u(x) = −(1.4 − 3x) sin(18x),
+
+x ∈ [0, 1],
+
+from the training dataset {(x1 , u(x1 )), (x2 , u(x2 )), · · · , (xn , u(xn ))}, where (x1 , x2 , · · · , xn ) are equispaced
+points in [0, 1]. The standard loss function to train a NN is
+n
+
+L=
+
+1X
+|u(xi ) − û(xi )|2 ,
+n i=1
+
+and we also consider the following gradient-enhanced NN with the extra loss function of the gradient as
+L=
+
+n
+n
+1X
+1X
+|u(xi ) − û(xi )|2 + wg
+|∇u(xi ) − ∇û(xi )|2 .
+n i=1
+n i=1
+
+We performed the network training using different values of the weight wg , including 1, 0.1, and 0.01, and
+found that the accuracy of gNN is insensitive to the value of wg . Hence, here we will only show the results
+of wg = 1.
+When we use more training points, both NN and gNN have smaller L2 relative error of the prediction of
+u, and gNN performs significantly better than NN with about one order of magnitude smaller error (Fig. 1A).
+In addition, gNN is more accurate than NN for the prediction of the derivative du
+dx (Fig. 1B). As an example,
+the prediction of u and du
+from
+NN
+and
+gNN
+using
+15
+training
+data
+points
+are
+shown in Figs. 1C and D,
+dx
+du
+respectively. The standard NN has more than 10% error for u and dx , while gNN reaches about 1% error.
+4
+
+Figure 1: Example in Section 3.1: Comparison between NN and gNN. (A and B) L2 relative error of NN and gNN for
+(A) u and (B) du
+using different number of training points. The line and shaded region represent the mean and one standard
+dx
+deviation of 10 independent runs. (C and D) Example of the predicted (C) u and (D) du
+, respectively. The black dots show
+dx
+the locations of the 15 training data points.
+
+5
+
+3.2. Forward PDE problems
+After demonstrating the effectiveness of adding the gradient loss on the function approximation, we apply
+gPINN to solve PDEs.
+3.2.1. Poisson equation
+We first consider a 1D Poisson equation as
+−∆u =
+
+4
+X
+
+i sin(ix) + 8 sin(8x),
+
+x ∈ [0, π],
+
+i=1
+
+with the Dirichlet boundary conditions u(x = 0) = 0 and u(x = π) = π. The analytic solution is
+u(x) = x +
+
+4
+X
+sin(ix)
+
+i
+
+i=1
+
++
+
+sin(8x)
+.
+8
+
+Instead of using a loss function Lb for the Dirichlet boundary conditions, we enforce it by choosing the
+surrogate of the solution as
+û(x) = x(π − x)N (x) + x,
+where N (x) is a neural network. Hence, the loss function is
+L = Lf + wLg ,
+where Lf and Lg are defined in Eqs. (2) and (3), respectively.
+When increasing the number of residual points from 10 to 20, as the baseline, the L2 relative error of
+PINN for u decreases from 26% to 0.48% (Fig. 2A). The performance of gPINN depends on the choice of
+the weight w. For w = 0.01, gPINN thoroughly outperforms PINN in terms of the L2 relative error of u
+(Fig. 2A), L2 relative error of du
+dx (Fig. 2B), and the mean absolute value of the PDE residual (Fig. 2C). When
+using 20 residual points, the L2 relative error of gPINN for u is about one order of magnitude smaller than
+PINN (Fig. 2A). An even greater improvement by gPINN can be seen in the L2 relative error of du
+dx (about
+two orders of magnitude, Fig. 2B). gPINN outperforms PINN, because gPINN utilizes the information of
+the gradient and thus has a much faster convergence rate than PINN. The results of PINN and gPINN for
+the example of using 15 residual points are shown in Figs. 2D and E.
+However, we note that if the value of w is not chosen properly, gPINN may not perform well. For
+example, when we choose w = 1, the accuracy of gPINN is even worse than PINN (Figs. 2A, B and C).
+We systematically investigated the performance of gPINN for different values of w when using 20 residual
+points (Figs. 2F and G). When w is small and close to 0, then gPINN becomes a standard PINN (the black
+horizontal line in Figs. 2F and G). When w is very large, the error of PINN increases. There exists an
+optimal weight at around w = 0.01. When w is smaller than 1, gPINN always outperforms PINN.
+3.2.2. Diffusion-reaction equation
+Next we consider a time-dependent PDE of a diffusion-reaction system described as
+∂u
+∂2u
+= D 2 + R(x, t),
+∂t
+∂x
+
+x ∈ [−π, π], t ∈ [0, 1],
+
+where u is the solute concentration, D = 1 represents the diffusion coefficient, and R is the chemical reaction
+as
+
+
+3
+8
+15
+63
+R(x, t) = e−t
+sin(2x) + sin(3x) +
+sin(4x) +
+sin(8x) .
+2
+3
+4
+8
+The initial and boundary conditions are as follows:
+u(x, 0) =
+
+4
+X
+sin(ix)
+
+i
+
+i=1
+
++
+
+sin(8x)
+,
+8
+
+u(−π, t) = u(π, t) = 0,
+6
+
+Figure 2: Example in Section 3.2.1: Comparisons between PINN and gPINNs with the loss weight w = 1 and
+0.01. (A) L2 relative error of u. (B) L2 relative error of u0 . (C) The mean value of the PDE residual after training. (D and
+E) Example of the predicted u and u0 , respectively, when using 15 training points. The black dots show the locations of the
+residual points for training. (F and G) L2 relative errors of gPINN for u and u0 with different values of the weight w when
+using 20 training points. The shaded regions represent the one standard deviation of 10 random runs.
+
+7
+
+which yields the analytic solution for u as
+u(x, t) = e−t
+
+" 4
+X sin(ix)
+i
+
+i=1
+
+#
+sin(8x)
++
+.
+8
+
+(4)
+
+Similar as the previous example, we also choose a proper surrogate of the solution to satisfy the initial and
+boundary conditions automatically:
+û(x) = (x2 − π 2 )(1 − e−t )N (x) + u(x, 0),
+where N (x) is a neural network. Here, we have two loss terms of the gradient, and the total loss function is
+L = Lf + wLgx + wLgt ,
+where Lgx and Lgt are the derivative losses with respect to x and t, respectively.
+In the Poisson equation, the performance of gPINN depends on the value of the weight, but in this
+diffusion-reaction system, gPINN is not sensitive to the value of w. gPINN with the values of w = 0.01, 0.1,
+du
+and 1 all outperform PINN by up to two orders of magnitude for the L2 relative errors of u, du
+dx and dt , and
+2
+the mean absolute error of the PDE residual (Fig. 3). gPINN reaches 1% L relative error of u by using only
+40 training points, while PINN requires more than 100 points to reach the same accuracy.
+
+Figure 3: Example in Section 3.2.2: Comparison between PINN and gPINN. (A) L2 relative error of u for PINN and
+gPINN with w =1, 0.1, and 0.01. (B) Mean absolute value of the PDE residual. (C) L2 relative error of du
+. (D) L2 relative
+dx
+du
+error of dt .
+
+As an example, we show the exact solution, the predictions, and the error of PINN and gPINN with
+w = 0.01 in Fig. 4 when the number of the residual points is 50. The PINN prediction has a large error
+8
+
+Figure 4: Example in Section 3.2.2: Comparison between PINN and gPINN using 50 residual points for training.
+(A) The exact solution in Eq. (4). (B and C) The (B) prediction and (C) absolute error of PINN. (D and E) The (D) prediction
+and (E) absolute error of gPINN with w = 0.1.
+
+9
+
+of about 100%. However, the gPINN prediction’s largest absolute error is around 0.007 and the L2 relative
+error of 0.2%.
+We note that gPINN appears to plateau at around 130 training points (Fig. 3), which is due to network
+optimization. We show that a better accuracy is achieved using a smaller learning rate of 10−6 and more
+iterations (5 × 106 ) in Fig. 5. The L2 relative error of u and du
+dx decreases to less than 0.01% using 140
+training points and does not saturate.
+
+Figure 5: Example in Section 3.2.2: gPINN is trained with a smaller learning rate and more iterations. L2
+for gPINN with w =0.1.
+relative error of (A) u and (B) du
+dx
+
+3.3. Inverse problems of PDEs
+In addition to solving forward PDE problems, we also apply gPINN for solving inverse PDE problems.
+3.3.1. Inferring the effective viscosity and permeability for the Brinkman-Forchheimer model
+The Brinkman-Forchheimer model can be viewed as an extended Darcy’s law and is used to describe
+wall-bounded porous media flows:
+−
+
+νu
+νe 2
+∇ u+
+= g,
+
+K
+
+x ∈ [0, H],
+
+where the solution u is the fluid velocity, g denotes the external force, ν is the kinetic viscosity of fluid,  is
+the porosity of the porous medium, and K is the permeability. The effective viscosity, νe , is related to the
+pore structure and hardly to be determined. A no-slip boundary condition is imposed, i.e., u(0) = u(1) = 0.
+The analytic solution for this problem is
+"
+ #
+cosh r x − H
+gK
+2
+
+u(x) =
+1−
+ν
+cosh rH
+2
+p
+with r = ν/νe K. We choose H = 1, νe = ν = 10−3 ,  = 0.4, and K = 10−3 , and g = 1. To infer νe , we
+collect the data measurements of the velocity u in only 5 sensor locations.
+In PINN and gPINN, we simultaneously optimize the network and the unknown value of νe . The loss
+weight in gPINN is chosen as w = 0.1. Similar as what we observed in the forward PDE problems, gPINN
+outperforms PINN in this case (Fig. 6). Specifically, the error of the predictions of gPINN for u and du
+dx
+are about one order of magnitude smaller than PINN (Figs. 6B and C). Also, the inferred νe from gPINN
+is more accurate than that from PINN (Fig. 6A). We also show the example using only 10 PDE residual
+points. While PINN failed to predict u near the boundary with a steep gradient, gPINN can still have a
+good accuracy (Fig. 6D). During the training, the predicted νe in PINN did not converge to the true value,
+while in gPINN the predicted νe is more accurate (Fig. 6E).
+
+10
+
+Figure 6: Example in Section 3.3.1: Inferring νe by using PINN and gPINN from 5 measurements of u. (A)
+Relative error of νe . (B) L2 relative error of u. (C) L2 relative error of du
+. (D) Example of the predicted u using 5 observations
+dx
+of u and 10 PDE residual points. The black squares in D show the observed locations. (E) The convergence of the predicted
+value for νe throughout training.
+
+To further test the performance of gPINN, we next infer both νe and K still from 5 measurements of u.
+Similarly, the PINN solution of u struggles with the regions near the boundary, but gPINN can still achieve
+a good accuracy (Fig. 7A). Both PINN and gPINN converge to an accurate value of K (Fig. 7C), but gPINN
+converges to much more accurate value for νe than PINN (Fig. 7B).
+Next, we add Gaussian noise (mean 0 and standard deviation 0.05) to the observed values and infer both
+νe and K using 12 measurements of u (Fig. 8). Both PINN and gPINN converge to an accurate value for
+K. Whereas PINN struggles with the added noise and struggles to learn u and νe , gPINN performs very
+well in both. However, after doubling the number of PDE training points from 15 to 30 (“PINN 2x” in
+Fig. 8), PINN can also perform well at inferring νe , though the performance is still slightly worse than that
+of gPINN.
+3.3.2. Inferring the space-dependent reaction rate in a diffusion-reaction system
+We consider a one-dimensional diffusion-reaction system in which the reaction rate k(x) is a spacedependent function:
+∂2u
+λ 2 − k(x)u = f, x ∈ [0, 1],
+∂x
+where λ = 0.01 is the diffusion coefficient, u is the solute concentration, and f = sin(2πx) is the source term.
+The objective is to infer k(x) given measurements on u. The exact unknown reaction rate is
+
+
+(x − 0.5)2
+k(x) = 0.1 + exp −0.5
+.
+0.152
+In addition, the condition u(x) = 0 is imposed at x = 0 and 1.
+As the unknown parameter k is a function of x instead of just one constant, in addition to the network
+of u, we use another network to approximate k. We choose the weight w = 0.01 in gPINN. We test the
+performance of PINN and gPINN by using 8 observations of u and 10 PDE residual points for training. Both
+PINN and gPINN perform well in learning the solution u, though the PINN solution slightly deviates from
+the exact solution around x = 0.8 (Fig. 9A). However, for the inferred function k, gPINN’s prediction was
+much more accurate than PINN (Fig. 9B). Also, the prediction of du
+dx by gPINN is more accurate than the
+prediction of PINN.
+11
+
+Figure 7: Example in Section 3.3.1: Inferring both νe and K. (A) The predicted u from PINN and gPINN. (B) The
+convergence of the predicted value for νe throughout training. (C) The convergence of the predicted value for K. The black
+squares in A show the observed locations of u.
+
+12
+
+Figure 8: Example in Section 3.3.1: Inferring both νe and K from noise data. (A) The predicted u from PINN and
+gPINN. “PINN 2x” is PINN with twice more PDE training points. The black squares show the observed measurements of u.
+(B) The convergence of the predicted value for νe throughout training. (C) The convergence of the predicted value for K.
+
+13
+
+Figure 9: Example in Section 3.3.2: Comparison between PINN and gPINN. (A) The prediction of u. (B) The
+prediction of k. (C) The prediction of du
+. We used 8 observations of u (the black squares in A) and 10 residual points for
+dx
+training.
+
+14
+
+3.4. gPINN enhanced by RAR
+To further improve the accuracy and training efficiency of gPINN for solving PDEs with a stiff solution,
+we apply RAR to adaptively improve the distribution of residual points during the training process.
+3.4.1. Burgers’ equation
+We consider the 1D Burgers equation:
+∂u
+∂u
+∂2u
++u
+= ν 2,
+∂t
+∂x
+∂x
+
+x ∈ [−1, 1], t ∈ [0, 1],
+
+with the initial and boundary conditions
+u(x, 0) = − sin(πx),
+
+u(−1, t) = u(1, t) = 0,
+
+with ν = 0.01/π.
+We first test PINN and gPINN for this problem. PINN converges very slowly and has a large L2 relative
+error (∼10%), while gPINN achieves one order of magnitude smaller error (<1%) (the blue and red lines in
+Fig. 10), as we expected.
+
+Figure 10: Example in Section 3.4.1: L2 relative errors of PINN, gPINN, PINN with RAR, and gPINN with
+RAR. For RAR, we started from 1500 uniformly-distributed residual points and added 400 extra points.
+
+The solution to this 1D Burgers’ equation is very steep near x = 0, so intuitively there should be more
+residual points around that region. We first show the effectiveness of PINN with RAR proposed in Ref. [3].
+For RAR, we first train the network using 1500 uniformly-distributed residual points and then gradually add
+400 more residual points during training. We added 10 new points at a time, i.e., m = 10 in Algorithm 1.
+For the Burgers’ equation, the solution has a steep gradient around x = 0, and after the initial training of
+1500 residual points, the region around x = 0 has the largest error of u (Fig. 11B) and the PDE residual
+(Fig. 11C). RAR automatically added new points near the largest error, as shown in the left column in
+Fig. 11, and then the errors of u and the PDE residual consistently decreases as more points are added
+(Fig. 11). By using RAR, the error of PINN decreases very fast, and PINN achieves the L2 relative error of
+∼0.3% by using only 1900 residual points for training (the green line in Fig. 10), which is even better than
+gPINN with more training points.
+We also used gPINN together with RAR. gPINN with RAR also added new points near x = 0, and the
+errors of u and the PDE residual consistently decrease when more points are added adaptively (Fig. 12),
+similarly to PINN with RAR. The final accuracy of PINN with RAR and gPINN with RAR is similar, but
+the error of gPINN with RAR drops much faster than PINN with RAR when using only 100 extra training
+points. Therefore, by pairing gPINN together with the RAR, we can achieve the best performance.
+
+15
+
+Figure 11: Example in Section 3.4.1: PINN with RAR. (A, B, C) No extra points have been added. (A) The initial
+distribution of the 1500 residual points. (B) The absolute error of u. (C) The absolute error of the PDE residual. (D, E, F)
+100 extra points (point locations shown in D) have been added. (G, H, I) 200 extra points (point locations shown in G) have
+been added. (J, K, L) 300 extra points (point locations shown in J) have been added. (M, N, O) 400 extra points (point
+locations shown in M) have been added.
+
+16
+
+Figure 12: Example in Section 3.4.1: gPINN with RAR. (A, B, C) No extra points have been added. (A) The initial
+distribution of the 1500 residual points. (B) The absolute error of u. (C) The absolute error of the PDE residual. (D, E, F)
+100 extra points (point locations shown in D) have been added. (G, H, I) 200 extra points (point locations shown in G) have
+been added. (J, K, L) 300 extra points (point locations shown in J) have been added. (M, N, O) 400 extra points (point
+locations shown in M) have been added.
+
+17
+
+3.4.2. Allen–Cahn equation
+We also consider the following Allen–Cahn equation:
+∂2u
+∂u
+= D 2 + 5(u − u3 ),
+∂t
+∂x
+
+x ∈ [−1, 1], t ∈ [0, 1],
+
+with the initial and boundary conditions:
+u(x, 0) = x2 cos(πx),
+u(−1, t) = u(1, t) = −1.
+where D = 0.001. The solution to this Allen–Cahn equation has multiple very steep regions similar to that
+of the Burgers equation.
+First, comparing PINN and gPINN, we can once again observe that gPINN has better accuracy than
+PINN (the blue and red lines in Fig. 13). gPINN requires around 2000 training points to reach 1% error,
+while PINN requires around 4000 training points to reach that same accuracy.
+
+Figure 13: Example in Section 3.4.2: L2 relative of PINN, gPINN, and gPINN with RAR. For RAR, there were
+500 initial points and 3000 added points.
+
+We next show the behavior and effectiveness of gPINN with RAR again. We first train the network using
+500 uniformly-distributed residual points and then gradually add 3000 more residual points during training
+with 30 training points added at a time. The solution u has two peaks around x = −0.5 and x = 0.5, where
+the largest error occurs (Fig. 14B). The added points by RAR also fall on these two regions of high error,
+as shown in Fig. 14G. The error becomes nearly uniform with 1200 added points (Fig. 14H), and then the
+added points start to become more and more uniform (Figs. 14J and M). By using RAR, the error of gPINN
+decreases drastically fast, and by adding only 200 additional points (i.e., 700 in total), gPINN reaches 1%
+error. However, gPINN with RAR begins to plateau at about 1500 training points with approximately 0.1%
+error, which could be resolved by using a smaller learning rate as we show in Section 3.2.2.
+4. Conclusion
+In this paper, we proposed a new version of physics-informed neural networks (PINNs) with gradient
+enhancement (gPINNs) for improved accuracy and training efficiency. We demonstrated the effectiveness of
+gPINN in both forward and inverse PDE problems, including Poisson equation, diffusion-reaction equation,
+Brinkman-Forchheimer model, Burgers’ equation, and Allen-Cahn equation. Our numerical results from all
+of the examples show that gPINN clearly outperforms PINN with the same number of training points in
+terms of the L2 relative errors of the solution and the derivatives of the solution. For the inverse problems,
+gPINN learned the unknown parameters more accurately than PINN. In addition, we combined gPINN with
+18
+
+Figure 14: Example in Section 3.4.2: gPINN with RAR. (A, B, C) No extra points have been added. (A) The initial
+distribution of the 500 residual points. (B) The absolute error of u. (C) The absolute error of the PDE residual. (D, E, F)
+300 extra points (point locations shown in D) have been added. (G, H, I) 1200 extra points (point locations shown in G) have
+been added. (J, K, L) 2100 extra points (point locations shown in J) have been added. (M, N, O) 3000 extra points (point
+locations shown in M) have been added.
+
+19
+
+residual-based adaptive refinement (RAR) to further improve the performance. For the PDEs with solutions
+that had especially steep gradients, such as Burgers’ equation and the Allen-Cahn equation, RAR allowed
+gPINN to perform well with much fewer residual points.
+When using the same number of residual points, gPINN achieves better accuracy than PINN, but the
+computational cost of gPINN is higher than PINN because of the additional loss terms with higher order
+derivatives. In our examples, the cost of gPINN relative to PINN was typically 2 to 3 times greater. In some
+cases, the performance of PINN with twice more training points (i.e., similar computational cost as gPINN)
+is similar to gPINN, but in some cases (e.g., the Burgers’ equation), gPINN still performs better than PINN
+even when PINN uses twice more points. In addition, in this work we computed higher-order derivatives by
+applying automatic differentiation (AD) of first-order derivative recursively. However, this nested approach
+is not efficient enough [32, 33], and other methods, e.g., Taylor-mode AD, have been developed for better
+computational performance [34].
+Compared to PINN, in gPINN we have an extra hyperparameter—the weight coefficient of the gradient
+loss. In some problems, the performance of gPINN is not sensitive to this weight, but in some cases, there
+exists an optimal weight to achieve the best accuracy, and thus we need to tune the weight. Considering that
+there are already many hyperparameters such as network depth/width, learning rate, and training epochs,
+only one extra hyperparameter is not a worrying issue. However, it is still an interesting research topic in
+the future to automatically determine an optimal weight. Moreover, it is possible to combine gPINN with
+other extensions of PINN to further improve the performance, such as extended PINN (XPINN) [18] and
+parareal PINN (PPINN) [17].
+Acknowledgements
+This work was supported by the DOE PhILMs project (no. DE-SC0019453) and OSD/AFOSR MURI
+grant FA9550-20-1-0358. J.Y. and L.L. thank MIT’s PRIMES-USA program.
+References
+[1] M. Dissanayake, N. Phan-Thien, Neural-network-based approximations for solving partial differential
+equations, Communications in Numerical Methods in Engineering 10 (3) (1994) 195–201.
+[2] M. Raissi, P. Perdikaris, G. E. Karniadakis, Physics-informed neural networks: A deep learning framework for solving forward and inverse problems involving nonlinear partial differential equations, Journal
+of Computational Physics 378 (2019) 686–707.
+[3] L. Lu, X. Meng, Z. Mao, G. E. Karniadakis, DeepXDE: A deep learning library for solving differential
+equations, SIAM Review 63 (1) (2021) 208–228.
+[4] G. Pang, L. Lu, G. E. Karniadakis, fPINNs: Fractional physics-informed neural networks, SIAM Journal
+on Scientific Computing 41 (4) (2019) A2603–A2626.
+[5] D. Zhang, L. Lu, L. Guo, G. E. Karniadakis, Quantifying total uncertainty in physics-informed neural
+networks for solving forward and inverse stochastic problems, Journal of Computational Physics 397
+(2019) 108850.
+[6] D. Zhang, L. Guo, G. E. Karniadakis, Learning in modal space: Solving time-dependent stochastic
+PDEs using physics-informed neural networks, SIAM Journal on Scientific Computing 42 (2) (2020)
+A639–A665.
+[7] Y. Chen, L. Lu, G. E. Karniadakis, L. Dal Negro, Physics-informed neural networks for inverse problems
+in nano-optics and metamaterials, Optics Express 28 (8) (2020) 11618–11633.
+[8] L. Lu, R. Pestourie, W. Yao, Z. Wang, F. Verdugo, S. G. Johnson, Physics-informed neural networks
+with hard constraints for inverse design, arXiv preprint arXiv:2102.04626 (2021).
+[9] M. Raissi, A. Yazdani, G. E. Karniadakis, Hidden fluid mechanics: Learning velocity and pressure fields
+from flow visualizations, Science 367 (6481) (2020) 1026–1030.
+20
+
+[10] A. Yazdani, L. Lu, M. Raissi, G. E. Karniadakis, Systems biology informed deep learning for inferring
+parameters and hidden dynamics, PLoS Computational Biology 16 (11) (2020) e1007575.
+[11] F. Sahli Costabal, Y. Yang, P. Perdikaris, D. E. Hurtado, E. Kuhl, Physics-informed neural networks
+for cardiac activation mapping, Frontiers in Physics 8 (2020) 42.
+[12] M. A. Nabian, R. J. Gladstone, H. Meidani, Efficient training of physics-informed neural networks via
+importance sampling, Computer-Aided Civil and Infrastructure Engineering (2021).
+[13] Y. Gu, H. Yang, C. Zhou, Selectnet: Self-paced learning for high-dimensional partial differential equations, arXiv preprint arXiv:2001.04860 (2020).
+[14] L. McClenny, U. Braga-Neto, Self-adaptive physics-informed neural networks using a soft attention
+mechanism, arXiv preprint arXiv:2009.04544 (2020).
+[15] S. Wang, Y. Teng, P. Perdikaris, Understanding and mitigating gradient pathologies in physics-informed
+neural networks, arXiv preprint arXiv:2001.04536 (2020).
+[16] S. Wang, X. Yu, P. Perdikaris, When and why PINNs fail to train: A neural tangent kernel perspective,
+arXiv preprint arXiv:2007.14527 (2020).
+[17] X. Meng, Z. Li, D. Zhang, G. E. Karniadakis, PPINN: Parareal physics-informed neural network for
+time-dependent PDEs, Computer Methods in Applied Mechanics and Engineering 370 (2020) 113250.
+[18] A. D. Jagtap, G. E. Karniadakis, Extended physics-informed neural networks (XPINNs): A generalized space-time domain decomposition based deep learning framework for nonlinear partial differential
+equations, Communications in Computational Physics 28 (5) (2020) 2002–2041.
+[19] V. Dwivedi, B. Srinivasan, Physics informed extreme learning machine (PIELM)–a rapid method for
+the numerical solution of partial differential equations, Neurocomputing 391 (2020) 96–118.
+[20] I. E. Lagaris, A. Likas, D. I. Fotiadis, Artificial neural networks for solving ordinary and partial differential equations, IEEE Transactions on Neural Networks 9 (5) (1998) 987–1000.
+[21] H. Sheng, C. Yang, PFNN: A penalty-free neural network method for solving a class of second-order
+boundary-value problems on complex geometries, arXiv preprint arXiv:2004.06490 (2020).
+[22] N. Sukumar, A. Srivastava, Exact imposition of boundary conditions with distance functions in physicsinformed deep neural networks, arXiv preprint arXiv:2104.08426 (2021).
+[23] K. S. McFall, J. R. Mahan, Artificial neural network method for solution of boundary value problems
+with exact satisfaction of arbitrary boundary conditions, IEEE Transactions on Neural Networks 20 (8)
+(2009) 1221–1233.
+[24] R. S. Beidokhti, A. Malek, Solving initial-boundary value problems for systems of partial differential
+equations using neural networks and optimization techniques, Journal of the Franklin Institute 346 (9)
+(2009) 898–913.
+[25] P. L. Lagari, L. H. Tsoukalas, S. Safarkhani, I. E. Lagaris, Systematic construction of neural forms
+for solving partial differential equations inside rectangular domains, subject to initial, boundary and
+interface conditions, International Journal on Artificial Intelligence Tools 29 (5) (2020).
+[26] S. Dong, N. Ni, A method for representing periodic functions and enforcing exactly periodic boundary
+conditions with deep neural networks, arXiv preprint arXiv:2007.07442 (2020).
+[27] W. Cai, X. Li, L. Liu, A phase shift deep neural network for high frequency approximation and wave
+problems, SIAM Journal on Scientific Computing 42 (5) (2020) A3285–A3312.
+[28] B. Wang, W. Zhang, W. Cai, Multi-scale deep neural network (MscaleDNN) methods for oscillatory
+Stokes flows in complex domains, arXiv preprint arXiv:2009.12729 (2020).
+
+21
+
+[29] Z. Liu, W. Cai, Z. J. Xu, Multi-scale deep neural network (MscaleDNN) for solving Poisson-Boltzmann
+equation in complex domains, arXiv preprint arXiv:2007.11207 (2020).
+[30] S. Wang, H. Wang, P. Perdikaris, On the eigenvector bias of fourier feature networks: From regression
+to solving multi-scale PDEs with physics-informed neural networks, arXiv preprint arXiv:2012.10047
+(2020).
+[31] Y. Deng, G. Lin, X. Yang, Multifidelity data fusion via gradient-enhanced gaussian process regression,
+arXiv preprint arXiv:2008.01066 (2020).
+[32] A. G. Baydin, B. A. Pearlmutter, A. A. Radul, J. M. Siskind, Automatic differentiation in machine
+learning: a survey, Journal of Machine Learning Research 18 (2018).
+[33] C. C. Margossian, A review of automatic differentiation and its efficient implementation, Wiley interdisciplinary reviews: data mining and knowledge discovery 9 (4) (2019) e1305.
+[34] J. Bettencourt, M. J. Johnson, D. Duvenaud, Taylor-mode automatic differentiation for higher-order
+derivatives in JAX (2019).
+
+22
+
+

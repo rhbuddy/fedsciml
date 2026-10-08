@@ -1,0 +1,1468 @@
+arXiv:2003.06496v1 [physics.comp-ph] 13 Mar 2020
+
+NSFnets (Navier-Stokes Flow nets): Physics-informed
+neural networks for the incompressible Navier-Stokes
+equations
+Xiaowei Jina,b , Shengze Caic , Hui Lia,b,∗, George Em Karniadakisc,∗
+a Key Lab of Smart Prevention and Mitigation of Civil Engineering Disasters of the
+Ministry of Industry and Information Technology, Harbin Institute of Technology, Harbin
+150090, China
+b Key Lab of Structures Dynamic Behavior and Control of the Ministry of Education,
+Harbin Institute of Technology, Harbin 150090, China
+c Division of Applied Mathematics, Brown University, Providence, RI 02912, USA
+
+Abstract
+We employ physics-informed neural networks (PINNs) to simulate the incompressible flows ranging from laminar to turbulent flows. We perform PINN simulations by considering two different formulations of the Navier-Stokes equations: the velocity-pressure (VP) formulation and the vorticity-velocity (VV)
+formulation. We refer to these specific PINNs for the Navier-Stokes flow nets as
+NSFnets. Analytical solutions and direct numerical simulation (DNS) databases
+provide proper initial and boundary conditions for the NSFnet simulations. The
+spatial and temporal coordinates are the inputs of the NSFnets, while the instantaneous velocity and pressure fields are the outputs for the VP-NSFnet,
+and the instantaneous velocity and vorticity fields are the outputs for the VVNSFnet. These two different forms of the Navier-Stokes equations together with
+the initial and boundary conditions are embedded into the loss function of the
+PINNs. No data is provided for the pressure to the VP-NSFnet, which is a
+hidden state and is obtained via the incompressibility constraint without splitting the equations. We obtain good accuracy of the NSFnet simulation results
+upon convergence of the loss function, verifying that NSFnets can effectively
+∗ Corresponding authors
+
+Email addresses: lihui@hit.edu.cn (Hui Li), george_karniadakis@brown.edu (George
+Em Karniadakis)
+
+Preprint submitted to
+
+March 17, 2020
+
+simulate complex incompressible flows using either the VP or the VV formulations. For the laminar flow solutions we show that the VV formulation is more
+accurate than the VP formulation. For the turbulent channel flow we show that
+NSFnets can sustain turbulence at Reτ ∼ 1, 000 but due to expensive training
+we only consider part of the channel domain and enforce velocity boundary conditions on the boundaries provided by the DNS data base. We also perform a
+systematic study on the weights used in the loss function for the data/physics
+components and investigate a new way of computing the weights dynamically to
+accelerate training and enhance accuracy. Our results suggest that the accuracy
+of NSFnets, for both laminar and turbulent flows, can be improved with proper
+tuning of weights (manual or dynamic) in the loss function.
+Keywords: PINNs, DNS, turbulence, velocity-pressure formulation,
+vorticity-velocity formulation, automatic differentiation
+
+1. Introduction
+In the last five years there have been several efforts to integrate neural networks (NNs) in the solution of the incompressible Navier-Stokes equations following different approaches. For turbulent flows, the most common approach
+is to derive data-driven turbulence closure models. For example, Ling et al.
+[1] proposed a data-driven Reynolds-averaged NavierStokes (RANS) turbulence
+closure model by embedding Galilean invariance into deep neural networks and
+demostrated better accuracy for predicting the Reynolds stresses. Similarly,
+Wang et al. [2] used random forest regression to predict the discrepancies of the
+baseline RANS-predicted Reynolds stresses compared to those from the DNS
+data, hence predicting the Reynolds stresses with high accuracy. Jiang et al. [3]
+developed a novel RANS stress closure with machine-learning-assisted parameterization and nonlocal effects, aiming at reducing both structural and parameteric inaccuracies and achieving a more appropriate description for Reynolds
+stress anistropy. For large-eddy simulation (LES) of isotropic turbulence, Zhou
+et al. [4] developed a data-driven subgrid scale model by using NNs with only
+
+2
+
+one hidden layer. In addition, some reduced order models (ROMs) or fast prediction models in fluid mechanics have also been investigated. For example,
+convolutional neural networks (CNNs) were used to construct the prediction
+model of cylinder wake in [5], and a temporal CNN was used to establish a
+data-driven model for predicting the coefficients of proper orthogonal decomposition (POD) modes of cylinder wake in [6]. The bidirectional recurrent neural
+networks were employed to predict the POD coefficients of cylinder wake based
+on a few velocity measurements [7], obtaining more accurate results than the
+extended POD approach [8, 9]. Moreover, deep learning techniques were also
+applied to particle image velocimetry (PIV) for analyzing laboratory data of
+turbulent boundary layer [10]. Comprehensive summaries of progress in fluid
+mechanics due to the introduction of various machine learning techniques can
+be found in [11, 12].
+We have followed a different path by exploiting the universal approximation
+property of NNs, which together with automatic differentiation enables us to
+develop Navier-Stokes “solvers” that do not require mesh generation. They are
+easy to implement, and can be particularly effective for multiphysics and inverse
+fluid mechanics problems. In particular, Raissi et al. [13, 14, 15] first introduced
+the concept of physics-informed neural networks (PINNs) to solve forward and
+inverse problems involving several different types of PDEs. This approach has
+also been used to simulate vortex induced vibrations in [16] and also to tackle
+ill-posed inverse fluid mechanics problems, a framework called “hidden fluid mechanics” presented in [17]. The flows considered in the aforementioned works
+are laminar flows at relatively low Reynolds numbers, described by the incompressible Navier-Stokes equations in velocity-pressure (VP) form. A fundamental question is if PINNs can simulate turbulence directly, similarly to direct
+numerical simulation (DNS) using high-order discretization [18, 19]. Another
+important question is if there is another formulation of the Navier-Stokes equations, e.g., in vorticity-velocity (VV) form, that may achieve higher accuracy or
+may be amenable to a more efficient training.
+In the current study, we address the aforementioned two questions system3
+
+atically by using analytical solutions for two-dimensional and three-dimensional
+flows and also by comparing with DNS of turbulent channel flow available at
+[20, 21, 22]. In particular, we perform PINN simulations by considering two
+forms of the governing Navier-Stokes equations: the VP form and the VV form,
+and we refer to these PINNs for the Navier-Stokes flow nets as NSFnets. For
+the VP-NSFnet, the inputs are the spatial and temporal coordinates while the
+outputs are the instantaneous velocity and pressure fields. For the VV-NSFnet,
+the inputs again are the spatial and temporal coordinates while the outputs are
+the instantaneous velocity and vorticity fields. We use automatic differentiation
+(AD) [23] to deal with the differential operators in the Navier-Stokes equations,
+which leads to very high computational efficiency compared to numerical differentiation. However, it does not require grids, and avoids the classical artificial
+dispersion and diffusion errors. Furthermore, with AD we differentiate the NN
+rather than the data directly and hence we can deal with noisy inputs or solutions with limited regularity. There are also distinct advantages in employing
+both the VP and the VV formulations using PINNs. For example, to infer the
+pressure equation we do not use an additional Poisson pressure equation as is
+usually done with the traditional splitting methods [24] and no data is required
+for the pressure as boundary or initial conditions for VP-NSFnet; the pressure is
+a hidden state and is obtained via the incompressibility constraint. Similarly, in
+the VV-NSFnet, it is easy to incorporate vorticity boundary conditions, which
+come in the form of constraints, directly into the loss function.
+We simulate several laminar flows, including two-dimensional steady Kovasznay flow, two-dimensional unsteady cylinder wake and three-dimensional
+unsteady Beltrami flow, using these two types of NSFnets. We perform a systematic study using dynamic weights in the loss function for the various components following the work of [25] to accelerate training and enhance accuracy.
+We also report the first results on directly simulating turbulence using PINNs.
+To this end, we consider turbulent channel flow at Reτ ∼ 1,000 using primarily
+VP-NSFnet as the available data bases are derived based on VP type formulations. We perform NSFnet simulations by considering different subdomains
+4
+
+with different size at various locations in the channel and for different time intervals. In addition, we investigate the influence of weights in the loss function
+on the accuracy of VP-NSFnet.
+The paper is organized as follows. We first introduce the NSFnets in section 2, and present the problem set up and NSFnet simulation results for laminar
+flows in section 3. We then present VP-NSFnet results for turbulent channel
+flow in section 4. We summarize our findings in section 5.
+
+2. Solution Methodology
+We introduce two formulations of the unsteady incompressible three-dimensional Navier-Stokes equations: the velocity-pressure (VP) form and the vorticityvelocity (VV) form, as well as their corresponding physics-informed neural networks (PINNs), shown in Fig. 1.
+The VP form of the incompressible Navier-Stokes equations is:
+∂u
+1 2
++ (u · ∇)u = −∇p +
+∇ u
+∂t
+Re
+∇·u=0
+
+in Ω,
+
+(1a)
+
+in Ω,
+
+(1b)
+
+u = uΓ
+
+on ΓD ,
+
+(1c)
+
+∂u
+=0
+∂n
+
+on ΓN ,
+
+(1d)
+
+where t is the non-dimensional time, u(x, t) = [u, v, w]T is the non-dimensional
+velocity vector, p is the non-dimensional pressure, and Re = Uref Dref /ν is the
+Reynolds number defined by a characteristic length Dref , reference velocity Uref
+and kinematic viscosity ν. The initial and boundary conditions are required in
+order to solve Eq. (1). Here, ΓD and ΓN denote the Dirichlet and Neumann
+boundaries, respectively. In this study, instead of using conventional computational fluid dynamics (CFD) methods, we investigate the possibility of using
+neural networks (NNs) for solving the Navier-Stokes equations. In other words,
+the solutions of Navier-Stokes equations are approximated by a deep neural
+network, which takes spatial and temporal coordinates as inputs and predicts
+the corresponding velocity and pressure fields, i.e., (t, x, y, z) 7→ (u, v, w, p). A
+5
+
+(a)
+
+σ
+
+… σ
+
+σ
+
+… σ
+
+t
+
+σ
+
+… σ
+
+u
+
+x
+
+σ
+
+… σ
+
+v
+
+y
+
+σ
+
+… σ
+
+w
+
+eVP 3 =  t w + u x w + v y w + w z w +  z p − 1 Re (  2xx w +  2yy w +  2zz w )
+
+σ
+
+… σ
+
+p
+
+eVP 4 =  x u +  y v +  z w
+
+z
+
+I
+
+…
+
+…
+
+σ
+
+… σ
+
+σ
+
+… σ
+
+σ
+
+… σ
+
+u
+
+t
+
+σ
+
+… σ
+
+v
+
+x
+
+σ
+
+… σ
+
+w
+
+y
+
+σ
+
+… σ
+
+z
+
+σ
+
+… σ
+
+(b)
+
+…
+
+…
+
+σ
+
+… σ
+
+I
+
+eVP1 =  t u + u x u + v y u + w z u +  x p − 1 Re (  2xx u +  2yy u +  2zz u )
+eVP 2 =  t v + u x v + v y v + w z v +  y p − 1 Re (  2xx v +  2yy v +  2zz v )
+
+(
+
+)
+
+(
+
+)
+
+(
+
+)
+
+eVV 1 =  t  x +  y ( v x − u y ) −  z ( u z − w x ) + 1 Re  y (  x y −  y x ) −  z (  z x −  x z )
+
+I
+
+I
+
+eVV 2 =  t  y +  z ( w y − v z ) −  x ( v x − u y ) + 1 Re  z (  y z −  z y ) −  x (  x y −  y x )
+
+eVV 3 =  t  z +  x ( u z − w x ) −  y ( w y − v z ) + 1 Re  x (  z x −  x z ) −  y (  y z −  z y )
+
+eVV 4 =  2xx u +  2yy u +  2zz u +  y z −  z y
+eVV 5 =  2xx v +  2yy v +  2zz v +  z x −  xz
+eVV 6 =  2xx w +  2yy w +  2zz w +  x y −  yx
+
+Figure 1: A schematic of NSFnets: (a) the velocity-pressure (VP) form; (b) the vorticityvelocity (VV) form. The left part of the NN is an uninformed network, while the right part
+implements the VP and VV formulation using AD. We only show the operators in the right
+part as the NNs induced by AD of the VP and VV differential operators are too complicated
+and cannot be visualized even with specialized methods such as “TensorBoard” in TensoFlow.
+
+schematic illustration of the PINNs for solving Eq. (1) is shown in Fig. 1a,
+which consists of a fully-connected network and the residual networks. Here,
+the nonlinear activation function σ is the hyper tangent function tanh. For the
+VP form, the residuals include the errors of the momentum equations and the
+divergence-free constraint. In order to compute the residuals of the NavierStokes equations eV P 1 to eV P 4 , the partial differential operators are computed
+by using automatic differentiation (AD), which can be directly formulated in
+the deep learning framework, e.g., using “tf.gradients()” in TensorFlow.
+The loss function for training the parameters of VP-NSFnet to obtain the
+
+6
+
+solutions of Eq. (1) is defined as follows:
+L = Le + αLb + βLi ,
+
+(2a)
+
+N
+
+4
+
+Le =
+
+e
+1 XX
+|en |2 ,
+Ne i=1 n=1 V P i
+
+Lb =
+
+b
+1 X
+|un − unb |2 ,
+Nb n=1
+
+(2b)
+
+N
+
+(2c)
+
+N
+
+i
+1 X
+Li =
+|un − uni |2 ,
+Ni n=1
+
+(2d)
+
+where Le , Lb and Li represent loss function components corresponding to the
+residual of the Navier-Stokes equations, the boundary conditions, and the initial
+conditions, respectively; Nb , Ni and Ne denote the number of training data
+for different terms; unb = [unb , vbn , wbn ]T and uni = [uin , vni , wni ]T are the given
+velocities for the n th data point on the boundaries and at the initial time,
+respectively; enV P i represents the residual of the i th equation at the n th data
+point. The weighting coefficients α and β are used to balance different terms
+of the loss function and accelerate convergence in the training process. We
+consider the initial and boundary conditions as supervised data-driven parts,
+and the residual of the Navier-Stokes equations as the unsupervised physicsinformed part in the loss function. We note that no data is provided for the
+pressure as boundary or initial conditions, which means that p is a hidden
+state and is obtained via the incompressibility constraint without splitting the
+Navier-Stokes equations as done in traditional CFD methods [19]. An adaptive
+optimization algorithm, Adam [26], is used to minimize the loss function in
+(2). The parameters of the neural networks are randomly initialized using the
+Xavier scheme [27]. The solutions are obtained when the training of the NSFnet
+converges, i.e., the total loss function reaches some very small value.
+We also propose NSFnets for the VV formulation of the Navier-Stokes equations, which is an alternative to the VP form in simulating incompressible flows;
+the equivalence of VP and VV formulations was proved in [28, 29]. The rota-
+
+7
+
+tional form of the VV formation of the Navier-Stokes equations is:
+∂ω
+1
++ ∇ × (ω × u) = − ∇ × ∇ × ω
+∂t
+Re
+∇2 u = −∇ × ω
+ω =∇×u
+
+in Ω,
+
+(3a)
+
+in Ω,
+
+(3b)
+
+on Γ,
+
+(3c)
+
+u = uΓ
+
+on ΓD ,
+
+(3d)
+
+∂u
+=0
+∂n
+
+on ΓN ,
+
+(3e)
+
+at one point on Γ,
+
+(3f)
+
+∇·u=0
+
+ω =∇×u
+
+at t = 0
+
+in Ω,
+
+(3g)
+
+where ω = [ωx , ωy , ωz ]T is the vorticity with three components. The boundary
+conditions are defined by Eqs. (3c) to (3f) and the initial condition is constrained by Eq. (3g). Similarly, we assume that the solutions of the VV form
+(3) are approximated by a neural network, whose function can be written as
+(t, x, y, z) 7→ (u, v, w, ωx , ωy , ωz ). The architecture of the VV-NSFnet for solving Eq. (3) is shown in Fig. 1b, where eV V 1 to eV V 6 represent the residuals of
+the VV formulation of the Navier-Stokes Eqs. (3a) and (3b). The corresponding
+loss function of the VV-NSFnet is defined as follows:
+L = Le + αLb + βLi
+
+(4a)
+
+Ne
+6 X
+X
+
+Le =
+
+1
+|en |2
+Ne i=1 n=1 V V i
+
+Lb =
+
+b
+
+1 X
+|un − unb |2 + |ω n − ∇ × unb |2 + |∇ · unb |2
+Nb n=1
+
+Li =
+
+i
+
+1 X
+|un − uni |2 + |ω n − ∇ × uni |2 ,
+Ni n=1
+
+(4b)
+
+N
+
+(4c)
+
+N
+
+(4d)
+
+where ω n = [ωxn , ωyn , ωzn ]T denotes the vorticity for the n th data point by
+NSFnet; enV V i represents the residual of the i th equation at the n th data
+point. Note that only boundary and initial values of velocity are provided in
+the loss function. For the vorticity term, the boundary and initial conditions
+are embedded in the losses (4c) and (4d) as constraints. The parameters of the
+8
+
+neural network are also learned by using the Adam optimizer.
+Note that the weighting coefficients in the loss functions (2) and (4) play
+a very important role in the training process. However, choosing appropriate
+weights for NSFnets is generally very tedious. On the one hand, the optimal
+values of α and β are problem-dependent and we cannot fix them for different
+flows. On the other hand, tuning the weights arbitrarily requires a trial and error
+procedure which is quite tedious and time-consuming. To tackle this problem,
+we apply the strategy of dynamic weights [25] for choosing α and β in NSFnet
+simulations. The idea of dynamic weights is to adaptively update the coefficients
+by utilizing the back-propagated gradient statistics during network training. For
+a general gradient decent algorithm, the iterative formulation of the parameters
+of NSFnets can be expressed as:
+θ(k+1) = θ(k) − η∇θ Le − ηα∇θ Lb − ηβ∇θ Li ,
+
+(5)
+
+where θ denotes the parameters of the neural network, namely the weights of
+all the fully-connected layers, k is the iteration step, and η is the learning rate.
+In order to balance the contributions of different terms in Eq. (5), Wang et al.
+[25] proposed to use a dynamic weight strategy during network training. At
+each training step, e.g., (k + 1) th iteration, the estimates of α and β can be
+computed by:
+α̂(k+1) =
+
+maxθ {|∇θ Le |}
+|∇θ α(k) Lb |
+
+β̂ (k+1) =
+
+,
+
+maxθ {|∇θ Le |}
+|∇θ β (k) Li |
+
+,
+
+(6)
+
+where maxθ {|∇θ Le |} is the maximum value attained by |∇θ Le |; |∇θ α(k) Lb | and
+|∇θ β (k) Li | denote the means of |∇θ α(k) Lb | and |∇θ β (k) Li |, respectively. As an
+alternative, we also propose the following way to estimate α and β:
+α̂(k+1) =
+
+|∇θ Le |
+|∇θ Lb |
+
+β̂ (k+1) =
+
+,
+
+|∇θ Le |
+|∇θ Li |
+
+.
+
+(7)
+
+The gradients with respect to parameters of the neural network can be easily
+computed by AD in the deep learning framework. Consequently, the weighting
+coefficients for the next iteration are updated using a moving average form:
+α(k+1) = (1 − λ)α(k) + λα̂(k+1) ,
+
+β (k+1) = (1 − λ)β (k) + λβ̂ (k+1) ,
+9
+
+(8)
+
+with λ = 0.1. The strategy of dynamic weights will be applied to most of the
+NSFnet simulations later.
+We have introduced two different formulations of NSFnets which correspond
+to the VP form and the VV form. We carry out several numerical experiments
+with NSFnets of different sizes. However, further accuracy enhancement may
+be possible for each case presented below using optimization in the size of architecture, the learning rate and even the optimizer, which is beyond the scope
+of the current work.
+
+3. Simulations of laminar flows
+In this section, we apply the proposed NSFnets to simulate different incompressible Navier-Stokes flows, including 2D steady Kovasznay flow, 2D unsteady
+cylinder wake and 3D unsteady Beltrami flow. We present comparisons between
+the VV and VP-NSFnets and investigate the influence of dynamic weights on
+the accuracy of the solution. Other enhancements can include the use of adaptive activation function to accelerate training [30, 31], but we did not pursue this
+in the current work. To evaluate the performance of the NSFnet simulations,
+we define the relative L2 error at each time step as
+V =k V̂ − V k2 / k V k2 ,
+
+(9)
+
+where V denotes the velocity components (u, v, w) or the pressure p, and the hat
+represents the values inferred by NSFnets. The reference velocity and pressure
+are given by analytical solutions or high-fidelity DNS results. We note that
+to evaluate the accuracy of NSFnet solutions, we apply a shift for the NSFnet
+simulation results to bring the means of the pressure for reference DNS results
+and NSFnet results to the same value.
+3.1. Kovasznay flow
+We use the Kovasznay flow as the first test case to demonstrate the performance of NSFnets. This 2D steady Navier-Stokes flow has the following
+
+10
+
+analytical solution:
+u(x, y) = 1 − eλx cos(2πy),
+λ λx
+e sin(2πy),
+2π
+1
+p(x, y) = (1 − e2λx ),
+2
+
+v(x, y) =
+
+where
+λ=
+
+r
+1
+1
++ 4π 2 ,
+−
+2ν
+4ν 2
+
+ν=
+
+(10)
+
+1
+1
+=
+.
+Re
+40
+
+We consider a computational domain of [−0.5, 1.0] × [−0.5, 1.5]. There are 101
+points with fixed spatial coordinate on each boundary, such that we have 400
+training data for the boundary conditions, i.e., Nb = 400. For computing the
+equation loss of NSFnets, 2601 points are randomly selected inside the domain.
+There is no initial condition for this steady flow. All the NSFnets are assessed
+after a two-step training: we first use the Adam optimizer for 5,000, 5,000,
+50,000 and 50,000 iterations with learning rates of 1 × 10−3 , 1 × 10−4 , 1 × 10−5
+and 1 × 10−6 , respectively, then apply the limited-memory BroydenFletcherGoldfarbShanno algorithm with bound constraints (L-BFGS-B) to finetune the
+results. The training process of L-BFGS-B is terminated automatically based
+on the increment tolerance.
+For Kovasznay flow, we first investigate the influence of the neural network
+architecture. We employ different sizes of network by varying the number of
+hidden layers and the number of neurons per layer. The weighting coefficient α
+for boundary constraint is chosen as 100 for training these NSFnets. The results
+are summarized in Table 1, where each number is the best over ten independent
+simulations. As shown in the table, both formulations of NSFnets are able to
+attain the solutions with high accuracy. The relative errors are in the order
+of 10−5 to 10−3 . We can also observe that the performance of the NSFnets
+is improved as the network size increases. The VP formulation outperforms
+the VV form for small networks, while the VV-NSFnet provides more accurate
+solutions when using large networks.
+The weighting coefficient α for the boundary constraint is also investigated
+here. In addition to letting α = 100, we also apply α = 1 and implement
+11
+
+Table 1: Kovasznay flow: relative L2 errors of velocity and pressure solutions for NSFnets
+with different sizes (α = 100, NN size is the number of hidden layers × the number of neurons
+per layer).
+
+VP-NSFnet
+
+VV-NSFnet
+
+NN size
+u
+
+v
+
+p
+
+u
+
+v
+
+4 × 50
+
+0.076%
+
+0.412%
+
+0.516%
+
+0.131%
+
+0.368%
+
+7 × 50
+
+0.038%
+
+0.255%
+
+0.114%
+
+0.111%
+
+0.520%
+
+7 × 100
+
+0.016%
+
+0.183%
+
+0.062%
+
+0.078%
+
+0.397%
+
+10 × 100
+
+0.020%
+
+0.115%
+
+0.044%
+
+0.040%
+
+0.233%
+
+10 × 200
+
+0.012%
+
+0.103%
+
+0.042%
+
+0.022%
+
+0.121%
+
+10 × 250
+
+0.011%
+
+0.101%
+
+0.031%
+
+0.011%
+
+0.081%
+
+10 × 300
+
+0.008%
+
+0.072%
+
+0.041%
+
+0.004%
+
+0.037%
+
+dynamic weights (i.e., Eqs. (6) and (7)) for comparisons. In this assessment,
+we employ a small neural network with 4 hidden layers and 50 neurons per
+layer. The learning rate is decreasing during the training process as mentioned
+above. This strategy is consistent with the use of dynamic weights in [25]. The
+dynamic weights during the training process are displayed in Fig. 2. Here
+α is initialized by 1 for the dynamic weighting strategy. We can find that
+the coefficient α oscillates and also varies due to the changes of learning rate.
+The dynamic weighting strategy works similarly for VV-NSFnet. The results
+with dynamic weights are better than those with fixed coefficient value (i.e.,
+α = 1 and α = 100). The resulting limit values of α are in the order of
+10. The corresponding loss functions obtained by VP-NSFnet with α = 1,
+α = 100 and dynamic weighting strategy are illustrated in Figs. 3(a), (b)
+and (c), and for the VV-NSFnet in Figs. 3(d), (e) and (f). From the curves
+of the training loss, we find that the Adam optimizer is robust for the VPNSFnet while it does not perform consistently for the VV-NSFnet. Applying
+two-step optimization can obtain more consistent results. The relative L2 errors
+of the NSFnet simulations with different weights are given in Table 2. For fixed
+
+12
+
+Table 2: Kovasznay flow: relative L2 errors of velocity and pressure solutions with different
+weights. The NN size is 4 × 50.
+
+VP-NSFnet
+
+VV-NSFnet
+
+Weights
+u
+
+v
+
+p
+
+u
+
+v
+
+α=1
+
+0.084%
+
+0.425%
+
+0.309%
+
+0.211%
+
+1.071%
+
+α = 100
+
+0.076%
+
+0.412%
+
+0.516%
+
+0.131%
+
+0.368%
+
+Dynamic, Eq. (6)
+
+0.072%
+
+0.352%
+
+0.212%
+
+0.056%
+
+0.436%
+
+Dynamic, Eq. (7)
+
+0.026%
+
+0.199%
+
+0.141%
+
+0.067%
+
+0.446%
+
+weights (α = 1 and α = 100), the VP-NSFnet outperforms the VV-NSFnet for
+simulating Kovasznay flow. The neural network with α = 100 performs slightly
+better than that with α = 1 for both NSFnets. When applying dynamic weights
+during network training, we can obtain more accurate solutions than the former
+two cases.
+In order to demonstrate the effectiveness of dynamic weights, we analyze the
+gradients of the loss function with respect to the parameters of the NSFnets. The
+histograms of the back-propagated gradients (∇θ Le and ∇θ (αLb )) after 10,000
+iterations are shown in Fig. 4. Our goal is to balance the distributions of ∇θ Le
+and ∇θ (αLb ), thus these two terms can contribute equally to the parameter
+updating (i.e., Eq. (5)). As shown in Figs. 4(a) and 4(e), the gradients of
+two different terms are unbalanced when there is no weighting coefficient for
+the boundary constraints (i.e., α = 1). When applying dynamic weights, the
+histograms of ∇θ Le and ∇θ (αLb ) are more consistent with each other. For the
+VP-NSFnet, the second formulation of dynamic weights, i.e., Eq. (7), performs
+better than the first one (weights given by Eq. (6)). However, the VV-NSFnet
+behaves in the opposite way for this case, as shown in Figs. 4(g) and 4(h).
+3.2. Two-dimensional cylinder wake
+Here we use NSFnets to simulate the 2D vortex shedding behind a circular
+cylinder at Re = 100. The cylinder is placed at (x, y) = (0, 0) with diameter
+
+13
+
+Figure 2: Kovasznay flow: dynamic weights for (a) VP-NSFnet, given by Eq. (6); (b) VVNSFnet, given by Eq. (6); (c) VP-NSFnet, given by Eq. (7); (d) VV-NSFnet, given by Eq.
+(7). The NN size is 4 × 50.
+
+D = 1. High-fidelity DNS data from [15] is used as a reference and for providing
+boundary and initial data for NSFnet training. We consider a domain defined
+by [1, 8] × [−2, 2] and the time interval is [0, 7] (about one shedding period) with
+time step ∆t = 0.1. As for the training data, we place 100 points along the the
+x-direction boundary and 50 points along the y-direction boundary to enforce
+the boundary conditions and use 140,000 spatio-temporal scattered points inside
+the domain to compute the residuals. The NSFnets contain 10 hidden layer and
+100 neurons per layer. In addition to the default models with α = β = 1 and
+α = β = 100, we again implement the dynamic weighting strategy for NSFnets.
+The training procedure is identical to the one we used for Kovasznay flow.
+A snapshot of the vorticity contours at t = 4.0 is shown in Fig. 5, demonstrating qualitative agreement of NSFnet inference with the DNS result. In Fig.
+6 we present the dynamic weights of both VP- and VV-NSFnets. In this case,
+the weights are both initialized by the value 1. The variations of the weights
+correspond to the changes of learning rates. We can observe that both α and
+
+14
+
+Figure 3: Kovasznay flow: loss functions (physics loss Le and boundary loss Lb ) obtained
+by (a) VP-NSFnet, fixed weight α = 1; (b) VP-NSFnet, fixed weight α = 100; (c) VPNSFnet, dynamic weight; (d) VV-NSFnet, fixed weight α = 1; (e) VV-NSFnet, fixed weight
+α = 100; (f) VV-NSFnet, dynamic weight. “DW1” denotes dynamic weights given by Eq.
+(6), and “DW2” denotes dynamic weights given by Eq. (7). Adam optimizer is used before
+the vertical dashed green line, and L-BFGS-B optimizer is used after that. The NN size is
+4 × 50.
+
+β are in the order of 10 and the weights for initial conditions are larger than
+the weights for boundary conditions in this case. The separated terms of the
+weighted loss function during training are given in Fig. 7. We employ twostep training to ensure the convergence for all the NSFnets. The relative L2
+errors of NSFnet simulations versus time are given in Fig. 8. We see that the
+VV-NSFnet performs better than the VP-NSFnet, and also that applying the
+dynamic weights can improve the simulation accuracy for both formulations.
+
+15
+
+ ( Lb )
+
+ Le
+
+(a)
+
+(b)
+
+(c)
+
+(d)
+
+(e)
+
+(f)
+
+(g)
+
+(h)
+
+Gradient
+
+Gradient
+
+Gradient
+
+Gradient
+
+Figure 4: Kovasznay flow: histograms of the gradients (∇θ Le and ∇θ (αLb )) after 10,000
+iterations during training the NSFnets. (a) VP-NSFnet, fixed weight α = 1; (b) VP-NSFnet,
+fixed weight α = 100; (c) VP-NSFnet, dynamic weight (Eq. (6)); (d) VP-NSFnet, dynamic
+weight (Eq. (7)); (e) VV-NSFnet, fixed weight α = 1; (f) VV-NSFnet, fixed weight α = 100;
+(g) VV-NSFnet, dynamic weight (Eq. (6)); (h) VV-NSFnet, dynamic weight (Eq. (7)).
+
+3.3. Three-dimensional Beltrami flow
+The analytical solutions of the unsteady three-dimensional Beltrami flow
+developed by Ethier and Steinman [32] are:
+2
+
+u(x, y, z, t) = − a [eax sin(ay + dz) + eaz cos(ax + dy)] e−d t ,
+2
+
+v(x, y, z, t) = − a [eay sin(az + dx) + eax cos(ay + dz)] e−d t ,
+2
+
+w(x, y, z, t) = − a [eaz sin(ax + dy) + eay cos(az + dx)] e−d t ,
+1 h
+p(x, y, z, t) = − a2 e2ax + e2ay + e2az + 2 sin(ax + dy) cos(az + dx)ea(y+z)
+2
++ 2 sin(ay + dz) cos(ax + dy)ea(z+x)
+i
+2
++2 sin(az + dx) cos(ay + dz)ea(x+y) e−2d t ,
+(11)
+where a = d = 1 is used. In NSFnet simulations, the computational domain
+is defined by [−1, 1] × [−1, 1] × [−1, 1] and the time interval is [0, 1]; the time
+step is 0.1. For the NSFnet training data, 31 × 31 points on each face are used
+
+16
+
+(a)
+Vorticity
+
+(b)
+
+(c)
+
+(d)
+
+(e)
+
+(f)
+
+(g)
+
+Figure 5: Flow past a circular cylinder: contours of the vorticity on the same contour levels
+at t = 4.0: (a) reference DNS solution from [15]; (b) VP-NSFnet, fixed weights α = β = 1; (c)
+VP-NSFnet, fixed weights α = β = 100; (d )VP-NSFnet, dynamic weights; (e) VV-NSFnet,
+fixed weights α = β = 1; (f) VV-NSFnet, fixed weights α = β = 100; (g) VV-NSFnet, dynamic
+weights. The dynamic weights here are given by Eq. (6).
+
+for boundary conditions while a batch of 10,000 points in the spatio-temporal
+domain is used for the equations. The weighting coefficients of the loss function
+are both fixed in this case: α = β = 100. The two-step optimization (Adam
+and L-BFGS-B) is implemented to train the neural networks, which have the
+default architecture with 10 layers and 100 neurons per layer. A snapshot of the
+velocity fields at t = 1 and on the slice z = 0 is displayed in Fig. 9. The errors
+of simulation results of the two NSFnets at different time steps are presented
+in Table 3, where the relative L2 errors of the three velocity components are
+given. As shown, both NSFnets can obtain accurate solutions of the NavierStokes equations for the Beltrami flow, but the VV-NSFnet outperforms the
+VP-NSFnet.
+17
+
+Figure 6: Flow past a circular cylinder: dynamic weights given by Eq. (6) for (a) VP-NSFnet
+and (b) VV-NSFnet.
+
+Table 3: Beltrami flow: relative L2 errors for VP-NSFnet and VV-NSFnet.
+
+VP-NSFnet
+
+VV-NSFnet
+
+t
+u
+
+v
+
+w
+
+p
+
+u
+
+v
+
+w
+
+0
+
+0.067%
+
+0.059%
+
+0.061%
+
+0.700%
+
+0.069%
+
+0.067%
+
+0.066%
+
+0.25
+
+0.158%
+
+0.132%
+
+0.140%
+
+0.778%
+
+0.109%
+
+0.094%
+
+0.108%
+
+0.50
+
+0.221%
+
+0.189%
+
+0.233%
+
+1.292%
+
+0.118%
+
+0.119%
+
+0.132%
+
+0.75
+
+0.287%
+
+0.217%
+
+0.406%
+
+2.149%
+
+0.156%
+
+0.154%
+
+0.187%
+
+1.00
+
+0.426%
+
+0.366%
+
+0.587%
+
+4.766%
+
+0.255%
+
+0.284%
+
+0.263%
+
+18
+
+Figure 7: Flow past a circular cylinder: loss functions (physics loss Le and boundary loss
+Lb ) obtained by (a) VP-NSFnet, fixed weights α = β = 1; (b) VP-NSFnet, fixed weights
+α = β = 100; (c) VP-NSFnet, dynamic weights given by Eq. (6); (d) VV-NSFnet, fixed
+weights α = β = 1; (e) VV-NSFnet, fixed weights α = β = 100; (f) VV-NSFnet, dynamic
+weights given by Eq. (6). Adam optimizer is used before the dashed green line, and L-BFGS-B
+optimizer is used after the dashed green line. The NN size is 10 × 100.
+
+Figure 8: Flow past a circular cylinder: relative L2 errors of NSFnets simulations for (a) the
+streamwise velocity, (b) the crossflow velocity and (c) pressure. The dynamic weights here
+are given by Eq. (6).
+
+19
+
+(
+a
+)
+
+(
+b)
+
+(
+c
+)
+
+Figure 9: Beltrami flow: velocity fields at t = 1 on the plane z = 0. (a) analytical solutions;
+(b) results of VP-NSFnet; (c) results of VV-NSFnet.
+
+20
+
+4. Simulations of turbulent channel flow
+4.1. Problem setup
+We simulate turbulent channel flow at Reτ = 9.9935 × 102 systematically by
+using VP-NSFnets. We use the turbulent channel flow database [20, 21, 22] at
+http://turbulence.pha.jhu.edu as the reference DNS solution. The database
+provides both the reference and some initial or boundary conditions for the VPNSFnet. The DNS domain for the channel flow in the database is [0, 8π] × [-1, 1]
+× [0, 3π]; the mean pressure gradient is dP/dx = 0.0025. The non-dimensional
+time step for DNS is 0.0013 while the online database time step is 0.0065 (five
+times of that for DNS). So, the time step of 0.0065 is also used for evaluating
+the residuals in NSFnets, i.e., five times of that for DNS. We perform NSFnet
+simulations by considering different subdomains with different sizes at various
+locations in the channel. In the first example, we place a box with size ∼200
+in wall-units covering a long time period. Then, we test the NSFnet simulation
+at a larger domain covering half the channel height. Finally, we check the
+influence of hyperparameters to the NSFnet simulation accuracy. We employ
+mini-batch to train NSFnets in this study. There are three parts in the input
+data corresponding to the initial conditions, the boundary conditions and the
+residuals of equations, respectively. Therefore, we specify the total number of
+iterations nit in one training epoch, and data in each part are evenly divided
+into nit small mini-batches. The total data in an entire mini-batch include data
+from each small mini-batch.
+4.2. Simulation results over a long time interval
+We first investigate if the VP-NSFnet can sustain turbulence, so we carry
+out simulations covering a relatively long time interval. In this test, a subdomain at [12.47, 12.66] × [-0.90, -0.70] × [4.61, 4.82] (190 × 200 × 210 in
+wall-units) is considered as the simulation domain of VP-NSFnet. We perform
+two different simulations covering the non-dimensional time domain [0, 0.52]
+(81 time steps, 25.97 in wall-units) and [0, 0.832] (129 time steps, 41.55 in wallunits). Here, we define the local convective time unit of the simulation region
+21
+
++
+as Tc+ = L+
+x /U (y)min = 12.0. (Lx is the size of the domain in streamwise di-
+
+rection.) Therefore, 25.97 and 41.55 cover more than two convective time units,
+i.e., 2.2Tc+ and 3.5Tc+ respectively, for this example. We use 20,000 points inside
+the domain, 6,644 points on the boundary sampled at each time step, together
+with 33,524 points at the initial time step to compute the loss function. We set
+the total number of iterations nit = 150 in one training epoch. There are 10
+hidden layers in the VP-NSFnet with 300 neurons per layer. The initial learning
+rate for Adam decays from 10−3 (1,000 training epochs) to 10−4 (4,000 training
+epochs), 10−5 (1,000 training epochs) and 10−6 (500 training epochs) in the
+training process. The weights in Eq. (2a) are α = 100, β = 100. The comparisons of instantaneous flow fields between reference DNS and VP-NSFnet at t+
+= 24.67 are given in Fig. 10. The convergence of loss functions is shown in Fig.
+11. The comparisons for accuracy of VP-NSFnet solutions are shown in Fig.
+12. All the simulation errors of velocity components are less than 10%, but the
+relative L2 error of pressure can reach 15% or 19%. Overall, a good VP-NSFnet
+simulation accuracy is obtained. These results suggest that VP-NSFnet can
+sustain turbulence for a long time period.
+4.3. Simulation results over a large domain
+We consider a larger domain covering half channel height in this test. We
+consider a subdomain at [12.47, 12.66] × [-1, -0.0031] × [4.61, 4.82] (about
+190 × 997 × 210 in wall-units) as the VP-NSFnet simulation domain; and the
+non-dimensional time domain is set as [0, 0.104] (17 time steps, 5.19 in wallunits). We place 100,000 points inside the domain and 26,048 points on the
+boundary sampled at each time step, and 147,968 points at the initial time step
+to determine the loss function. The total number of iterations nit in one training
+epoch is taken as 150. There are 10 hidden layers in the VP-NSFnet, with 300
+neurons per layer. The initial learning rate for Adam decays from 10−3 (250
+training epochs) to 10−4 (4,250 training epochs), 10−5 (500 training epochs)
+and 10−6 (500 training epochs) in this numerical example. The weights in Eq.
+(2a) are α = 100, β = 100. Comparisons of instantaneous flow fields between
+22
+
+(a)
+
+(b)
+
+(c)
+
+Figure 10: Long time interval: comparisons of instantaneous z − y plane flow fields between
+reference DNS and VP-NSFnet at t+ = 24.67: (a) reference solutions; (b) VP-NSFnet, simulation covers 2.2Tc+ ; (c) VP-NSFnet, simulation covers 3.5Tc+ .
+
+Figure 11: Long time interval: convergence of the VP-NSFnet simulation: (a) convergence
+of total loss functions and boundary loss functions; (b) convergence of residuals of governing
+equations.
+
+23
+
+Figure 12: Long time interval: accuracy of the VP-NSFnet simulation: the solid lines and
+dashed lines denote simulations covering 2.2Tc+ and 3.5Tc+ , respectively.
+
+reference DNS and VP-NSFnet at the final simulation time step are shown in
+Fig. 13. The convergence and accuracy of VP-NSFnet solutions are shown in
+Fig. 14. All the simulation errors of velocity components are less than 10%,
+but the relative L2 error of pressure can reach 17%. In such a large domain,
+complex interactions between different scales of eddies occur, and this domain
+covers the whole range including the law of the wall, the viscous sub-layer, the
+buffer layer, the log-law region and the outer layer [33]. However, VP-NSFnet
+can still get very accurate solutions. The results also indicate that the relative
+L2 errors of the wall-normal and spanwise velocities are much higher than that
+of streamwise velocity, i.e., nearly an order higher. This is caused by larger
+amplitude of the streamwise velocity than the other two velocity components,
+also nearly an order higher, as shown in Fig. 14. A proper normalization with
+careful tuning of anisotropic weights may result in a more balanced accuracy.
+4.4. Influence of weights
+In the above numerical experiments for turbulent channel flow, all the weights
+are manually tuned to obtain satisfying results. In this section, we investigate
+the influence of weights, especially the dynamic weights, to the VP-NSFnet simulation accuracy. The formulation of Eq. (6) is applied to the loss function of
+24
+
+(a)
+
+(b)
+
+(c)
+
+(d)
+
+Figure 13: Large domain: comparisons of instantaneous flow fields between reference DNS
+and VP-NSFnet at t+ = 5.19 covering half channel height: (a) reference solutions, x−y plane,
+z + = 0; (b) VP-NSFnet, x − y plane, z + = 0; (c) reference solutions, z − y plane, x+ = 0; (d)
+VP-NSFnet, z − y plane, x+ = 0.
+
+Figure 14: Large domain: convergence and accuracy of VP-NSFnet covering half channel
+height: (a) convergence of loss function; (b) relative L2 error.
+
+25
+
+VP-NSFnet. However, different from Eq. (6), a normalization factor γ is taken
+into account in this section. Hence, the dynamic weights for the turbulence
+simulation can be expressed as:
+α̂(k+1) =
+
+maxθ {|∇θ Le |}
+γ|∇θ α(k) Lb |
+
+.
+
+(12)
+
+We consider a subdomain of [12.53, 12.59] × [-1, -0.9762] × [4.69, 4.75] (about
+60 × 24 × 60 in wall-units) as the VP-NSFnet simulation domain; the nondimensional time domain is set as [0, 0.104] (17 time steps, 5.19 in wall-units).
+For this small domain, the initial velocity values are not used in the loss function,
+i.e., β = 0, but instead we can learn them. There are 2,000 points inside
+the domain and 1,100 points on the boundary sampled at each time step to
+determine the loss function. We take the total number of iterations nit of one
+training epoch as 10. There are 5 hidden layers in the VP-NSFnet, with 200
+neurons per layer. In all the examples, the initial learning rate for Adam decays
+from 10−3 (5,000 training epochs) to 10−4 (5,000 training epochs), 10−5 (25,000
+training epochs) and 5 × 10−6 (25,000 training epochs). We set five different
+strategies to take different weights for the boundary data in this experiment. In
+the first two strategies, we use fixed weights of α = 1 and α = 100. Then, we
+use the dynamic weights given by Eq. (12) with different normalization factors,
+i.e., γ = 1, γ = 5 and γ = 10. The comparisons of instantaneous flow fields
+(z − y plane) between reference DNS and VP-NSFnet simulations at t+ = 5.19
+and x+ = −12.27 with various weights are shown in Fig. 15. The evolution of
+dynamic weights in the training process is shown in Fig. 16. The convergence
+of the VP-NSFnet simulation with various hyperparameters is shown in Fig.
+17. The accuracy of the VP-NSFnet simulation with various hyperparameters
+is shown in Fig. 18. It is noted from Fig. 15 that there exists large discrepancy
+between the reference solution and the VP-NSFnet solution with fixed weight
+α = 1, thereby its accuracy is of low level. Therefore, the VP-NSFnet simulation
+accuracy with fixed weight α = 1 is not shown in Fig. 18. Overall, the best
+result for this turbulence simulation is obtained when applying dynamic weights
+with γ = 5. A dynamic variation of the weights can improve the performance
+26
+
+of VP-NSFnet.
+
+5. Summary
+In this study, we explored the effectiveness of PINNs to directly simulate
+incompressible flows, ranging from laminar flows to turbulent channel flow. We
+have formulated NSFnets based on two different forms of the governing NavierStokes equations: the velocity-pressure (VP) form and the velocity-vorticity
+(VV) form. The spatial and temporal coordinates are the inputs of the PINNs,
+and the instantaneous velocity and pressure fields are the outputs for the VPNSFnet; similarly, the instantaneous velocity and vorticity fields are the outputs
+for the VV-NSFnet. We used automatic differentiation to represent all the differential operators in the Navier-Stokes equations; then the equations can be formulated by the neural networks. We regard the initial and boundary conditions
+as supervised data-driven parts, and the residual of the Navier-Stokes equations
+as the unsupervised physics-informed part in the loss function of PINNs. We
+note that no data was provided for the pressure as boundary or initial conditions for VP-NSFnet, which was a hidden state and was obtained indirectly via
+the incompressibility constraint without splitting the equations. Convergence
+of NSFnets was monitored using the total loss function as well as the individual
+loss functions. We simulated several laminar flows, including two-dimensional
+steady Kovasznay flow, two-dimensional cylinder wake and three-dimensional
+Beltrami flow using the two forms NSFnets. We also carried out a study on
+the influence of weights in the various contributions to the loss function. We
+found that for laminar cases, the VV-NSFnet achieves better accuracy than
+the VP-NSFnet, and that a dynamic variation of the weights can improve the
+performance of both NSFnets.
+In addition, we explored the possibility of simulating turbulent channel flow
+at Reτ ∼ 1,000 using NSFnets. We performed NSFnet simulations by considering different subdomains with different sizes at various locations in the channel
+and for different time intervals. Established DNS databases provided the proper
+
+27
+
+(a)
+
+(b)
+
+(c)
+
+(d)
+
+(e)
+
+(f)
+
+Figure 15: Influence of weights: comparisons of instantaneous flow fields (z −y plane) between
+reference DNS and VP-NSFnet at t+ = 5.19 and x+ = −12.27: (a) reference solutions; (b) VPNSFnet, fixed weight α = 1; (c) VP-NSFnet, fixed weight α = 100; (d) VP-NSFnet, dynamic
+weight with normalization factor γ = 1; (e) VP-NSFnet, dynamic weight with normalization
+factor γ = 5; (f) VP-NSFnet, dynamic weight with normalization factor γ = 10. All the
+dynamic weights here are given by Eq. (12).
+
+28
+
+Figure 16: Influence of weights: dynamical weights with different normalization factors versus
+training epochs. All the dynamic weights here are given by Eq. (12).
+
+Figure 17: Influence of weights: convergence of the VP-NSFnet simulation: (a) VP-NSFnet,
+fixed weight α = 1; (b) VP-NSFnet, fixed weight α = 100; (c) VP-NSFnet, dynamic weight
+with normalization factor γ = 1; (d) VP-NSFnet, dynamic weight with normalization factor
+γ = 5; (e) VP-NSFnet, dynamic weight with normalization factor γ = 10. All the dynamic
+weights here are given by Eq. (12).
+
+29
+
+Figure 18: Influence of weights: accuracy of VP-NSFnet for various weights: (a) to (d) relative
+L2 errors of u, v, w and p.
+
+30
+
+initial and boundary conditions for the NSFnet simulations. We obtained good
+agreement between the DNS results and the VP-NSFnet simulation results upon
+convergence of the loss function. The long time period simulation suggests that
+NSFnets can sustain turbulence with errors bounded at reasonable levels. We
+also investigated the use of dynamic versus fixed weights and demonstrated how
+dynamic weights could further enhance the accuracy of VP-NSFnet. Unlike the
+VP-form, attempts to train the VV-NSFnet failed to provide satisfactory convergence of the loss function for the governing equations. For α = 50, 000 we
+obtained reasonable accuracy, with the loss function for boundary conditions
+converging to small values but the residual for the governing equations remained
+very large. This may be related to the fact that the data in this case are obtained from DNS data bases with a VP formulation, and hence the boundary
+conditions derived may not be so accurate but rather inconsistent with the VV
+form of the governing equations. We plan to revisit this issue in future work.
+The current study for modeling turbulence using NSFnets is the first attempt
+to evaluate the PINN performance, and while the first results are encouraging,
+the broader question is if PINNs can provide sufficient accuracy to sustain turbulence with non-stochastic boundary conditions but rather the simple zero
+Dirichlet and periodic boundary conditions employed for the entire domain in
+spectral type simulations of turbulence. To address this question expeditiously,
+the efficiency of PINNs has to be improved significantly, including the development of a multi-node GPU code that can accelerate significantly the training
+process. Such speed up can be further enhanced by using adaptive activation
+functions as demonstrated in [30, 31]. Moreover, a further study is needed to
+derive the proper normalization procedure for the three different velocity components so that we can obtain uniform accuracy, as in the current study the
+streamwise component is inferred with an order of magnitude higher accuracy
+compared to the crossflow velocity components when the streamwise velocity is
+of an order higher than the crossflow velocity.
+
+31
+
+Acknowledgements
+X. Jin and H. Li would like to acknowledge funding from the National Natural Science Foundation of China (NSFC) (Grant No. U1711265). S. Cai and
+G.E. Karniadakis would like to acknowledge funding from DARPA-AIRA grant
+HR00111990025 and the DOE grant DE-AC05-76RL01830.
+
+References
+[1] J. Ling, A. Kurzawski, J. Templeton, Reynolds averaged turbulence modelling using deep neural networks with embedded invariance, Journal of
+Fluid Mechanics 807 (2016) 155–166.
+[2] J.-X. Wang, J.-L. Wu, H. Xiao, Physics-informed machine learning approach for reconstructing Reynolds stress modeling discrepancies based on
+DNS data, Physical Review Fluids 2 (2017) 034603.
+[3] C. Jiang, J. Mi, S. Laima, H. Li, A novel algebraic stress model with
+machine-learning-assisted parameterization, Energies 13 (2020) 258.
+[4] Z. Zhou, G. He, S. Wang, G. Jin, Subgrid-scale model for large-eddy
+simulation of isotropic turbulent flows using an artificial neural network,
+Computers & Fluids 195 (2019) 104319.
+[5] X. Jin, P. Cheng, W.-L. Chen, H. Li, Prediction model of velocity field
+around circular cylinder over various Reynolds numbers by fusion convolutional neural networks based on pressure on the cylinder, Physics of Fluids
+30 (2018) 047105.
+[6] P. Wu, J. Sun, X. Chang, W. Zhang, R. Arcucci, Y. Guo, C. C. Pain,
+Data-driven reduced order model with temporal convolutional neural network,
+
+Computer Methods in Applied Mechanics and Engineering 360
+
+(2020) 112766.
+
+32
+
+[7] X. Jin, S. Laima, W.-L. Chen, H. Li, Time-resolved reconstruction of flow
+field around a circular cylinder by recurrent neural networks based on nontime-resolved particle image velocimetry measurements, Experiments in
+Fluids (2020) accepted.
+[8] Z. Hosseini, R. J. Martinuzzi, B. R. Noack, Sensor-based estimation of the
+velocity in the wake of a low-aspect-ratio pyramid, Experiments in Fluids
+56 (2015) 13.
+[9] S. Discetti, M. Raiola, A. Ianiro,
+
+Estimation of time-resolved turbu-
+
+lent fields through correlation of non-time-resolved field measurements and
+time-resolved point measurements, Experimental Thermal and Fluid Science 93 (2018) 119–130.
+[10] S. Cai, S. Zhou, C. Xu, Q. Gao, Dense motion estimation of particle images
+via a convolutional neural network, Experiments in Fluids 60 (2019) 73.
+[11] K. Duraisamy, G. Iaccarino, H. Xiao, Turbulence modeling in the age of
+data, Annual Review of Fluid Mechanics 51 (2019) 357–377.
+[12] S. L. Brunton, B. R. Noack, P. Koumoutsakos, Machine learning for fluid
+mechanics, Annual Review of Fluid Mechanics 52 (2020) 477–508.
+[13] M. Raissi, P. Perdikaris, G. E. Karniadakis, Physics informed deep learning
+(part i): Data-driven solutions of nonlinear partial differential equations,
+arXiv preprint arXiv:1711.10561 (2017).
+[14] M. Raissi, P. Perdikaris, G. E. Karniadakis, Physics informed deep learning
+(part ii): Data-driven discovery of nonlinear partial differential equations.
+arxiv, arXiv preprint arXiv:1711.10561 (2017).
+[15] M. Raissi, P. Perdikaris, G. E. Karniadakis, Physics-informed neural networks: A deep learning framework for solving forward and inverse problems
+involving nonlinear partial differential equations, Journal of Computational
+Physics 378 (2019) 686–707.
+
+33
+
+[16] M. Raissi, Z. Wang, M. S. Triantafyllou, G. E. Karniadakis, Deep learning
+of vortex-induced vibrations, Journal of Fluid Mechanics 861 (2019) 119–
+137.
+[17] M. Raissi, A. Yazdani, G. E. Karniadakis, Hidden fluid mechanics: Learning velocity and pressure fields from flow visualizations, Science 367 (2020)
+1026–1030.
+[18] J. Kim, P. Moin, R. Moser, Turbulence statistics in fully developed channel
+flow at low Reynolds number, Journal of Fluid Mechanics 177 (1987) 133–
+166.
+[19] G. E. Karniadakis, S. Sherwin, Spectral/hp Element Methods for Computational Fluid Dynamics, Oxford University Press, 2013.
+[20] E. Perlman, R. Burns, Y. Li, C. Meneveau, Data exploration of turbulence simulations using a database cluster, in: Proceedings of the 2007
+ACM/IEEE conference on Supercomputing, ACM, 2007, p. 23.
+[21] Y. Li, E. Perlman, M. Wan, Y. Yang, C. Meneveau, R. Burns, S. Chen,
+A. Szalay, G. Eyink, A public turbulence database cluster and applications
+to study Lagrangian evolution of velocity increments in turbulence, Journal
+of Turbulence 9 (2008) N31.
+[22] J. Graham, K. Kanov, X. Yang, M. Lee, N. Malaya, C. Lalescu, R. Burns,
+G. Eyink, A. Szalay, R. Moser, et al., A web services accessible database
+of turbulent channel flow and its use for testing a new integral wall model
+for les, Journal of Turbulence 17 (2016) 181–215.
+[23] A. G. Baydin, B. A. Pearlmutter, A. A. Radul, J. M. Siskind, Automatic
+differentiation in machine learning: a survey, Journal of Machine Learning
+Research 18 (2018).
+[24] G. E. Karniadakis, M. Israeli, S. A. Orszag, High-order splitting methods
+for the incompressible navier-stokes equations, Journal of Computational
+Physics 97 (1991) 414–443.
+34
+
+[25] S. Wang, Y. Teng, P. Perdikaris,
+
+Understanding and mitigating gra-
+
+dient pathologies in physics-informed neural networks,
+
+arXiv preprint
+
+arXiv:2001.04536 (2020).
+[26] D. P. Kingma, J. Ba, Adam: A method for stochastic optimization, arXiv
+preprint arXiv:1412.6980 (2014).
+[27] X. Glorot, Y. Bengio, Understanding the difficulty of training deep feedforward neural networks, in: Proceedings of the thirteenth international
+conference on artificial intelligence and statistics, 2010, pp. 249–256.
+[28] J. Trujillo, G. E. Karniadakis, A penalty method for the vorticity-velocity
+formulation, Journal of Computational Physics 149 (1999) 32–58.
+[29] H. L. Meitz, H. F. Fasel, A compact-difference scheme for the Navier–
+Stokes equations in vorticity-velocity formulation, Journal of Computational Physics 157 (2000) 371–403.
+[30] A. D. Jagtap, K. Kawaguchi, G. E. Karniadakis, Adaptive activation functions accelerate convergence in deep and physics-informed neural networks,
+Journal of Computational Physics 404 (2020) 109136.
+[31] A. D. Jagtap, K. Kawaguchi, G. E. Karniadakis, Locally adaptive activation functions with slope recovery term for deep and physics-informed
+neural networks, arXiv preprint arXiv:1909.12228 (2019).
+[32] C. R. Ethier, D. Steinman, Exact fully 3D Navier-Stokes solutions for
+benchmarking, International Journal for Numerical Methods in Fluids 19
+(1994) 369–375.
+[33] S. B. Pope, Turbulent Flows, Cambridge University Press, Cambridge.
+(2000) 276.
+
+35
+
+

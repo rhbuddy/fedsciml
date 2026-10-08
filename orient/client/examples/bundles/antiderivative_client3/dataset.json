@@ -1,0 +1,10 @@
+{
+  "problem": "antiderivative",
+  "n_samples": 2000,
+  "domain": {
+    "fourier_modes": [
+      4,
+      5
+    ]
+  }
+}

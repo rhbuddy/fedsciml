@@ -1,0 +1,10 @@
+{
+  "problem": "poisson",
+  "n_samples": 2000,
+  "domain": {
+    "interval": [
+      0.0,
+      0.6283185307179586
+    ]
+  }
+}
