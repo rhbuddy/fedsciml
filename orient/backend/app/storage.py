@@ -164,6 +164,45 @@ class RunStorage:
             (self.dir / "metrics.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
         except Exception:
             pass
+        # SRS §8.2 + §10.4: optional plots (L2, loss, weight divergence)
+        try:
+            import matplotlib.pyplot as plt  # type: ignore
+
+            plots = self.dir / "plots"
+            plots.mkdir(parents=True, exist_ok=True)
+            if self._loss_history:
+                plt.figure(figsize=(5, 3))
+                plt.plot(self._loss_history, label="mean_local_loss")
+                plt.xlabel("round")
+                plt.ylabel("loss")
+                plt.title("Loss curve")
+                plt.grid(alpha=0.3)
+                plt.tight_layout()
+                plt.savefig(plots / "loss.png", dpi=120)
+                plt.close()
+            if self._l2_history:
+                plt.figure(figsize=(5, 3))
+                plt.plot(self._l2_history, label="L2 relative error", color="tab:orange")
+                plt.xlabel("round")
+                plt.ylabel("L2 error")
+                plt.title("L2 error curve")
+                plt.grid(alpha=0.3)
+                plt.tight_layout()
+                plt.savefig(plots / "l2_error.png", dpi=120)
+                plt.close()
+            if self._wd_history and any("_mean" in d for d in self._wd_history):
+                vals = [float(d.get("_mean", float("nan"))) for d in self._wd_history]
+                plt.figure(figsize=(5, 3))
+                plt.plot(vals, label="weight divergence (mean)", color="tab:green")
+                plt.xlabel("round")
+                plt.ylabel("divergence")
+                plt.title("Weight divergence")
+                plt.grid(alpha=0.3)
+                plt.tight_layout()
+                plt.savefig(plots / "weight_divergence.png", dpi=120)
+                plt.close()
+        except Exception:
+            pass
 
     def read_metrics(self) -> List[Dict[str, Any]]:
         if not self.metrics_path.exists():

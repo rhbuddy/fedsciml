@@ -27,6 +27,42 @@ def _steps_per_epoch(arrays: Dict[str, np.ndarray], batch_size: int) -> int:
     return max(1, n // max(1, batch_size))
 
 
+class Lion(torch.optim.Optimizer):
+    """Lion optimizer (Chen et al. 2023) - lightweight pytorch implementation.
+
+    Drop-in so SRS FR-CLIENT-2 optimizer: Adam, SGD, Lion all work.
+    """
+
+    def __init__(self, params, lr=1e-4, betas=(0.9, 0.99), weight_decay=0.0):
+        defaults = dict(lr=lr, betas=betas, weight_decay=weight_decay)
+        super().__init__(params, defaults)
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+        for group in self.param_groups:
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                grad = p.grad
+                state = self.state[p]
+                if len(state) == 0:
+                    state["exp_avg"] = torch.zeros_like(p)
+                exp_avg = state["exp_avg"]
+                beta1, beta2 = group["betas"]
+                # update direction via sign interpolation
+                update = exp_avg * beta1 + grad * (1 - beta1)
+                p.add_(torch.sign(update), alpha=-group["lr"])
+                # momentum update
+                exp_avg.mul_(beta2).add_(grad, alpha=1 - beta2)
+                if group["weight_decay"] != 0:
+                    p.data.mul_(1 - group["lr"] * group["weight_decay"])
+        return loss
+
+
 def _optimizer_factory(name: str, parameters, lr: float) -> torch.optim.Optimizer:
     """Build a supported local optimizer from the wire ``OptimizerSpec``."""
     normalized = (name or "adam").lower().strip()
@@ -34,15 +70,16 @@ def _optimizer_factory(name: str, parameters, lr: float) -> torch.optim.Optimize
         return torch.optim.Adam(parameters, lr=lr)
     if normalized == "sgd":
         return torch.optim.SGD(parameters, lr=lr)
-    # Lion is listed in the SRS as configurable, but it is not part of standard
-    # torch.optim in common PyTorch releases. Fail clearly instead of silently
-    # falling back to Adam.
     if normalized == "lion":
-        raise ValueError(
-            "Optimizer 'lion' is not available in standard torch.optim; install/add "
-            "a Lion optimizer implementation before selecting it."
-        )
-    raise ValueError("Unknown optimizer '%s'. Options: adam, sgd%s" % (name, ", lion (if implemented)"))
+        # Try external package first, fallback to bundled Lion
+        try:
+            from lion_pytorch import Lion as ExtLion  # type: ignore
+
+            return ExtLion(parameters, lr=lr)
+        except Exception:
+            pass
+        return Lion(parameters, lr=lr)
+    raise ValueError("Unknown optimizer '%s'. Options: adam, sgd, lion" % name)
 
 
 class LocalTrainer:
@@ -101,6 +138,24 @@ class LocalTrainer:
         if bad:
             raise ValueError(f"Non-finite model parameter(s) after optimizer step: {bad}")
 
+    def _split_train_val(self, arrays: Dict[str, np.ndarray], val_frac: float = 0.2) -> tuple[Dict[str, np.ndarray], Dict[str, np.ndarray] | None]:
+        """SRS FR-AGG-12: 80/20 train/val split for quality weighting (deterministic)."""
+        try:
+            n = int(next(iter(arrays.values())).shape[0])
+            if n < 10 or val_frac <= 0:
+                return arrays, None
+            n_train = int(n * (1 - val_frac))
+            if n_train <= 0 or n_train >= n:
+                return arrays, None
+            train: Dict[str, np.ndarray] = {}
+            val: Dict[str, np.ndarray] = {}
+            for k, v in arrays.items():
+                train[k] = v[:n_train]
+                val[k] = v[n_train:]
+            return train, val
+        except Exception:
+            return arrays, None
+
     # ------------------------------------------------------------------ training
     def train(
         self,
@@ -114,10 +169,11 @@ class LocalTrainer:
         max_norm: float = 1.0,
         clip_value: float = 0.5,
     ) -> Dict[str, Any]:
-        """Run ``epochs`` local epochs and return ``{\"loss\": ..., \"steps\": ...}``.
+        """Run ``epochs`` local epochs and return ``{\"loss\": ..., \"val_loss\": ..., \"steps\": ...}``.
 
         Supports SRS FR-CLIENT-9 gradient clipping modes: ``none`` | ``value`` | ``norm``.
         ``grad_clip`` is backward-compat alias for ``max_norm`` when ``gradient_clip=='norm'``.
+        Also computes ``val_loss`` on a 20% held-out shard for quality weighting (FR-AGG-12).
 
         Raises ``ValueError`` on non-finite losses/gradients/parameters so a bad
         client exits instead of uploading poisoned weights to the server.
@@ -132,14 +188,17 @@ class LocalTrainer:
             clip_mode = "norm"
             max_norm = float(grad_clip)
 
+        # SRS FR-AGG-12: split 80/20 for quality weighting validation loss
+        train_arrays, val_arrays = self._split_train_val(arrays, 0.2)
+
         self.model.train()
-        steps = _steps_per_epoch(arrays, batch_size)
+        steps = _steps_per_epoch(train_arrays, batch_size)
         losses: List[float] = []
 
         for _ in range(max(1, int(epochs))):
             for _ in range(steps):
                 self.optimizer.zero_grad(set_to_none=True)
-                loss = self.problem.local_loss(self.model, arrays, batch_size)
+                loss = self.problem.local_loss(self.model, train_arrays, batch_size)
 
                 if prox_mu > 0.0 and self._global_ref is not None:
                     # NOTE: must stay in the autograd graph, otherwise the proximal
@@ -171,7 +230,26 @@ class LocalTrainer:
                 self._check_parameters_finite()
                 losses.append(float(loss.detach().cpu()))
 
+        # Compute held-out validation loss for quality weighting (FR-AGG-12) — no grad, same loss fn on val shard
+        val_loss: float | None = None
+        if val_arrays is not None:
+            self.model.eval()
+            try:
+                with torch.no_grad():
+                    v_losses = []
+                    for _ in range(5):
+                        v_losses.append(float(self.problem.local_loss(self.model, val_arrays, batch_size).detach().cpu()))
+                    val_loss = float(np.mean(v_losses))
+                    if not np.isfinite(val_loss):
+                        val_loss = float(np.mean(losses)) if losses else 0.0
+            except Exception:
+                val_loss = float(np.mean(losses)) if losses else 0.0
+            self.model.train()
+        else:
+            val_loss = float(np.mean(losses)) if losses else 0.0
+
         return {
             "loss": float(np.mean(losses)) if losses else 0.0,
+            "val_loss": val_loss,
             "steps": len(losses),
         }

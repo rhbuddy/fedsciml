@@ -95,6 +95,12 @@ def validate_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     # heterogeneity
     if "heterogeneity" in cfg and cfg["heterogeneity"] is not None and not isinstance(cfg["heterogeneity"], dict):
         raise ValueError("heterogeneity must be a mapping e.g. {mode: 1d_partition, n_pieces: 10}")
+    # model_family (SRS FR-CFG-2) — optional, defaults per problem; validated if provided
+    if "model_family" in cfg and cfg["model_family"] is not None:
+        mf = str(cfg["model_family"]).lower().strip()
+        if mf not in ("fnn", "mlp", "deeponet", "operator", "pinn"):
+            raise ValueError(f"Unknown model_family '{mf}'. Options: fnn, deeponet (or pinn/operator aliases)")
+        cfg["model_family"] = mf
     # learning rate
     if "learning_rate" in cfg:
         lr = float(cfg["learning_rate"])
@@ -166,6 +172,7 @@ def config_to_run_start(cfg: Dict[str, Any]) -> Dict[str, Any]:
         if k in cfg:
             agg_params[k] = cfg[k]
     heterogeneity = cfg.get("heterogeneity")
+    model_family = cfg.get("model_family")
     noise_mode = str(cfg.get("noise_mode", "none"))
     noise_fraction = float(cfg.get("noise_fraction", 0.0))
     gradient_clip = str(cfg.get("gradient_clip", "none"))
@@ -181,6 +188,7 @@ def config_to_run_start(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "weighting": weighting,
         "aggregator_params": agg_params,
         "heterogeneity": heterogeneity,
+        "model_family": model_family,
         "noise_mode": noise_mode,
         "noise_fraction": noise_fraction,
         "gradient_clip": gradient_clip,

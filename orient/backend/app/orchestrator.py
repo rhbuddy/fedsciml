@@ -77,6 +77,8 @@ class RunState:
     optimizer_name: str = "adam"
     seed: int = 0
     compromised_log: List[Dict[str, Any]] = field(default_factory=list)
+    # FR-CLIENT-7/8: NaN/Inf exclusion log
+    excluded_log: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class Federation:
@@ -430,8 +432,15 @@ class Federation:
                 )
 
             if int(n_samples) <= 0:
+                # FR-CLIENT-7: exclude corrupted client
+                self.run.excluded_log.append({"round": self.run.round, "client_id": client_id, "reason": "no_samples", "timestamp": time.time()})
+                if self.storage:
+                    self.storage.log_round({"event": "excluded_client", "round": self.run.round, "client_id": client_id, "reason": "no_samples"})
                 return AssignmentResponse(status="error", message="Client update has no samples")
             if not math.isfinite(float(local_loss)):
+                self.run.excluded_log.append({"round": self.run.round, "client_id": client_id, "reason": "non_finite_loss", "timestamp": time.time(), "local_loss": local_loss})
+                if self.storage:
+                    self.storage.log_round({"event": "excluded_client", "round": self.run.round, "client_id": client_id, "reason": "non_finite_loss"})
                 return AssignmentResponse(status="error", message="Client update has non-finite local_loss")
 
             # Validate the payload deserializes, is finite, and matches the global shapes.
@@ -445,6 +454,9 @@ class Federation:
                     if not torch.isfinite(tensor.detach().to("cpu", torch.float32)).all().item():
                         raise ValueError(f"state_dict tensor '{key}' contains NaN/Inf")
             except Exception as exc:  # noqa: BLE001
+                self.run.excluded_log.append({"round": self.run.round, "client_id": client_id, "reason": f"invalid_payload: {exc}", "timestamp": time.time()})
+                if self.storage:
+                    self.storage.log_round({"event": "excluded_client", "round": self.run.round, "client_id": client_id, "reason": str(exc)})
                 return AssignmentResponse(status="error", message=f"Invalid weight payload: {exc}")
 
             self.run.updates[client_id] = data
@@ -571,7 +583,7 @@ class Federation:
             if self.storage:
                 try:
                     self.storage.save_model(self._global_model.state_dict())
-                    self.storage.finalize(self._global_model.state_dict(), extra_metrics={"heterogeneity": self.run.heterogeneity, "noise_mode": self.run.noise_mode, "compromised_log": self.run.compromised_log})
+                    self.storage.finalize(self._global_model.state_dict(), extra_metrics={"heterogeneity": self.run.heterogeneity, "noise_mode": self.run.noise_mode, "compromised_log": self.run.compromised_log, "excluded_log": self.run.excluded_log})
                 except Exception:
                     pass
         else:

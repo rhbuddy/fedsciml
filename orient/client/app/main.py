@@ -141,11 +141,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     resp.round, stats["loss"], stats["steps"],
                 )
 
+                # SRS FR-AGG-12: quality weighting uses validation loss on 20% held-out shard
+                local_loss = float(stats.get("val_loss", stats["loss"]))
                 server.upload_weights(
                     args.client_id,
                     resp.round,
                     bundle.size,
-                    stats["loss"],
+                    local_loss,
                     state_dict_to_bytes(trainer.state_dict()),
                 )
                 rounds_done += 1

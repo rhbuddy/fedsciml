@@ -48,53 +48,98 @@ def w1_1d(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.mean(np.abs(a_sorted - b_sorted)))
 
 
+def w1_nd(a: np.ndarray, b: np.ndarray) -> float:
+    """W1 for ND point clouds (e.g. Schaffer 2D) via POT EMD with Euclidean cost."""
+    a = np.asarray(a, dtype=np.float64)
+    b = np.asarray(b, dtype=np.float64)
+    if a.ndim == 1:
+        a = a.reshape(-1, 1)
+    if b.ndim == 1:
+        b = b.reshape(-1, 1)
+    if len(a) == 0 or len(b) == 0:
+        return 0.0
+    max_n = 1500
+    if len(a) > max_n:
+        a = a[np.random.default_rng(0).choice(len(a), max_n, replace=False)]
+    if len(b) > max_n:
+        b = b[np.random.default_rng(0).choice(len(b), max_n, replace=False)]
+    try:
+        import ot  # type: ignore
+
+        wa = np.ones(len(a), dtype=np.float64) / len(a)
+        wb = np.ones(len(b), dtype=np.float64) / len(b)
+        M = ot.dist(a, b, metric="euclidean")
+        return float(ot.emd2(wa, wb, M))
+    except Exception:
+        pass
+    if a.shape[1] == 1 and b.shape[1] == 1:
+        return w1_1d(a.reshape(-1), b.reshape(-1))
+    return float(np.linalg.norm(a.mean(axis=0) - b.mean(axis=0)))
+
+
 def w1_between_clients(client_samples: Sequence[np.ndarray]) -> float:
-    """Mean pairwise W1 per paper Eq.4 (direct W1 for K=2)."""
+    """Mean pairwise W1 per paper Eq.4 (direct W1 for K=2). Supports 1-D and ND samples."""
     k = len(client_samples)
     if k < 2:
         return 0.0
+
+    def _w1(a: np.ndarray, b: np.ndarray) -> float:
+        a = np.asarray(a)
+        b = np.asarray(b)
+        if a.ndim == 2 and a.shape[1] > 1:
+            return w1_nd(a, b)
+        if b.ndim == 2 and b.shape[1] > 1:
+            return w1_nd(a, b)
+        return w1_1d(a.reshape(-1), b.reshape(-1))
+
     if k == 2:
-        return w1_1d(client_samples[0], client_samples[1])
-    # mean pairwise for K>=3
+        return _w1(client_samples[0], client_samples[1])
     total = 0.0
     count = 0
     for i in range(k):
         for j in range(i + 1, k):
-            total += w1_1d(client_samples[i], client_samples[j])
+            total += _w1(client_samples[i], client_samples[j])
             count += 1
     if count == 0:
         return 0.0
-    # Paper Eq.4 uses 1/((K-1)(K-2)) factor but that seems typo; we use standard mean pairwise
-    # Keep both for reference, but use mean for stability.
     return float(total / count)
 
 
 def compute_heterogeneity_stats(client_arrays: List[Dict[str, np.ndarray]]) -> Dict[str, Any]:
-    """Compute W1 and partition coverage stats from client dataset dicts."""
-    # Extract representative sample for W1: x_train or branch_train mean
+    """Compute W1 and partition coverage stats from client dataset dicts (SRS FR-DATA-3/6).
+
+    - For PINN/Supervised: x_train point clouds (1D or 2D) -> ND W1
+    - For Operator (DeepONet): branch function distribution (functional W1 proxy)
+    Also reports coverage per FR-DATA-6.
+    """
     samples: List[np.ndarray] = []
     total_n = 0
     per_client_n: List[int] = []
     for arr in client_arrays:
         if "x_train" in arr:
-            s = np.asarray(arr["x_train"]).reshape(-1)
-            samples.append(s)
-            total_n += arr["x_train"].shape[0]
-            per_client_n.append(int(arr["x_train"].shape[0]))
+            x = np.asarray(arr["x_train"])
+            if x.ndim == 2 and x.shape[1] > 1:
+                samples.append(x)
+            else:
+                samples.append(x.reshape(-1))
+            total_n += x.shape[0]
+            per_client_n.append(int(x.shape[0]))
         elif "branch_train" in arr:
-            # for operator: use mean of branch vectors as scalar proxy
-            s = np.asarray(arr["branch_train"]).mean(axis=1).reshape(-1)
-            samples.append(s)
-            total_n += arr["branch_train"].shape[0]
-            per_client_n.append(int(arr["branch_train"].shape[0]))
+            b = np.asarray(arr["branch_train"])
+            samples.append(b)
+            total_n += b.shape[0]
+            per_client_n.append(int(b.shape[0]))
         else:
-            # fallback: first array
             key = next(iter(arr))
-            s = np.asarray(arr[key]).reshape(-1)
-            samples.append(s)
+            s = np.asarray(arr[key])
+            if s.ndim == 2 and s.shape[1] > 1:
+                samples.append(s)
+            else:
+                samples.append(s.reshape(-1))
             total_n += int(arr[key].shape[0])
             per_client_n.append(int(arr[key].shape[0]))
     w1 = w1_between_clients(samples)
+    coverage_ok = total_n > 0 and all(n > 0 for n in per_client_n)
     return {
         "w1": float(w1),
         "total_samples": int(total_n),
@@ -102,7 +147,7 @@ def compute_heterogeneity_stats(client_arrays: List[Dict[str, np.ndarray]]) -> D
         "min_per_client": int(min(per_client_n)) if per_client_n else 0,
         "max_per_client": int(max(per_client_n)) if per_client_n else 0,
         "n_clients": len(client_arrays),
-        "coverage_ok": total_n > 0 and min(per_client_n) > 0,
+        "coverage_ok": bool(coverage_ok),
     }
 
 

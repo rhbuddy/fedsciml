@@ -153,15 +153,64 @@ def run_in_memory(cfg: Dict[str, Any], results_dir: str = "results") -> Dict[str
                 max_norm=resp.max_norm,
                 clip_value=resp.clip_value,
             )
-            fed.submit_update(cid, resp.round, len(next(iter(ds.values()))), float(stats["loss"]), state_dict_to_bytes(trainer.state_dict()))
+            local_loss = float(stats.get("val_loss", stats["loss"]))
+            fed.submit_update(cid, resp.round, len(next(iter(ds.values()))), local_loss, state_dict_to_bytes(trainer.state_dict()))
         # after all submitted, federation auto-aggregates and advances; if not, force
         if fed.run.phase == "collecting" and fed.run.round == rnd and len(fed.run.updates) >= 2:
             fed.force_aggregate()
         # metrics already logged
 
     status = fed.status()
-    _print(f"[runner] done phase={status.phase} rounds={len(status.metrics)} best L2={min((m.get('l2_relative_error', float('inf')) for m in status.metrics), default=None)}")
-    return {"config": cfg, "run_start": run_cfg, "status": status.model_dump(), "storage_dir": str(fed.storage.dir) if fed.storage else None}
+    # SRS FR-DATA-3/6 & FR-EVAL-2: heterogeneity W1 + centralized/extrapolation baselines
+    heterogeneity_stats: Dict[str, Any] = {}
+    baselines: Dict[str, Any] = {}
+    try:
+        datasets = list(getattr(fed, "_client_datasets", {}).values())  # type: ignore
+        if datasets:
+            heterogeneity_stats = compute_heterogeneity_stats(datasets)
+            if status.metrics:
+                status.metrics[-1]["heterogeneity_w1"] = heterogeneity_stats.get("w1")
+                status.metrics[-1]["heterogeneity_stats"] = heterogeneity_stats
+    except Exception:
+        pass
+    try:
+        if LocalTrainer is not None and hasattr(fed, "_client_datasets") and getattr(fed, "_global_model", None) is not None:
+            from app.protocol import OptimizerSpec as _OS  # type: ignore
+
+            total_epochs_cent = total_rounds * local_epochs
+            lr = float(run_cfg.get("learning_rate", 1e-3))
+            opt_name = str(run_cfg.get("optimizer", "adam"))
+            ref = next(iter(getattr(fed, "_client_datasets").values()))  # type: ignore
+            merged: Dict[str, np.ndarray] = {k: np.concatenate([ds[k] for ds in getattr(fed, "_client_datasets").values()], axis=0) for k in ref}  # type: ignore
+            cent = LocalTrainer(problem_name)
+            cent.train(merged, epochs=total_epochs_cent, optimizer_spec=_OS(name=opt_name, lr=lr), batch_size=256)
+            baselines["centralized"] = problem.evaluate(cent.model)
+            per = []
+            for ds in getattr(fed, "_client_datasets").values():  # type: ignore
+                ext = LocalTrainer(problem_name)
+                ext.train(ds, epochs=total_epochs_cent, optimizer_spec=_OS(name=opt_name, lr=lr), batch_size=256)
+                per.append(problem.evaluate(ext.model).get("l2_relative_error"))
+            baselines["extrapolation"] = {"l2_relative_error": float(np.mean(per)) if per else None, "per_client": per}
+            try:
+                baselines["weight_divergence_vs_centralized"] = weight_divergence(fed._global_model.state_dict(), cent.state_dict())  # type: ignore
+            except Exception:
+                pass
+            if status.metrics:
+                status.metrics[-1]["baselines"] = baselines
+            if fed.storage is not None:
+                import json as _json
+
+                (fed.storage.dir / "baselines.json").write_text(_json.dumps(baselines, indent=2), encoding="utf-8")
+                if heterogeneity_stats:
+                    (fed.storage.dir / "heterogeneity.json").write_text(_json.dumps(heterogeneity_stats, indent=2), encoding="utf-8")
+                try:
+                    fed.storage.finalize(fed._global_model.state_dict(), extra_metrics={"heterogeneity_stats": heterogeneity_stats, "baselines": baselines})  # type: ignore
+                except Exception:
+                    pass
+    except Exception as e:
+        _print(f"[runner] baseline warning: {e}")
+    _print(f"[runner] done phase={status.phase} rounds={len(status.metrics)} best L2={min((m.get('l2_relative_error', float('inf')) for m in status.metrics), default=None)} baselines central={baselines.get('centralized', {}).get('l2_relative_error', 'n/a')}")
+    return {"config": cfg, "run_start": run_cfg, "status": status.model_dump(), "storage_dir": str(fed.storage.dir) if fed.storage else None, "baselines": baselines, "heterogeneity_stats": heterogeneity_stats}
 
 
 def run_via_http(cfg: Dict[str, Any], server_url: str) -> Dict[str, Any]:
@@ -307,6 +356,43 @@ def main(argv: List[str] | None = None) -> int:
             last = metrics[-1].get("l2_relative_error", float("nan")) if metrics else float("nan")
             cfg = configs[i-1] if i-1 < len(configs) else {}
             _print(f"| {i} | {cfg.get('problem','')} | {cfg.get('aggregator','')} | {cfg.get('weighting', cfg.get('aggregation_weights',''))} | {best:.4g} | {last:.4g} |")
+        try:
+            import matplotlib.pyplot as plt  # type: ignore
+            from collections import defaultdict
+
+            by_prob: Dict[str, list] = defaultdict(list)
+            for i, r in enumerate(results, 1):
+                cfg = configs[i-1] if i-1 < len(configs) else {}
+                prob = cfg.get("problem", "unknown")
+                by_prob[prob].append((cfg, r))
+            plots_dir = Path(args.results_dir) / "plots"
+            plots_dir.mkdir(parents=True, exist_ok=True)
+            for prob, items in by_prob.items():
+                agg_series: Dict[str, list] = defaultdict(list)
+                for cfg, r in items:
+                    agg = cfg.get("aggregator", "fedavg")
+                    nf = float(cfg.get("noise_fraction", 0.0))
+                    metrics = r.get("status", {}).get("metrics", [])
+                    best = min((m.get("l2_relative_error", float("inf")) for m in metrics), default=float("nan"))
+                    agg_series[agg].append((nf, best))
+                plt.figure(figsize=(7, 4))
+                for agg, pts in sorted(agg_series.items()):
+                    pts_sorted = sorted(pts)
+                    xs = [p[0] for p in pts_sorted]
+                    ys = [p[1] for p in pts_sorted]
+                    plt.plot(xs, ys, marker="o", label=agg)
+                plt.xlabel("noise_fraction")
+                plt.ylabel("best L2 relative error")
+                plt.title(f"Robustness–Accuracy Trade-off: {prob}")
+                plt.legend()
+                plt.grid(True, alpha=0.3)
+                out = plots_dir / f"tradeoff_{prob}.png"
+                plt.tight_layout()
+                plt.savefig(out, dpi=150)
+                plt.close()
+                _print(f"[trade-off] plot -> {out}")
+        except Exception as e:
+            _print(f"[trade-off] plot warning: {e}")
     return 0
 
 
