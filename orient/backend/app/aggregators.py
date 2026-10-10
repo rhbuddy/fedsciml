@@ -29,7 +29,7 @@ StateDict = Dict[str, torch.Tensor]
 
 @dataclass
 class ServerOptimizerState:
-    """Persistent moment buffers for server-side adaptive optimizers and SCAFFOLD."""
+    """Persistent moment buffers for server-side adaptive optimizers, SCAFFOLD and FedDyn."""
 
     m: Dict[str, torch.Tensor] = field(default_factory=dict)
     v: Dict[str, torch.Tensor] = field(default_factory=dict)
@@ -37,11 +37,14 @@ class ServerOptimizerState:
     # SCAFFOLD control variates (Karimireddy et al., ICML 2020)
     scaffold_c: Dict[str, torch.Tensor] = field(default_factory=dict)
     scaffold_cis: List[Dict[str, torch.Tensor]] = field(default_factory=list)
+    # FedDyn dynamic regularizer state (Acar et al., AISTATS 2021)
+    feddyn_h: Dict[str, torch.Tensor] = field(default_factory=dict)
     # FAST vector cache for adaptive (optional, auto-managed)
     _m_vec: Optional[torch.Tensor] = field(default=None, repr=False)
     _v_vec: Optional[torch.Tensor] = field(default=None, repr=False)
     _c_vec: Optional[torch.Tensor] = field(default=None, repr=False)
     _cis_vec: Optional[List[torch.Tensor]] = field(default=None, repr=False)
+    _feddyn_h_vec: Optional[torch.Tensor] = field(default=None, repr=False)
 
 
 @dataclass
@@ -387,7 +390,61 @@ def _scaffold(
     return new_global, info
 
 
-STANDARD_AGGREGATORS = ["fedavg", "fedprox", "fedadam", "fedadagrad", "fedyogi", "scaffold"]
+def _feddyn(
+    states: Sequence[StateDict],
+    weights: Sequence[float],
+    global_state: StateDict,
+    server: ServerOptimizerState,
+    params: Dict[str, Any],
+) -> Tuple[StateDict, Dict[str, Any]]:
+    """FedDyn (Acar et al., AISTATS 2021) — dynamic regularization.
+
+    Maintains a server state ``h`` updated as
+        g = global - avg(client_models)   (pseudo-gradient)
+        h <- beta * h + alpha * g
+        new_global = avg - server_lr * h
+    ``h`` is kept as a single vector for speed but also mirrored as a dict
+    for inspectability. Converges faster than FedAvg under heterogeneity
+    (small n_pieces / large W1). Defaults ``alpha=0.01, beta=0.9,
+    server_lr=1.0`` follow the paper (``mu`` is aliased to ``alpha``).
+    """
+    keys = list(global_state.keys()) if global_state else list(states[0].keys())
+    # allow mu as alias for alpha
+    if "mu" in params and "alpha" not in params:
+        params = dict(params)
+        params["alpha"] = params["mu"]
+    alpha = float(params.get("alpha", 0.01))
+    beta = float(params.get("beta", 0.9))
+    server_lr = float(params.get("server_lr", 1.0))
+    if global_state:
+        global_vec = _flatten_state(global_state, keys)
+        tmpl = global_state
+    else:
+        tmpl = states[0]
+        global_vec = _flatten_state(tmpl, keys) * 0
+    avg_state = _weighted_average_vec(states, weights, keys, tmpl if global_state else states[0])
+    avg_vec = _flatten_state(avg_state, keys)
+    g_vec = global_vec - avg_vec
+    if server._feddyn_h_vec is None or server._feddyn_h_vec.numel() != g_vec.numel():
+        if server.feddyn_h and len(server.feddyn_h) == len(keys):
+            try:
+                server._feddyn_h_vec = _flatten_state(server.feddyn_h, keys)
+            except Exception:
+                server._feddyn_h_vec = torch.zeros_like(g_vec)
+        else:
+            server._feddyn_h_vec = torch.zeros_like(g_vec)
+    h_vec = server._feddyn_h_vec
+    server.t += 1
+    h_vec = beta * h_vec + alpha * g_vec
+    server._feddyn_h_vec = h_vec
+    server.feddyn_h = _unflatten_vec(h_vec, tmpl, keys)
+    new_vec = avg_vec - server_lr * h_vec
+    new_global = _unflatten_vec(new_vec, tmpl, keys)
+    info = {"server_round": server.t, "feddyn_h_norm": float(h_vec.norm().item()), "alpha": alpha, "beta": beta}
+    return new_global, info
+
+
+STANDARD_AGGREGATORS = ["fedavg", "fedprox", "fedadam", "fedadagrad", "fedyogi", "scaffold", "feddyn"]
 ROBUST_AGGREGATORS = ["median", "trimmed_mean", "krum"]
 ALL_AGGREGATORS = STANDARD_AGGREGATORS + ROBUST_AGGREGATORS
 AGGREGATOR_ALIASES = {"fedagrad": "fedadagrad"}
@@ -466,6 +523,12 @@ def aggregate(
         if server is None:
             raise ValueError("Aggregator 'scaffold' requires a ServerOptimizerState")
         state, info = _scaffold(client_states, norm_w, global_state, server, params)
+        return AggregationResult(state, info)
+
+    if name == "feddyn":
+        if server is None:
+            raise ValueError("Aggregator 'feddyn' requires a ServerOptimizerState")
+        state, info = _feddyn(client_states, norm_w, global_state, server, params)
         return AggregationResult(state, info)
 
     raise ValueError(f"Unknown aggregator '{name}'. Options: {ALL_AGGREGATORS}")

@@ -37,7 +37,7 @@ st.caption("Start a federated run, watch clients report in, and track the global
 server_url = st.sidebar.text_input("Server URL", "http://127.0.0.1:8000").rstrip("/")
 auto_refresh = st.sidebar.toggle("Auto-refresh (every 2 s)", value=False)
 st.sidebar.divider()
-st.sidebar.caption("**SRS v1.4** · 10 problems · 9 aggregators · W1 heterogeneity · noisy/adversarial · scaffold")
+st.sidebar.caption("**SRS v1.4** · 10 problems · 10 aggregators · W1 heterogeneity · noisy/adversarial · scaffold/feddyn")
 st.sidebar.caption("Results → `results/<problem>/<aggregator>/<run_id>/`  ·  `config.yaml` + `server_best.pth` + `l2_error.npz`")
 
 
@@ -69,7 +69,7 @@ with tab_run:
     with st.form("run_config"):
         c1, c2, c3 = st.columns(3)
         problem = c1.selectbox("Problem", problems, help="10 problems: Gramacy, Schaffer, Poisson, Helmholtz, Allen-Cahn, Inverse NS/DR, Antiderivative, Burgers, Diffusion-Reaction")
-        aggregator = c2.selectbox("Aggregator", aggregators, help="Standard: fedavg, fedprox, fedadam, fedadagrad, fedyogi, scaffold  •  Robust: median, trimmed_mean, krum")
+        aggregator = c2.selectbox("Aggregator", aggregators, help="Standard: fedavg, fedprox, fedadam, fedadagrad, fedyogi, scaffold, feddyn  •  Robust: median, trimmed_mean, krum")
         weighting = c3.selectbox("Weighting", weighting_modes, help="data_size = paper default (FedAvg ∝ Nk/N)")
 
         c4, c5, c6 = st.columns(3)

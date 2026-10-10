@@ -52,7 +52,7 @@ If a client disappears mid-run the round would stall, so the operator can press
 |---|---|
 | `app/api.py` | FastAPI routes (thin — no science logic) |
 | `app/orchestrator.py` | `Federation`: registry, round engine, aggregation trigger |
-| `app/aggregators.py` | 9 aggregation algorithms (`fedavg/fedprox/fedadam/fedadagrad/fedyogi/scaffold` + `median/trimmed_mean/krum`) on `state_dict` tensors |
+| `app/aggregators.py` | 10 aggregation algorithms (`fedavg/fedprox/fedadam/fedadagrad/fedyogi/scaffold/feddyn` + `median/trimmed_mean/krum`) on `state_dict` tensors |
 | `app/weighting.py` | `uniform` / `data_size` / `quality` client weights |
 | `app/models.py` | pure-PyTorch model factory (shared with the client) |
 | `app/problems.py` | problem registry: losses, residuals, analytic ground truth |

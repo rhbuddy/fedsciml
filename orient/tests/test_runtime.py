@@ -114,8 +114,21 @@ def test_aggregators() -> None:
         "scaffold converges onto the client mean",
     )
 
-    check(len(ALL_AGGREGATORS) == 9, "9 aggregators are exposed (SRS §4.4)")
+    # feddyn also converges (dynamic regularization)
+    server = ServerOptimizerState()
+    current = {"w": global_state["w"].clone()}
+    for _ in range(100):
+        current = aggregate(
+            "feddyn", states, weights, current, {"server_lr": 1.0, "alpha": 0.05}, server
+        ).state_dict
+    check(
+        torch.allclose(current["w"], torch.tensor([3.0, 3.0]), atol=0.5),
+        "feddyn converges onto the client mean",
+    )
+
+    check(len(ALL_AGGREGATORS) == 10, "10 aggregators are exposed (SRS §4.4 + FedDyn)")
     check("scaffold" in ALL_AGGREGATORS, "scaffold in ALL_AGGREGATORS")
+    check("feddyn" in ALL_AGGREGATORS, "feddyn in ALL_AGGREGATORS")
 
 
 def test_weighting() -> None:

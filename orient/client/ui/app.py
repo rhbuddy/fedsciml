@@ -54,7 +54,7 @@ def log(message: str) -> None:
 st.markdown('<div class="client-header">🧠 Orient · Client</div>', unsafe_allow_html=True)
 st.caption(
     "Train on your **private** dataset and share **weights only** — "
-    "raw data never leaves this machine. Supports all 10 benchmark problems & 9 aggregators (SRS v1.4)."
+    "raw data never leaves this machine. Supports all 10 benchmark problems & 10 aggregators (SRS v1.4)."
 )
 st.caption("Privacy: dataset bundle stays local → only `safetensors` weights uploaded. Robust to noisy/adversarial peers via server-side median/krum/trimmed_mean.")
 

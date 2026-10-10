@@ -23,6 +23,7 @@ VALID_AGGREGATORS = [
     "fedadagrad",
     "fedyogi",
     "scaffold",
+    "feddyn",
     "median",
     "trimmed_mean",
     "krum",
@@ -168,7 +169,7 @@ def config_to_run_start(cfg: Dict[str, Any]) -> Dict[str, Any]:
     lr = float(cfg.get("learning_rate", cfg.get("lr", 1e-3)))
     agg_params = dict(cfg.get("aggregator_params") or {})
     # promote top-level mu/server_lr etc into aggregator_params
-    for k in ("mu", "server_lr", "beta1", "beta2", "tau", "trim_ratio", "n_byzantine", "multi_k", "local_epochs"):
+    for k in ("mu", "alpha", "beta", "server_lr", "beta1", "beta2", "tau", "trim_ratio", "n_byzantine", "multi_k", "local_epochs"):
         if k in cfg:
             agg_params[k] = cfg[k]
     heterogeneity = cfg.get("heterogeneity")

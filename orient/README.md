@@ -37,7 +37,7 @@ orient/
 │   ├── app/
 │   │   ├── api.py               #   FastAPI routes
 │   │   ├── orchestrator.py      #   Federation state + round engine
-│   │   ├── aggregators.py       #   fedavg fedprox fedadam fedadagrad fedyogi
+│   │   ├── aggregators.py       #   fedavg fedprox fedadam fedadagrad fedyogi scaffold feddyn
 │   │   │                        #   median trimmed_mean krum
 │   │   ├── weighting.py         #   uniform | data_size | quality
 │   │   ├── models.py            #   pure-PyTorch model factory (MLP, DeepONet)
@@ -255,7 +255,7 @@ global model's relative L2 error per round. Artifacts land in
 
 All 10 are in `app/problems.py` (identical in client & server), with `sample_dataset()`, PINN residuals (autograd) + `evaluate()` L2. `poisson` hard constraint `u(0)=0,u(π)=π` via `x+tanh(x)tanh(π−x)·ŷ` (pure residual loss).
 
-## Aggregators (9 — SRS §4.4)
+## Aggregators (10 — SRS §4.4)
 
 | Group | Algorithms |
 |---|---|
@@ -353,11 +353,11 @@ bundle is rejected with a clear error before training starts.
 | Test | Covers |
 |---|---|
 | `tests/test_static_imports.py` | 83 imports resolve; shared modules byte-identical |
-| `tests/test_runtime.py` | 40+ checks — safetensors round-trip, all **9 aggregators** (incl. scaffold, median/Krum rejecting Byzantine, adaptive converging), 3 weighting modes, all **10 problems**, Poisson hard constraints exact |
+| `tests/test_runtime.py` | 40+ checks — safetensors round-trip, all **10 aggregators** (incl. scaffold, median/Krum rejecting Byzantine, adaptive converging), 3 weighting modes, all **10 problems**, Poisson hard constraints exact |
 | `tests/test_server_logic.py` | run-config validation, registration guards, seed reproducibility, round engine, weighting robustness, noise & clipping |
 | `tests/test_client.py` | FedProx proximal differentiable, dataset validation (NaN/Inf/2-D), all **50 bundles** load (10 problems ×5) |
 | `tests/test_e2e.py` | real uvicorn server + 5 real client processes → L2 improves |
-| `tests/run_all_aggregators.py` | E2E for **all 9 aggregators** (per-aggregator budgets; Krum 5 clients, scaffold, adaptive) — **all 9 pass** |
+| `tests/run_all_aggregators.py` | E2E for **all 10 aggregators** (per-aggregator budgets; Krum 5 clients, scaffold, adaptive) — **all 10 pass** |
 
 Observed convergence: `gramacy_lee`, FedAvg, 60 rounds × 10 epochs → L2
 **0.6225 → 0.2109**; `poisson` PINN → residual **23.7 → 2.2**.
