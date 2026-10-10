@@ -79,6 +79,13 @@ class RunState:
     compromised_log: List[Dict[str, Any]] = field(default_factory=list)
     # FR-CLIENT-7/8: NaN/Inf exclusion log
     excluded_log: List[Dict[str, Any]] = field(default_factory=list)
+    # Framework v2: sampling, compression, DP
+    client_fraction: float = 1.0
+    round_timeout: int = 0
+    compression: str = "none"
+    topk_ratio: float = 0.01
+    dp_noise_multiplier: float = 0.0
+    dp_delta: float = 1e-5
 
 
 class Federation:
@@ -166,6 +173,19 @@ class Federation:
                 and (problem is None or record.registration.problem == problem)
             )
 
+    def _sample_clients(self, candidates: List[str], fraction: float, round_no: int, seed: int) -> List[str]:
+        """Sample C*K clients for async (FedAvg C). Deterministic per round."""
+        if not candidates:
+            return []
+        if fraction >= 1.0 or fraction <= 0:
+            return sorted(candidates)
+        k = max(MIN_CLIENTS_PER_ROUND, int(math.ceil(len(candidates) * float(fraction))))
+        k = min(k, len(candidates))
+        # deterministic sampling: seed + round
+        rng = random.Random(int(seed) + int(round_no) * 10007)
+        sampled = rng.sample(sorted(candidates), k)
+        return sorted(sampled)
+
     def is_registered(self, client_id: str) -> bool:
         """True if this client has completed /clients/register at least once."""
         with self._lock:
@@ -215,6 +235,40 @@ class Federation:
             # heterogeneity validation (optional, just ensure dict if provided)
             if req.heterogeneity is not None and not isinstance(req.heterogeneity, dict):
                 raise ValueError("heterogeneity must be a mapping")
+            # Framework v2 validation: sampling, compression, DP
+            client_fraction = float(getattr(req, "client_fraction", 1.0) or 1.0)
+            if not (0.0 < client_fraction <= 1.0):
+                # allow 1.0 sync; small fraction e.g. 0.5 async
+                if client_fraction == 0:
+                    client_fraction = 1.0
+                else:
+                    raise ValueError("client_fraction must be in (0,1]")
+            round_timeout = int(getattr(req, "round_timeout", 0) or 0)
+            if round_timeout < 0:
+                raise ValueError("round_timeout must be >=0")
+            compression = str(getattr(req, "compression", "none") or "none").lower().strip()
+            if compression not in ("none", "int8", "topk", "int8_topk"):
+                raise ValueError(f"Unknown compression '{compression}'. Options: none, int8, topk, int8_topk")
+            topk_ratio = float(getattr(req, "topk_ratio", 0.01) or 0.01)
+            if not (0.0 < topk_ratio <= 1.0):
+                raise ValueError("topk_ratio must be in (0,1]")
+            dp_noise_multiplier = float(getattr(req, "dp_noise_multiplier", 0.0) or 0.0)
+            if dp_noise_multiplier < 0:
+                raise ValueError("dp_noise_multiplier must be >=0")
+            dp_delta = float(getattr(req, "dp_delta", 1e-5) or 1e-5)
+            if not (0 < dp_delta < 1):
+                raise ValueError("dp_delta must be in (0,1)")
+            if dp_noise_multiplier > 0 and gc != "norm":
+                raise ValueError("DP (dp_noise_multiplier>0) requires gradient_clip='norm'")
+
+            # seed handling (FR-CFG-6, FR-STORE-5) — compute early for deterministic sampling
+            run_seed = int(req.seed) if req.seed is not None else int(self.seed)
+            self.seed = run_seed
+            # Reproducibility (NFR-REP-1): seed before building the global model so
+            # its random initialization is identical for a given seed.
+            random.seed(run_seed)
+            torch.manual_seed(run_seed)
+            np.random.seed(run_seed % (2**32))
 
             if req.expected_clients:
                 requested_clients = sorted(set(req.expected_clients))
@@ -237,16 +291,12 @@ class Federation:
                 expected = requested_clients
             else:
                 # Do not carry idle clients from a different problem into the new run.
-                expected = self.live_client_ids(req.problem)
-
-            # seed handling (FR-CFG-6, FR-STORE-5)
-            run_seed = int(req.seed) if req.seed is not None else int(self.seed)
-            self.seed = run_seed
-            # Reproducibility (NFR-REP-1): seed before building the global model so
-            # its random initialization is identical for a given seed.
-            random.seed(run_seed)
-            torch.manual_seed(run_seed)
-            np.random.seed(run_seed % (2**32))
+                candidates = self.live_client_ids(req.problem)
+                # Framework v2: sample C fraction per round (FedAvg sampling)
+                if client_fraction < 1.0 and candidates:
+                    expected = self._sample_clients(candidates, client_fraction, 1, run_seed)
+                else:
+                    expected = candidates
 
             model = build_model(problem.model_spec())
             self._problem = problem
@@ -286,6 +336,12 @@ class Federation:
                 clip_value=float(req.clip_value),
                 optimizer_name=opt_name,
                 seed=run_seed,
+                client_fraction=client_fraction,
+                round_timeout=round_timeout,
+                compression=compression,
+                topk_ratio=topk_ratio,
+                dp_noise_multiplier=dp_noise_multiplier,
+                dp_delta=dp_delta,
             )
             self.storage = RunStorage(self.results_dir, req.problem, aggregator_name)
             self.storage.set_initial_state(self._initial_state)
@@ -387,6 +443,10 @@ class Federation:
                 clip_value=self.run.clip_value,
                 noise_mode=self.run.noise_mode,
                 heterogeneity=self.run.heterogeneity,
+                compression=self.run.compression,
+                topk_ratio=self.run.topk_ratio,
+                dp_noise_multiplier=self.run.dp_noise_multiplier,
+                dp_delta=self.run.dp_delta,
             )
 
     def get_global_bytes(self, round_no: int) -> bytes:
@@ -477,10 +537,17 @@ class Federation:
         """Advance with the updates received so far if the round has timed out."""
         if self.run.phase != "collecting" or len(self.run.updates) < MIN_CLIENTS_PER_ROUND:
             return
-        timeout = settings.round_timeout_seconds
+        # Framework v2: use per-run round_timeout (C sampling) falling back to global setting
+        timeout = int(self.run.round_timeout) if getattr(self.run, "round_timeout", 0) else int(settings.round_timeout_seconds or 0)
         if timeout <= 0 or self.run.round_started_at <= 0:
             return
         if time.time() - self.run.round_started_at > timeout:
+            # log timeout event for metrics
+            if self.storage:
+                try:
+                    self.storage.log_round({"event": "round_timeout", "round": self.run.round, "n_updates": len(self.run.updates), "timeout": timeout})
+                except Exception:
+                    pass
             self._aggregate()
 
     def _maybe_complete_round(self) -> None:
@@ -506,10 +573,48 @@ class Federation:
                 )
             return self.status()
 
+    def _dp_epsilon(self, steps: int, noise_multiplier: float, delta: float, sample_rate: float = 1.0) -> float:
+        """RDP epsilon for Gaussian mechanism (approx). Tries opacus if available."""
+        if noise_multiplier <= 0 or steps <= 0:
+            return 0.0
+        try:
+            from opacus.accountants.rdp import RDPAccountant  # type: ignore
+            accountant = RDPAccountant()
+            for _ in range(int(steps)):
+                accountant.step(noise_multiplier=noise_multiplier, sample_rate=float(sample_rate))
+            eps = accountant.get_epsilon(delta=float(delta))
+            return float(eps) if eps is not None else 0.0
+        except Exception:
+            pass
+        sigma = float(noise_multiplier)
+        best = float("inf")
+        for alpha in [1.5, 2, 4, 8, 16, 32, 64, 128]:
+            if alpha <= 1:
+                continue
+            rdp = alpha / (2 * sigma * sigma)
+            eps = steps * rdp + __import__("math").log(1 / delta) / (alpha - 1)
+            if eps < best:
+                best = eps
+        if sample_rate < 1.0:
+            best *= float(sample_rate)
+        return float(best) if __import__("math").isfinite(best) else 0.0
+
     def _aggregate(self) -> None:
         order = [c for c in self.run.expected if c in self.run.updates]
         if len(order) < MIN_CLIENTS_PER_ROUND:
             raise ValueError(f"Need at least {MIN_CLIENTS_PER_ROUND} client updates to aggregate")
+
+        # Framework v2: track communication cost (bytes per round) before decompression
+        total_bytes = sum(len(self.run.updates[c]) for c in order)
+        try:
+            probe = bytes_to_state_dict(self.run.updates[order[0]])
+            # accurate raw size includes safetensors header
+            raw_bytes_per_client = len(state_dict_to_bytes(probe, compression="none"))
+            raw_bytes_est = raw_bytes_per_client * len(order)
+            comp_ratio = (1 - total_bytes / max(1, raw_bytes_est)) * 100 if raw_bytes_est else 0.0
+        except Exception:
+            raw_bytes_est = None
+            comp_ratio = 0.0
 
         states = [bytes_to_state_dict(self.run.updates[c]) for c in order]
         n_samples = [self.run.update_meta[c]["n_samples"] for c in order]
@@ -552,6 +657,12 @@ class Federation:
                 wd_init = {}
         # For compatibility, store mean divergence
         wd_summary = {"prev_mean": wd_prev.get("_mean"), "init_mean": wd_init.get("_mean")}
+        # Framework v2: DP epsilon (RDP) and communication cost
+        dp_eps = 0.0
+        if self.run.dp_noise_multiplier > 0:
+            # steps ~= rounds * local_epochs (approx gradient steps per client)
+            steps = int(self.run.round * self.run.local_epochs)
+            dp_eps = self._dp_epsilon(steps, self.run.dp_noise_multiplier, self.run.dp_delta, sample_rate=self.run.client_fraction)
         record: Dict[str, Any] = {
             "round": self.run.round,
             "aggregator": self.run.aggregator,
@@ -566,6 +677,15 @@ class Federation:
             "weight_divergence_init": wd_init,
             "compromised_clients": compromised,
             "heterogeneity": self.run.heterogeneity,
+            # Framework v2 extra metrics
+            "total_bytes": int(total_bytes),
+            "raw_bytes_est": int(raw_bytes_est) if raw_bytes_est else None,
+            "compression_ratio_pct": float(comp_ratio),
+            "compression": self.run.compression,
+            "dp_epsilon": float(dp_eps),
+            "dp_noise_multiplier": float(self.run.dp_noise_multiplier),
+            "client_fraction": float(self.run.client_fraction),
+            "round_timeout": int(self.run.round_timeout),
         }
         self.run.metrics.append(record)
         if self.storage:
@@ -583,7 +703,7 @@ class Federation:
             if self.storage:
                 try:
                     self.storage.save_model(self._global_model.state_dict())
-                    self.storage.finalize(self._global_model.state_dict(), extra_metrics={"heterogeneity": self.run.heterogeneity, "noise_mode": self.run.noise_mode, "compromised_log": self.run.compromised_log, "excluded_log": self.run.excluded_log})
+                    self.storage.finalize(self._global_model.state_dict(), extra_metrics={"heterogeneity": self.run.heterogeneity, "noise_mode": self.run.noise_mode, "compromised_log": self.run.compromised_log, "excluded_log": self.run.excluded_log, "client_fraction": self.run.client_fraction, "compression": self.run.compression, "topk_ratio": self.run.topk_ratio, "dp_noise_multiplier": self.run.dp_noise_multiplier, "dp_delta": self.run.dp_delta})
                 except Exception:
                     pass
         else:
@@ -592,8 +712,12 @@ class Federation:
             self.run.update_meta = {}
             # Only clients on this problem that are actually still polling are
             # expected next round; otherwise a dead or mismatched participant would
-            # stall the run.
-            self.run.expected = self.live_client_ids(self.run.problem)
+            # stall the run. Framework v2: respect C sampling.
+            candidates = self.live_client_ids(self.run.problem)
+            if self.run.client_fraction < 1.0 and candidates:
+                self.run.expected = self._sample_clients(candidates, self.run.client_fraction, self.run.round, self.run.seed)
+            else:
+                self.run.expected = candidates
             self.run.round_started_at = time.time()
 
     # ------------------------------------------------------------------- status

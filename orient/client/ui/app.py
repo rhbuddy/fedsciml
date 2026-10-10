@@ -245,6 +245,7 @@ with tab_train:
                             f"**Round {resp.round}/{resp.total_rounds}** — "
                             f"{resp.optimizer.name} lr={resp.optimizer.lr:.1e} · "
                             f"prox_mu={resp.prox_mu:.3g} · clip={resp.gradient_clip} · "
+                            f"DP σ={resp.dp_noise_multiplier:.2g} · comp={resp.compression} · "
                             f"training {resp.local_epochs} epoch(s) on {bundle.size:,} samples"
                         )
                         stats = trainer.train(
@@ -257,10 +258,16 @@ with tab_train:
                             gradient_clip=resp.gradient_clip,
                             max_norm=resp.max_norm,
                             clip_value=resp.clip_value,
+                            dp_noise_multiplier=resp.dp_noise_multiplier,
+                            dp_delta=resp.dp_delta,
                         )
-                        payload = state_dict_to_bytes(trainer.state_dict())
+                        payload = state_dict_to_bytes(
+                            trainer.state_dict(),
+                            compression=resp.compression,
+                            topk_ratio=resp.topk_ratio,
+                        )
                         server.upload_weights(
-                            client_id, resp.round, bundle.size, stats["loss"], payload
+                            client_id, resp.round, bundle.size, stats.get("val_loss", stats["loss"]), payload
                         )
 
                         st.session_state.rounds_done += 1

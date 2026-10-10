@@ -102,7 +102,7 @@ def run_in_memory(cfg: Dict[str, Any], results_dir: str = "results") -> Dict[str
             fed._client_datasets = {}  # type: ignore[attr-defined]
         fed._client_datasets[cid] = ds  # type: ignore[attr-defined]
 
-    # Start run
+    # Start run - include Framework v2 fields (sampling, compression, DP)
     req = RunStartRequest(
         problem=problem_name,
         aggregator=aggregator,
@@ -119,14 +119,20 @@ def run_in_memory(cfg: Dict[str, Any], results_dir: str = "results") -> Dict[str
         clip_value=float(run_cfg.get("clip_value", 0.5)),
         optimizer=str(run_cfg.get("optimizer", "adam")),
         seed=seed,
+        client_fraction=float(run_cfg.get("client_fraction", 1.0)),
+        round_timeout=int(run_cfg.get("round_timeout", 0)),
+        compression=str(run_cfg.get("compression", "none")),
+        topk_ratio=float(run_cfg.get("topk_ratio", 0.01)),
+        dp_noise_multiplier=float(run_cfg.get("dp_noise_multiplier", 0.0)),
+        dp_delta=float(run_cfg.get("dp_delta", 1e-5)),
     )
     fed.start_run(req)
 
-    # Prepare local trainers per client
+    # Prepare local trainers per client (all registered, for sampling)
     trainers: Dict[str, Any] = {}
     if LocalTrainer is None:
         raise RuntimeError("LocalTrainer not available")
-    for cid in fed.run.expected:
+    for cid in fed.live_client_ids(problem_name):
         trainers[cid] = LocalTrainer(problem_name)
 
     # Initial global bytes for trainers
@@ -152,9 +158,13 @@ def run_in_memory(cfg: Dict[str, Any], results_dir: str = "results") -> Dict[str
                 gradient_clip=resp.gradient_clip,
                 max_norm=resp.max_norm,
                 clip_value=resp.clip_value,
+                dp_noise_multiplier=resp.dp_noise_multiplier,
+                dp_delta=resp.dp_delta,
             )
             local_loss = float(stats.get("val_loss", stats["loss"]))
-            fed.submit_update(cid, resp.round, len(next(iter(ds.values()))), local_loss, state_dict_to_bytes(trainer.state_dict()))
+            # compression before upload
+            payload = state_dict_to_bytes(trainer.state_dict(), compression=resp.compression, topk_ratio=resp.topk_ratio)
+            fed.submit_update(cid, resp.round, len(next(iter(ds.values()))), local_loss, payload)
         # after all submitted, federation auto-aggregates and advances; if not, force
         if fed.run.phase == "collecting" and fed.run.round == rnd and len(fed.run.updates) >= 2:
             fed.force_aggregate()
@@ -391,6 +401,43 @@ def main(argv: List[str] | None = None) -> int:
                 plt.savefig(out, dpi=150)
                 plt.close()
                 _print(f"[trade-off] plot -> {out}")
+            # Framework v2: comm vs L2 plot (if compression or bytes varied)
+            try:
+                for prob, items in by_prob.items():
+                    comp_series: dict = {}
+                    for cfg, r in items:
+                        metrics = r.get("status", {}).get("metrics", [])
+                        if not metrics:
+                            continue
+                        # average total_bytes per round
+                        bytes_list = [m.get("total_bytes") for m in metrics if m.get("total_bytes") is not None]
+                        avg_bytes = sum(bytes_list)/len(bytes_list) if bytes_list else 0
+                        avg_bytes_kb = avg_bytes/1024 if avg_bytes else 0
+                        best = min((m.get("l2_relative_error", float("inf")) for m in metrics), default=float("nan"))
+                        comp = cfg.get("compression", "none")
+                        # key by compression
+                        comp_series.setdefault(comp, []).append((avg_bytes_kb, best))
+                    if len(comp_series) > 1 or any(k != "none" for k in comp_series):
+                        import matplotlib.pyplot as plt
+                        plt.figure(figsize=(7,4))
+                        for comp, pts in sorted(comp_series.items()):
+                            xs = [p[0] for p in pts]
+                            ys = [p[1] for p in pts]
+                            plt.scatter(xs, ys, label=f"{comp}", s=60)
+                            if len(xs)>1:
+                                plt.plot(xs, ys, alpha=0.3)
+                        plt.xlabel("Avg bytes per round (KB)")
+                        plt.ylabel("best L2 relative error")
+                        plt.title(f"Comm vs L2: {prob} (quantize+topk 1% → 10x saving)")
+                        plt.legend()
+                        plt.grid(True, alpha=0.3)
+                        out2 = plots_dir / f"comm_vs_l2_{prob}.png"
+                        plt.tight_layout()
+                        plt.savefig(out2, dpi=150)
+                        plt.close()
+                        _print(f"[comm-vs-l2] plot -> {out2}")
+            except Exception as e:
+                _print(f"[comm plot] warning: {e}")
         except Exception as e:
             _print(f"[trade-off] plot warning: {e}")
     return 0

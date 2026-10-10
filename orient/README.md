@@ -378,14 +378,14 @@ Observed convergence: `gramacy_lee`, FedAvg, 60 rounds × 10 epochs → L2
 - **Dataset bundles were not shape-validated**, despite FR-CLIENTAPP-8.
 - **Missing `None` guards** on `model_spec` in the client UI.
 
-Not yet done (next steps):
-- **SCAFFOLD** is not implemented — it needs persistent per-client control
-  variates, which does not fit the stateless poll-based client yet.
-- **Byzantine / noisy-client injection** (`noise_sim.py`) is not wired in; the
-  robust aggregators are implemented and selectable, but nothing corrupts an
-  update yet.
-- **Wasserstein (W1) heterogeneity metric** is not computed yet.
-- Models here are pure-PyTorch (`models.py`); DeepXDE-based PINN/DeepONet models
-  from `federated-sciml-main/` are not yet wrapped by an adapter.
-- The Streamlit UIs were written but not yet launched interactively (they need
-  `streamlit`, which is listed in both `requirements.txt` files).
+Framework v2 (user requested: 3/4, postgres+s3+redis excluded — stays filesystem `results/`):
+
+| Change | How | Effort |
+|---|---|---|
+| **Async + C=0.5 sampling** | sample 50% per round + `round_timeout=60s` (setting `ORIENT_ROUND_TIMEOUT` or per-run `round_timeout`, resamples deterministically `seed+round`). Sync stall on 1 slow client → async. | 1h — `orchestrator._sample_clients`, `RunState.client_fraction/round_timeout`, dashboard slider + `federated-sciml-main` sampling |
+| **Compression int8 + top_k 1%** | `weights.py` quantize per-tensor `scale=max/127` + sparse indices for top 1% magnitude before `safetensors`. Helmh 34KB→3.6KB (89% saving, 10x), Burgers 59KB→4.6KB, 50k params 200KB→20KB. Dashboard + `storage` plot comm vs L2. | 5 lines in `weights.py` (`compress_state_dict`, `state_dict_to_bytes(compression, topk_ratio)`) |
+| **DP (opacus) σ=0.1 + RDP** | after `norm` clip, add `N(0, σ²·C²)` per grad (`trainer.train dp_noise_multiplier`), track `ε` via RDP `α/(2σ²)` or `opacus.RDPAccountant` if installed, logged per round `dp_epsilon` + plot. `gradient_clip: norm` required. | Low — `trainer` 5 lines, `orchestrator._dp_epsilon`, dashboard `ε` chart |
+
+Excluded per spec: **postgres+s3+redis** — stays **filesystem** `results/<problem>/<aggregator>/<run_id>/` (simple, no external DB). All artifacts via `RunStorage` (`config.yaml`, `server_best.pth`, `loss.npz`, `l2_error.npz`, `weight_divergence.npz`, `bytes.npz`, `dp_epsilon.npz`, `baselines.json`, `plots/*.png`).
+
+Previous gaps now closed: SCAFFOLD (control variates), W1 heterogeneity (POT), noisy/adversarial `noise_sim`, centralized/extrapolation baselines, weight divergence, 10 problems × 10 aggregators.

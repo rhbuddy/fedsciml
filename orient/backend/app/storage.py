@@ -43,6 +43,8 @@ class RunStorage:
         self._l2_history: List[float] = []
         self._loss_history: List[float] = []
         self._wd_history: List[Dict[str, float]] = []
+        self._bytes_history: List[float] = []
+        self._dp_history: List[float] = []
         self._initial_state: Optional[Dict[str, torch.Tensor]] = None
 
     @property
@@ -83,6 +85,10 @@ class RunStorage:
                 self._loss_history.append(float(record["mean_local_loss"]))
             if "weight_divergence" in record and isinstance(record["weight_divergence"], dict):
                 self._wd_history.append(dict(record["weight_divergence"]))
+            if "total_bytes" in record and record["total_bytes"] is not None:
+                self._bytes_history.append(float(record["total_bytes"]))
+            if "dp_epsilon" in record and record["dp_epsilon"] is not None:
+                self._dp_history.append(float(record["dp_epsilon"]))
         except Exception:
             pass
 
@@ -149,6 +155,13 @@ class RunStorage:
                 np.savez_compressed(self.dir / "weight_divergence.npz", mean=np.array([], dtype=np.float64))
         except Exception:
             pass
+        try:
+            if self._bytes_history:
+                np.savez_compressed(self.dir / "bytes.npz", bytes=np.array(self._bytes_history, dtype=np.float64))
+            if self._dp_history:
+                np.savez_compressed(self.dir / "dp_epsilon.npz", epsilon=np.array(self._dp_history, dtype=np.float64))
+        except Exception:
+            pass
         # metrics.json (summary)
         try:
             summary: Dict[str, Any] = {
@@ -200,6 +213,26 @@ class RunStorage:
                 plt.grid(alpha=0.3)
                 plt.tight_layout()
                 plt.savefig(plots / "weight_divergence.png", dpi=120)
+                plt.close()
+            if self._bytes_history:
+                plt.figure(figsize=(5, 3))
+                plt.plot([b/1024 for b in self._bytes_history], label="KB per round", color="tab:orange")
+                plt.xlabel("round")
+                plt.ylabel("KB")
+                plt.title("Communication cost (int8/topk)")
+                plt.grid(alpha=0.3)
+                plt.tight_layout()
+                plt.savefig(plots / "comm.png", dpi=120)
+                plt.close()
+            if self._dp_history and any(v>0 for v in self._dp_history):
+                plt.figure(figsize=(5, 3))
+                plt.plot(self._dp_history, label="ε (RDP)", color="tab:purple")
+                plt.xlabel("round")
+                plt.ylabel("ε")
+                plt.title("DP privacy budget")
+                plt.grid(alpha=0.3)
+                plt.tight_layout()
+                plt.savefig(plots / "dp_epsilon.png", dpi=120)
                 plt.close()
         except Exception:
             pass

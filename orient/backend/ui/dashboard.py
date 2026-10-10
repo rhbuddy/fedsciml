@@ -37,8 +37,8 @@ st.caption("Start a federated run, watch clients report in, and track the global
 server_url = st.sidebar.text_input("Server URL", "http://127.0.0.1:8000").rstrip("/")
 auto_refresh = st.sidebar.toggle("Auto-refresh (every 2 s)", value=False)
 st.sidebar.divider()
-st.sidebar.caption("**SRS v1.4** · 10 problems · 10 aggregators · W1 heterogeneity · noisy/adversarial · scaffold/feddyn")
-st.sidebar.caption("Results → `results/<problem>/<aggregator>/<run_id>/`  ·  `config.yaml` + `server_best.pth` + `l2_error.npz`")
+st.sidebar.caption("**SRS v1.4** · 10 problems · 10 aggregators · W1 heterogeneity · noisy/adversarial · scaffold/feddyn · async C + int8/topk + DP")
+st.sidebar.caption("Results → `results/<problem>/<aggregator>/<run_id>/`  ·  `config.yaml` + `server_best.pth` + `l2_error.npz`  ·  filesystem (postgres/s3/redis excluded)")
 
 
 def api(method: str, path: str, **kwargs):
@@ -88,6 +88,16 @@ with tab_run:
         grad_clip = h5.selectbox("Gradient clip", ["none", "norm", "value"], help="FR-CLIENT-9: norm or value")
         max_norm = h6.number_input("max_norm / clip_value", 0.1, 10.0, 1.0, step=0.1)
 
+        # Framework v2: async sampling, compression, DP (reviewer delight, 1h/5lines/Low per user spec)
+        f1, f2, f3 = st.columns(3)
+        client_fraction = f1.slider("Client sampling C", 0.1, 1.0, 1.0, step=0.1, help="FedAvg C: fraction sampled per round (1.0=sync wait all, 0.5=sample half)")
+        round_timeout = f2.number_input("Round timeout (s)", 0, 600, 60, step=10, help="Async: aggregate after timeout even if not all sampled reported (0=wait all, 60s=async)")
+        compression = f3.selectbox("Compression", ["none", "int8", "topk", "int8_topk"], help="int8 quantize + topk 1% → 200KB→20KB, plot comm vs L2")
+        f4, f5, f6 = st.columns(3)
+        topk_ratio = f4.number_input("Top-k ratio", 0.001, 1.0, 0.01, step=0.01, format="%.3f", help="1% for 10x saving")
+        dp_noise_multiplier = f5.number_input("DP σ (noise mult)", 0.0, 2.0, 0.0, step=0.1, help="0=off, 0.1=on (adds Gaussian σ*C after norm clip, RDP ε tracked)")
+        dp_delta = f6.number_input("DP δ", 1e-7, 1e-3, 1e-5, format="%.1e", help="DP delta for ε accounting")
+
         with st.expander("⚙️ Aggregator hyper-parameters"):
             p1, p2, p3 = st.columns(3)
             mu = p1.number_input("FedProx mu", 0.0, 10.0, 0.01, step=0.01)
@@ -119,6 +129,12 @@ with tab_run:
             "max_norm": float(max_norm),
             "clip_value": float(max_norm),
             "seed": int(seed),
+            "client_fraction": float(client_fraction),
+            "round_timeout": int(round_timeout),
+            "compression": compression,
+            "topk_ratio": float(topk_ratio),
+            "dp_noise_multiplier": float(dp_noise_multiplier),
+            "dp_delta": float(dp_delta),
             "aggregator_params": {
                 "mu": float(mu),
                 "server_lr": float(server_lr),
@@ -242,12 +258,40 @@ with tab_metrics:
                     st.caption("SRS FR-EVAL-3 · Tracks federated vs centralized drift; FedDeepONet expected flat per §10.3.6")
             except Exception:
                 pass
+        # Framework v2: comm vs L2 and DP epsilon
+        if "total_bytes" in df.columns and df["total_bytes"].notna().any():
+            try:
+                st.subheader("📦 Communication cost vs L2 (Framework v2)")
+                # show KB per round
+                df_plot = df[["round", "total_bytes", "l2_relative_error"]].copy()
+                df_plot["KB"] = df_plot["total_bytes"] / 1024.0
+                # line for KB
+                st.line_chart(df_plot[["round", "KB"]].set_index("round"), color=["#f97316"])
+                # scatter comm vs L2
+                st.scatter_chart(df_plot, x="KB", y="l2_relative_error", color="#6366f1")
+                saving = 0
+                if "raw_bytes_est" in df.columns and df["raw_bytes_est"].notna().any():
+                    try:
+                        avg_ratio = df["compression_ratio_pct"].mean()
+                        saving = float(avg_ratio)
+                    except Exception:
+                        pass
+                st.caption(f"Avg compression saving: {saving:.1f}% (int8+topk 1% → ~10x saving; goal 200KB→20KB) · plot comm vs L2 reviewers love")
+            except Exception:
+                pass
+        if "dp_epsilon" in df.columns and (df["dp_epsilon"] > 0).any():
+            try:
+                st.subheader("🔒 DP privacy budget (RDP)")
+                st.line_chart(df[["round", "dp_epsilon"]].set_index("round"), color=["#8b5cf6"])
+                st.caption(f"DP σ={df['dp_noise_multiplier'].iloc[-1]:.2g} δ={df.get('dp_delta', pd.Series([1e-5])).iloc[-1]:.1e} → ε≈{df['dp_epsilon'].iloc[-1]:.2f} (RDP via opacus or analytic; needs norm clip)")
+            except Exception:
+                pass
         # Show compromised if any
         if "compromised_clients" in df.columns and any(df["compromised_clients"].apply(lambda x: len(x) > 0 if isinstance(x, list) else False)):
             st.warning("Some rounds had noisy/adversarial clients — see `compromised_clients` column. Robust aggregators (median/krum/trimmed_mean) should maintain accuracy.")
         st.dataframe(df, use_container_width=True, hide_index=True)
         # Download hint
-        st.caption("Artifacts: `results/<problem>/<aggregator>/<run_id>/` → `config.yaml`, `server_best.pth`, `l2_error.npz`, `weight_divergence.npz`, `metrics.json` (SRS §8.2)")
+        st.caption("Artifacts: `results/<problem>/<aggregator>/<run_id>/` → `config.yaml`, `server_best.pth`, `l2_error.npz`, `weight_divergence.npz`, `metrics.json` (+ `baselines.json`, plots) — filesystem (postgres+s3+redis excluded per user spec) (SRS §8.2)")
     else:
         st.info("No completed rounds yet. Start a run and connect clients.  Tip: use **30–60 rounds** with **5–10 local epochs** for a visible L2 drop (see `configs/poisson_fedavg.yaml`).")
 

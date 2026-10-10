@@ -31,6 +31,7 @@ VALID_AGGREGATORS = [
 VALID_WEIGHTINGS = ["uniform", "data_size", "quality"]
 VALID_NOISE = ["none", "noisy", "adversarial"]
 VALID_CLIP = ["none", "value", "norm"]
+VALID_COMPRESSION = ["none", "int8", "topk", "int8_topk"]
 VALID_PROBLEMS_PREFIX = None  # validated against registry lazily
 
 
@@ -117,6 +118,40 @@ def validate_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     # aggregator params
     if "aggregator_params" in cfg and not isinstance(cfg["aggregator_params"], dict):
         raise ValueError("aggregator_params must be a mapping")
+    # Framework v2: sampling, compression, DP
+    cf = cfg.get("client_fraction", cfg.get("C", 1.0))
+    if cf is not None:
+        cf = float(cf)
+        if not (0 < cf <= 1.0):
+            raise ValueError("client_fraction must be in (0,1]")
+        cfg["client_fraction"] = cf
+    if "round_timeout" in cfg and cfg["round_timeout"] is not None:
+        rt = int(cfg["round_timeout"])
+        if rt < 0:
+            raise ValueError("round_timeout must be >=0")
+        cfg["round_timeout"] = rt
+    comp = str(cfg.get("compression", "none")).lower().strip()
+    if comp not in VALID_COMPRESSION:
+        raise ValueError(f"Unknown compression '{comp}'. Options: {VALID_COMPRESSION}")
+    cfg["compression"] = comp
+    if "topk_ratio" in cfg:
+        tr = float(cfg["topk_ratio"])
+        if not (0 < tr <= 1.0):
+            raise ValueError("topk_ratio must be in (0,1]")
+        cfg["topk_ratio"] = tr
+    if "dp_noise_multiplier" in cfg:
+        dpm = float(cfg["dp_noise_multiplier"])
+        if dpm < 0:
+            raise ValueError("dp_noise_multiplier must be >=0")
+        cfg["dp_noise_multiplier"] = dpm
+        # DP requires norm clipping
+        if dpm > 0 and clip != "norm":
+            raise ValueError("DP (dp_noise_multiplier>0) requires gradient_clip='norm'")
+    if "dp_delta" in cfg:
+        dd = float(cfg["dp_delta"])
+        if not (0 < dd < 1):
+            raise ValueError("dp_delta must be in (0,1)")
+        cfg["dp_delta"] = dd
     return cfg
 
 
@@ -180,6 +215,12 @@ def config_to_run_start(cfg: Dict[str, Any]) -> Dict[str, Any]:
     max_norm = float(cfg.get("max_norm", 1.0))
     clip_value = float(cfg.get("clip_value", 0.5))
     optimizer = str(cfg.get("optimizer", "adam"))
+    client_fraction = float(cfg.get("client_fraction", cfg.get("C", 1.0)) or 1.0)
+    round_timeout = int(cfg.get("round_timeout", 0) or 0)
+    compression = str(cfg.get("compression", "none")).lower().strip()
+    topk_ratio = float(cfg.get("topk_ratio", 0.01) or 0.01)
+    dp_noise_multiplier = float(cfg.get("dp_noise_multiplier", 0.0) or 0.0)
+    dp_delta = float(cfg.get("dp_delta", 1e-5) or 1e-5)
     return {
         "problem": problem,
         "aggregator": aggregator,
@@ -198,4 +239,10 @@ def config_to_run_start(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "optimizer": optimizer,
         "seed": cfg.get("seed"),
         "n_clients": cfg.get("n_clients"),
+        "client_fraction": client_fraction,
+        "round_timeout": round_timeout,
+        "compression": compression,
+        "topk_ratio": topk_ratio,
+        "dp_noise_multiplier": dp_noise_multiplier,
+        "dp_delta": dp_delta,
     }

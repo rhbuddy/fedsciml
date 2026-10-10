@@ -22,9 +22,10 @@ Interactive API docs: <http://127.0.0.1:8000/docs>
 |---|---|---|
 | `ORIENT_HOST` | `0.0.0.0` | bind address |
 | `ORIENT_PORT` | `8000` | port |
-| `ORIENT_RESULTS_DIR` | `results` | where run artifacts are written |
+| `ORIENT_RESULTS_DIR` | `results` | where run artifacts are written (filesystem — postgres+s3+redis excluded per spec) |
 | `ORIENT_SEED` | `0` | recorded in each run's `config.json` |
-| `ORIENT_ROUND_TIMEOUT` | `0` (off) | seconds before a round aggregates whatever arrived |
+| `ORIENT_ROUND_TIMEOUT` | `0` (off) | seconds before a round aggregates whatever arrived (also per-run `round_timeout`, recommended `60` for async) |
+| `ORIENT_CLIENT_TTL` | `300` | drop client if no poll for N seconds (0=never) |
 
 ## Round engine
 
@@ -57,8 +58,8 @@ If a client disappears mid-run the round would stall, so the operator can press
 | `app/models.py` | pure-PyTorch model factory (shared with the client) |
 | `app/problems.py` | problem registry: losses, residuals, analytic ground truth |
 | `app/protocol.py` | Pydantic wire schemas (shared with the client) |
-| `app/weights.py` | safetensors serialization — no pickle on the wire |
-| `app/storage.py` | `results/<problem>/<aggregator>/<run_id>/` artifacts |
+| `app/weights.py` | safetensors serialization — no pickle on the wire + `int8/topk/int8_topk` compression (quantize `max/127` + sparse 1%, 200KB→20KB) |
+| `app/storage.py` | `results/<problem>/<aggregator>/<run_id>/` artifacts (filesystem, no postgres) |
 | `app/local_clients.py` | spawns/stops local demo client processes (dev convenience) |
 | `app/config.py` | env-overridable settings |
 | `ui/dashboard.py` | Streamlit control panel (thin layer over the API) |
@@ -80,5 +81,9 @@ results/<problem>/<aggregator>/<run_id>/
 ```
 
 **Runner:** `python -m app.runner --config configs/poisson_fedavg.yaml` (single) or `--validation-gate poisson` (gate) or sweep YAML → `sweep_summary_*.json` + comparison table.
+  Framework v2 configs: `poisson_async_sampling.yaml` (C=0.5+timeout60), `helmholtz_compression.yaml` (int8_topk 1%), `poisson_dp.yaml` (σ=0.1 RDP), `framework_v2_all.yaml` (all 3).
 
 **Metrics:** `W1` heterogeneity via `app/metrics.py` (`ot.emd2`/`scipy`), per-layer weight divergence, `compromised_clients` + `heterogeneity` logged per round.
+  Framework v2 extra per-round: `total_bytes`/`raw_bytes_est`/`compression_ratio_pct` (comm vs L2), `dp_epsilon`/`dp_noise_multiplier` (RDP, needs `norm` clip), `client_fraction`/`round_timeout` (async C).
+
+**Framework v2 (3/4, postgres excluded):** async `client_fraction` + `round_timeout=60` (1h), int8+topk compression 10x (5 lines in `weights.py`), DP Gaussian `σ·C` + RDP ε (low). Stays filesystem.

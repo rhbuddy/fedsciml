@@ -1,0 +1,24 @@
+# DP via Gaussian noise after norm clipping (Framework v2, 5 lines, opacus RDP)
+# gradient_clip: norm is done — add dp_noise_multiplier=0.1 + RDP ε accounting.
+# Needs norm clip; σ=0.1·C, ε tracked per round via RDP (opacus if installed else analytic).
+problem: poisson
+n_clients: 4
+aggregator: fedavg
+aggregation_weights: data_size
+local_epochs: 5
+global_rounds: 30
+heterogeneity:
+  mode: 1d_partition
+  n_pieces: 10
+learning_rate: 0.001
+optimizer: adam
+seed: 42
+noise_mode: none
+gradient_clip: norm
+max_norm: 1.0
+dp_noise_multiplier: 0.1
+dp_delta: 1e-5
+client_fraction: 1.0
+round_timeout: 0
+compression: none
+output_dir: results/poisson/dp/

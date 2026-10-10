@@ -168,6 +168,8 @@ class LocalTrainer:
         gradient_clip: str = "none",
         max_norm: float = 1.0,
         clip_value: float = 0.5,
+        dp_noise_multiplier: float = 0.0,
+        dp_delta: float = 1e-5,
     ) -> Dict[str, Any]:
         """Run ``epochs`` local epochs and return ``{\"loss\": ..., \"val_loss\": ..., \"steps\": ...}``.
 
@@ -225,6 +227,18 @@ class LocalTrainer:
                     torch.nn.utils.clip_grad_value_(self.model.parameters(), float(clip_value))
                 elif clip_mode != "none":
                     raise ValueError(f"Unknown gradient_clip mode '{clip_mode}'. Options: none, value, norm")
+
+                # Framework v2 DP: add Gaussian noise after clipping (needs norm clipping)
+                # dp_noise_multiplier sigma * C, where C = max_norm; pairs with gradient_clip norm
+                if float(dp_noise_multiplier) > 0:
+                    if clip_mode != "norm":
+                        raise ValueError("DP noise requires gradient_clip='norm' (per SRS §12.1)")
+                    sigma = float(dp_noise_multiplier) * float(max_norm)
+                    with torch.no_grad():
+                        for p in self.model.parameters():
+                            if p.grad is not None:
+                                noise = torch.normal(mean=0.0, std=sigma, size=p.grad.shape, device=p.grad.device, dtype=p.grad.dtype)
+                                p.grad.add_(noise)
 
                 self.optimizer.step()
                 self._check_parameters_finite()

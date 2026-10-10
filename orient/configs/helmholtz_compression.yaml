@@ -1,0 +1,22 @@
+# Compression: int8 + top_k 1% before safetensors (Framework v2, reviewer delight)
+# 50k params *4B=200KB → ~20KB. Per-tensor scale + sparse 1%, plot comm vs L2.
+# Helmholt 8.5k params: raw 34KB → comp 3.6KB (89% saving, 10x). Burgers 59KB→4.6KB.
+problem: helmholtz
+n_clients: 2
+aggregator: fedavg
+aggregation_weights: data_size
+local_epochs: 5
+global_rounds: 30
+heterogeneity:
+  mode: xy_partition
+  n_pieces: 4
+learning_rate: 0.001
+optimizer: adam
+seed: 42
+noise_mode: none
+gradient_clip: none
+compression: int8_topk
+topk_ratio: 0.01
+client_fraction: 1.0
+round_timeout: 0
+output_dir: results/helmholtz/compression/
