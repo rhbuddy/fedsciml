@@ -347,7 +347,7 @@ def run_sweep(req: SweepRequest, _auth: None = Depends(_verify_api_key)) -> Dict
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Invalid YAML: {exc}") from exc
     # Secure temp file (mkstemp, not mktemp)
-    fd, tmppath = tempfile.mkstemp(suffix=".yaml", dir="/tmp")
+    fd, tmppath = tempfile.mkstemp(suffix=".yaml")  # system temp dir, 0o600
     try:
         _os.write(fd, req.yaml_text.encode("utf-8"))
     finally:

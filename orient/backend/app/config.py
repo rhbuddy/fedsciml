@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 
 @dataclass
 class Settings:
-    host: str = field(default_factory=lambda: os.environ.get("ORIENT_HOST", "0.0.0.0"))
+    host: str = field(default_factory=lambda: os.environ.get("ORIENT_HOST", "0.0.0.0"))  # nosec B104 - intentional for docker; override with ORIENT_HOST=127.0.0.1 for lockdown
     port: int = field(default_factory=lambda: int(os.environ.get("ORIENT_PORT", "8000")))
     results_dir: str = field(default_factory=lambda: os.environ.get("ORIENT_RESULTS_DIR", "results"))
     seed: int = field(default_factory=lambda: int(os.environ.get("ORIENT_SEED", "0")))
