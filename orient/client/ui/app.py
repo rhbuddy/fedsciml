@@ -54,7 +54,7 @@ def log(message: str) -> None:
 st.markdown('<div class="client-header">🧠 Orient · Client</div>', unsafe_allow_html=True)
 st.caption(
     "Train on your **private** dataset and share **weights only** — "
-    "raw data never leaves this machine. Supports all 10 benchmark problems & 10 aggregators (SRS v1.4)."
+    "raw data never leaves this machine. Supports all 10 problems & 10 aggs (SRS v1.4). **No CLI needed** after `\\start.ps1 -WithClientUi`."
 )
 st.caption("Privacy: dataset bundle stays local → only `safetensors` weights uploaded. Robust to noisy/adversarial peers via server-side median/krum/trimmed_mean.")
 
@@ -100,7 +100,7 @@ with st.sidebar:
                 except Exception:
                     pass
         else:
-            st.info("No example bundles yet. Run:\n\n`python examples/make_datasets.py --clients 5`  (creates all 10 problems)")
+            st.info("No example bundles yet. Generate via **Dashboard → 📦 Datasets & Sweep → Generate datasets** (no CLI).")
     else:
         st.caption("Expects `dataset.json` + `data.npz` (§4.13). Validation per FR-CLIENTAPP-8.")
         manifest_file = st.file_uploader("dataset.json", type="json")
@@ -152,7 +152,7 @@ tab_train, tab_preview, tab_log = st.tabs(["🏋️ Train", "🔍 Data preview",
 with tab_preview:
     if bundle is None:
         st.info("Load a dataset to preview it.  Supports: `x_train,y_train` (supervised/PINN) and `branch_train,trunk_train,y_train` (operator).")
-        st.markdown("**Generate all 10:** `python examples/make_datasets.py --clients 5`  — heterogeneous slices per SRS §4.2 (W1 heterogeneity)")
+        st.markdown("**Generate all 10:** Use **Dashboard → 📦 Datasets & Sweep → Generate (all 10)** — heterogeneous slices per SRS §4.2 — no CLI.")
     else:
         arrays = bundle.arrays
         st.write("**Arrays**")

@@ -35,6 +35,8 @@ st.caption("Start a federated run, watch clients report in, and track the global
 
 # --------------------------------------------------------------------------- api
 server_url = st.sidebar.text_input("Server URL", "http://127.0.0.1:8000").rstrip("/")
+api_key = st.sidebar.text_input("API Key (if ORIENT_API_KEY set)", value="", type="password", help="Leave empty if server runs without ORIENT_API_KEY. When set, all /admin/* need X-API-Key.")
+api_key_header = {"X-API-Key": api_key} if api_key else {}
 # SSRF guard: only allow http(s) to loopback; warn otherwise
 import re as _re_url
 from urllib.parse import urlparse as _up
@@ -60,7 +62,12 @@ st.sidebar.caption("Results → `results/<problem>/<aggregator>/<run_id>/`  ·  
 
 
 def api(method: str, path: str, **kwargs):
-    resp = httpx.request(method, f"{server_url}{path}", timeout=60.0, **kwargs)
+    # inject API key if provided (security)
+    headers = kwargs.pop("headers", {})
+    if api_key:
+        headers["X-API-Key"] = api_key
+    # also merge with api_key_header for explicit httpx.post calls outside api()
+    resp = httpx.request(method, f"{server_url}{path}", timeout=60.0, headers=headers, **kwargs)
     resp.raise_for_status()
     return resp.json()
 
@@ -70,7 +77,7 @@ try:
     st.sidebar.success(f"● Online · {health.get('phase', '?')}")
 except Exception as exc:  # noqa: BLE001
     st.sidebar.error(f"Server unreachable: {exc}")
-    st.warning("Start the server first: `python -m app.main` in `backend/`")
+    st.warning("Start the server first: run `.\\start.ps1` from repo root (or `python server.py` ). Then refresh.")
     st.stop()
 
 problems = api("GET", "/problems").get("problems", [])
@@ -83,7 +90,7 @@ tab_run, tab_metrics, tab_clients, tab_datasets, tab_results, tab_compare = st.t
 # ----------------------------------------------------------------------- run control
 with tab_run:
     st.subheader("Launch a federated run")
-    st.caption("Config-driven (YAML) or interactive — mirrors `python -m app.runner --config configs/poisson_fedavg.yaml` (FR-CFG-1, FR-RUN-1)")
+    st.caption("Config-driven (YAML) or interactive — mirrors the YAML runner (FR-CFG-1, FR-RUN-1) — **no CLI needed**, use this form.")
     with st.form("run_config"):
         c1, c2, c3 = st.columns(3)
         problem = c1.selectbox("Problem", problems, help="10 problems: Gramacy, Schaffer, Poisson, Helmholtz, Allen-Cahn, Inverse NS/DR, Antiderivative, Burgers, Diffusion-Reaction")
@@ -186,10 +193,21 @@ with tab_run:
             st.error(str(exc))
     if b3.button("✅ Validation gate (Poisson)", use_container_width=True, help="FR-RUN-5: reproduces paper FedAvg Poisson within tolerance"):
         try:
-            # Trigger a short validation run via runner endpoint would be ideal; fallback to info
-            st.info("Run `python -m app.runner --validation-gate poisson` in backend for the official gate (30 rounds, checks improvement).")
+            with st.spinner("Running validation gate (Poisson, ~15s in-memory)..."):
+                res = httpx.post(f"{server_url}/admin/run/validation-gate", params={"problem": "poisson"}, headers=api_key_header, timeout=90.0).json()
+            if res.get("ok"):
+                st.success("✓ Gate PASSED — FedAvg reproduced (L2 improved)")
+            else:
+                st.error(f"Gate FAILED (exit {res.get('exit_code')})")
+            st.code(res.get("output","")[-2000:])
         except Exception as exc:  # noqa: BLE001
-            st.error(str(exc))
+            # try to extract server detail
+            detail = str(exc)
+            try:
+                if hasattr(exc, "response"):
+                    detail = exc.response.text[:800]  # type: ignore
+            except: pass
+            st.error(f"Gate error: {detail[:800]}")
 
     st.divider()
     with st.expander("🧩 Local demo clients", expanded=False):
@@ -203,8 +221,7 @@ with tab_run:
             problems_local = local.get("problems", [])
             if not problems_local:
                 st.warning(
-                    "No dataset bundles found. Generate them first:\n\n"
-                    "`python ../client/examples/make_datasets.py --clients 5`  (creates all 10 problems)"
+                    "No dataset bundles found. Generate them first via **📦 Datasets & Sweep → Generate datasets** (below) — no CLI needed."
                 )
             else:
                 lc1, lc2, lc3 = st.columns([2, 2, 3])
@@ -320,7 +337,7 @@ with tab_clients:
             st.dataframe(pd.DataFrame(clients), use_container_width=True, hide_index=True)
             st.caption(f"{len(clients)} client(s) registered — they will be auto-assigned to the next run on their problem.")
         else:
-            st.info("No clients registered yet. Start a client app (`client/ui/app.py` or `python -m app.main --dataset ...`) and press 'Connect & register'.")
+            st.info("No clients registered yet. Open **Client UI** at http://localhost:8502 (via `.\\start.ps1 -WithClientUi`) and press 'Connect & register' — no CLI needed.")
     except Exception:
         st.info("Clients endpoint unavailable")
 
@@ -354,7 +371,7 @@ with tab_datasets:
         if gen_btn:
             try:
                 with st.spinner(f"Generating {g_clients}×10 bundles ({g_samples} samples each) — ~2-5s..."):
-                    res = httpx.post(f"{server_url}/admin/datasets/generate", json={"clients": int(g_clients), "samples": int(g_samples), "problems": g_problems or None, "overwrite": g_overwrite}, timeout=60.0).json()
+                    res = httpx.post(f"{server_url}/admin/datasets/generate", json={"clients": int(g_clients), "samples": int(g_samples), "problems": g_problems or None, "overwrite": g_overwrite}, headers=api_key_header, timeout=60.0).json()
                 st.success(f"✓ Generated {res.get('bundle_count')} bundles → `{res.get('out_dir')}`")
                 st.code("\n".join(res.get("bundles", [])[:20]))
                 st.toast(f"Generated {res.get('bundle_count')} bundles", icon="✅")
@@ -367,7 +384,7 @@ with tab_datasets:
         if st.button("▶ Run validation gate (Poisson)", use_container_width=True):
             try:
                 with st.spinner("Running gate (~15s in-memory)..."):
-                    res = httpx.post(f"{server_url}/admin/run/validation-gate", params={"problem": "poisson"}, timeout=90.0).json()
+                    res = httpx.post(f"{server_url}/admin/run/validation-gate", params={"problem": "poisson"}, headers=api_key_header, timeout=90.0).json()
                 if res.get("ok"):
                     st.success("✓ Gate PASSED — FedAvg reproduced")
                 else:
@@ -424,7 +441,7 @@ with tab_datasets:
     if st.button("▶ Run sweep from UI", type="primary", use_container_width=True, disabled=not yaml_text.strip()):
         try:
             with st.spinner("Running sweep — this may take 30s-5min..."):
-                res = httpx.post(f"{server_url}/admin/run/sweep", json={"yaml_text": yaml_text, "results_dir": sweep_results_dir, "use_http": sweep_use_http}, timeout=300.0).json()
+                res = httpx.post(f"{server_url}/admin/run/sweep", json={"yaml_text": yaml_text, "results_dir": sweep_results_dir, "use_http": sweep_use_http}, headers=api_key_header, timeout=300.0).json()
             st.success(f"✓ Sweep done: {res.get('configs')} configs → `{res.get('results_dir')}`")
             st.json(res.get("summary", []))
             st.toast("Sweep complete", icon="🌀")
@@ -440,20 +457,77 @@ with tab_datasets:
     st.caption("After sweep, check **📁 Results** (`metrics.csv`) and **⚖️ Compare** (trade-off plot `results/plots/tradeoff_*.png`). No terminal needed.")
 
 with tab_results:
-    st.subheader("📁 Results browser")
-    st.caption("Browse `results/` artifacts produced by the runner or the REST orchestrator (SRS §8.2). Direct file serving is via filesystem; this tab lists metadata from `/run/status`.")
+    st.subheader("📁 Results browser — no CLI")
+    st.caption("Browse `results/` artifacts produced by the runner or the REST orchestrator (SRS §8.2). **All via browser** — current run + historical runs from filesystem. Click a run to download its files.")
     if metrics:
         df = pd.DataFrame(metrics)
         st.write(f"**Current run**: `{status.get('problem')}/{status.get('aggregator')}` — {len(metrics)} rounds, best L2 `{df['l2_relative_error'].min():.4g}` at round {int(df.loc[df['l2_relative_error'].idxmin(), 'round'])}")
         csv = df.to_csv(index=False).encode()
-        st.download_button("⬇ Download metrics CSV", csv, "metrics.csv", "text/csv")
+        st.download_button("⬇ Download current run metrics CSV", csv, "metrics.csv", "text/csv", key="dl_cur_csv")
     else:
-        st.info("No results yet. After a run completes, artifacts are in `results/<problem>/<aggregator>/<run_id>/`  (`config.yaml`, `metrics.json`, `server_best.pth`, `loss.npz`, `l2_error.npz`, `weight_divergence.npz`).")
-    st.markdown("**Example:** `python -m app.runner --config configs/poisson_fedavg.yaml` → check `results/poisson/fedavg/*/metrics.json`")
+        st.info("No current run metrics yet. After a run completes, artifacts are in `results/<problem>/<aggregator>/<run_id>/`  (`config.yaml`, `metrics.json`, `server_best.pth`, `loss.npz`, `l2_error.npz`, `weight_divergence.npz`) — all downloadable below.")
+    st.divider()
+    st.markdown("#### 📂 Historical runs (filesystem, no `ls` needed)")
+    try:
+        hist = api("GET", "/admin/results/list", params={"limit": 20})
+        results = hist.get("results", [])
+        if not results:
+            st.caption("No historical runs yet — run a sweep or single config above.")
+        else:
+            # Summary table
+            import pandas as _pd
+            df_hist = _pd.DataFrame([{
+                "run_id": r["run_id"],
+                "problem": r["problem"],
+                "aggregator": r["aggregator"],
+                "best_l2": r["metrics"].get("best_l2"),
+                "final_l2": r["metrics"].get("final_l2"),
+                "rounds": r["metrics"].get("total_rounds"),
+                "plots": "✓" if r["has_plots"] else "",
+                "path": r["path"]
+            } for r in results])
+            st.dataframe(df_hist, use_container_width=True, hide_index=True)
+            # Let user pick a run to download files
+            run_paths = [r["path"] for r in results]
+            sel = st.selectbox("Select run to download files", run_paths, key="hist_sel")
+            if sel:
+                st.caption(f"Selected: `{sel}` — download artifacts without `cat`/`cp`:")
+                # list of files to offer
+                files = ["metrics.json", "config.yaml", "config.json", "loss.npz", "l2_error.npz", "weight_divergence.npz", "bytes.npz", "server_best.safetensors"]
+                cols = st.columns(4)
+                for idx, fname in enumerate(files):
+                    col = cols[idx % 4]
+                    fpath = f"{sel.replace(str(Path('results').resolve())+'/', '').replace(str(Path('results'))+'/', '').lstrip('/')}/{fname}" if sel.startswith("/") else f"{sel}/{fname}"
+                    # sel is already like results/poisson/fedavg/<id> or absolute; normalize to relative to results_dir
+                    # try to make relative to results root
+                    try:
+                        rel = str(Path(sel).relative_to(Path('results')))
+                    except Exception:
+                        try:
+                            rel = str(Path(sel).relative_to(Path.cwd() / Path('results')))
+                        except Exception:
+                            rel = sel
+                        if rel.startswith("results/"):
+                            rel = rel[len("results/"):]
+                    fpath = f"{rel}/{fname}"
+                    # Only show button, actual fetch on click
+                    if col.button(f"⬇ {fname}", key=f"dl_{fname}_{sel}"):
+                        try:
+                            r = httpx.get(f"{server_url}/admin/results/file", params={"path": fpath}, headers=api_key_header, timeout=30.0)
+                            r.raise_for_status()
+                            st.download_button(f"Save {fname}", r.content, file_name=fname, key=f"save_{fname}_{sel}")
+                            st.success(f"Fetched {fname} ({len(r.content)} bytes)")
+                        except Exception as e:
+                            st.error(f"Download failed: {e}")
+                st.caption("Tip: full run dir is under `results/` — also browsable via **Metrics** tab plots (`plots/loss.png` etc). No terminal needed.")
+    except Exception as e:
+        st.warning(f"Could not list historical runs: {e}")
+    st.markdown("**Example:** Use **📦 Datasets & Sweep → Sweep runner** above with `poisson_fedavg.yaml` preset → results appear here instantly.")
+
 
 with tab_compare:
     st.subheader("⚖️ Robustness–Accuracy Trade-off (SRS §10.4)")
-    st.caption("Headline figure: accuracy (relative L2) vs `noise_fraction` (0.0 → 0.3). Run the deep-benchmark sweep to populate this: `python -m app.runner --config configs/deep_benchmark.yaml`")
+    st.caption("Headline figure: accuracy (relative L2) vs `noise_fraction` (0.0 → 0.3). Run the deep-benchmark sweep via **📦 Datasets & Sweep → preset `deep_benchmark`** to populate — no CLI.")
     if metrics:
         try:
             df = pd.DataFrame(metrics)
@@ -473,7 +547,7 @@ with tab_compare:
         }).set_index("noise_fraction")
         st.line_chart(demo, color=["#6366f1", "#10b981", "#f59e0b"])
         st.caption("Illustrative: FedAvg collapses under adversarial noise, median/Krum stay flat (hypothesis §10.3.3). Replace with your sweep's `results/*/metrics.json` aggregation (runner auto-generates `sweep_summary_*.json` + comparison table).")
-        st.info("To generate the real curve:  **Runner → `configs/deep_benchmark.yaml` (9 algos × 3 problems × noise)** then `python -m app.runner --validation-gate poisson` + spot-checks.")
+        st.info("To generate the real curve: **📦 Datasets & Sweep → preset `deep_benchmark` (9 algos × 3 problems × noise)** then **✅ Validation gate** above — all in browser.")
 
 if auto_refresh:
     time.sleep(2)

@@ -284,6 +284,106 @@ def dataset_status(_auth: None = Depends(_verify_api_key)) -> Dict[str, Any]:
         out_rel = str(BUNDLES_DIR.name)
     return {"bundle_count": len(bundles), "bundles": bundles, "problems": probs, "out_dir": out_rel}
 
+@app.get("/admin/results/list")
+def results_list(_auth: None = Depends(_verify_api_key), limit: int = Query(20, ge=1, le=100)) -> Dict[str, Any]:
+    """List recent run artifacts from filesystem (UI-only, no CLI ls). Robust to nested validation_gate layout."""
+    root = Path(settings.results_dir)
+    if not root.exists():
+        return {"results": [], "root": str(root)}
+    results = []
+    try:
+        # Recursively find all metrics.json files (each run has one)
+        for mj in sorted(root.rglob("metrics.json"), reverse=True):
+            try:
+                run_dir = mj.parent
+                # Derive problem/aggregator/run_id as last 3 parts relative to root
+                rel_parts = run_dir.relative_to(root).parts
+                if len(rel_parts) < 3:
+                    continue
+                # For normal runs: problem, aggregator, run_id = rel_parts[-3], rel_parts[-2], rel_parts[-1]
+                # For validation_gate: _validation_gate/poisson/fedavg/<run_id> -> also last 3
+                problem = rel_parts[-3] if len(rel_parts) >= 3 else rel_parts[0]
+                aggregator = rel_parts[-2] if len(rel_parts) >= 2 else ""
+                run_id = rel_parts[-1]
+                # For validation_gate, problem is actually second last? Keep as stored path for clarity
+                # Use full relative path for UI
+                try:
+                    import json as _json
+                    metrics = _json.loads(mj.read_text(encoding="utf-8"))
+                except Exception:
+                    metrics = {}
+                has_plots = (run_dir / "plots").exists()
+                try:
+                    rel = str(run_dir.relative_to(Path.cwd()))
+                except Exception:
+                    rel = str(run_dir)
+                results.append({
+                    "problem": problem,
+                    "aggregator": aggregator,
+                    "run_id": run_id,
+                    "path": rel,
+                    "metrics": {k: metrics.get(k) for k in ("best_l2","final_l2","total_rounds") if k in metrics},
+                    "has_plots": has_plots,
+                })
+                if len(results) >= limit:
+                    break
+            except Exception:
+                continue
+    except Exception as e:
+        logger.warning(f"results list failed: {e}")
+    # sort by run_id desc (time)
+    results = sorted(results, key=lambda x: x["run_id"], reverse=True)[:limit]
+    return {"results": results, "count": len(results), "root": str(root)}
+
+@app.get("/admin/results/file")
+def results_file(path: str = Query(..., description="relative path under results_dir, e.g. poisson/fedavg/<run_id>/metrics.json"), _auth: None = Depends(_verify_api_key)) -> Response:
+    """Download a single artifact file (UI-only, no CLI cat). Path is jailed to results_dir."""
+    # Normalize: allow both "poisson/..." and "results/poisson/..." (dashboard may send with prefix)
+    if path.startswith("results/"):
+        path = path[len("results/"):]
+    # Reject traversal
+    if ".." in Path(path).parts or Path(path).is_absolute() or path.startswith("/"):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    # Allow only safe extensions
+    allowed_suffixes = {".json", ".yaml", ".yml", ".npz", ".png", ".csv", ".safetensors", ".pth"}
+    p = Path(path)
+    if p.suffix not in allowed_suffixes and "".join(p.suffixes[-2:]) not in allowed_suffixes:
+        # allow .jsonl etc
+        if p.suffix not in {".jsonl", ".log"}:
+            raise HTTPException(status_code=400, detail=f"File type not allowed: {p.suffix}")
+    root = Path(settings.results_dir).resolve()
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    full = (root / path).resolve()
+    # jail
+    try:
+        if not full.is_relative_to(root):
+            raise HTTPException(status_code=400, detail="Path escapes results_dir")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Path escapes results_dir")
+    if not full.exists() or not full.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    # size guard 50MB
+    try:
+        if full.stat().st_size > 50*1024*1024:
+            raise HTTPException(status_code=413, detail="File too large")
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+    # guess media type
+    import mimetypes
+    mt, _ = mimetypes.guess_type(str(full))
+    mt = mt or "application/octet-stream"
+    try:
+        data = full.read_bytes()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Read failed: {e}")
+    return Response(content=data, media_type=mt, headers={"Content-Disposition": f"attachment; filename=\"{full.name}\""})
+
+
 
 @app.post("/admin/datasets/generate")
 def dataset_generate(req: DatasetGenerateRequest, _auth: None = Depends(_verify_api_key)) -> Dict[str, Any]:
