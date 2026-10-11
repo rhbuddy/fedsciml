@@ -267,13 +267,30 @@ def run_via_http(cfg: Dict[str, Any], server_url: str) -> Dict[str, Any]:
 
 
 def run_configs(configs: List[Dict[str, Any]], results_dir: str, server_url: str | None) -> List[Dict[str, Any]]:
+    """Run each config, isolating failures so one bad config cannot abort the rest.
+
+    A sweep is a batch experiment: if config 3 of 9 is invalid (e.g. krum with
+    K=2, which needs K >= 2f+3), the other six still carry information and
+    should still run. Previously the first exception propagated out of the loop
+    and silently discarded every remaining config, so a single typo in a sweep
+    file threw away the whole experiment.
+
+    Failures are recorded in the returned results as ``{"error": ...}`` and
+    reported in the summary; the process exit code becomes 1 if any config
+    failed, so a broken sweep cannot masquerade as a successful one.
+    """
     results = []
     for idx, cfg in enumerate(configs, 1):
         _print(f"\n=== Config {idx}/{len(configs)} ===")
-        if server_url:
-            res = run_via_http(cfg, server_url)
-        else:
-            res = run_in_memory(cfg, results_dir=results_dir)
+        try:
+            if server_url:
+                res = run_via_http(cfg, server_url)
+            else:
+                res = run_in_memory(cfg, results_dir=results_dir)
+        except Exception as exc:
+            label = f"{cfg.get('problem', '?')}/{cfg.get('aggregator', '?')}"
+            _print(f"[runner] FAILED config {idx}/{len(configs)} ({label}): {type(exc).__name__}: {exc}")
+            res = {"config": cfg, "error": f"{type(exc).__name__}: {exc}"}
         results.append(res)
     return results
 
@@ -545,6 +562,17 @@ def main(argv: List[str] | None = None) -> int:
                 _print(f"[comm plot] warning: {e}")
         except Exception as e:
             _print(f"[trade-off] plot warning: {e}")
+
+    # A sweep where some configs failed must not report success: the remaining
+    # configs still ran and were written out, but the batch as a whole did not
+    # complete. List the failures so they are not lost in the log.
+    failed = [(i, r) for i, r in enumerate(results, 1) if r.get("error")]
+    if failed:
+        _print(f"\n[runner] {len(failed)} of {len(results)} config(s) FAILED:")
+        for i, r in failed:
+            c = r.get("config", {})
+            _print(f"  - config {i} ({c.get('problem','?')}/{c.get('aggregator','?')}): {r['error']}")
+        return 1
     return 0
 
 

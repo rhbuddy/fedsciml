@@ -551,6 +551,43 @@ def test_sweep_expansion_is_neither_empty_nor_partly_ignored() -> None:
           f"sweep_example.yaml expands to {len(expand_sweeps(shipped))} (documented 3*3=9)")
 
 
+def test_one_bad_sweep_config_cannot_abort_the_rest() -> None:
+    """A single invalid config used to discard every config after it."""
+    print("\n=== sweep failure isolation ===")
+    import inspect
+    from app import runner
+
+    # run_configs must catch per-config failures rather than let them propagate.
+    src = inspect.getsource(runner.run_configs)
+    check("except Exception" in src and '"error"' in src,
+          "run_configs records a per-config error instead of propagating")
+
+    # Drive it with a mix: two valid configs around one that cannot start
+    # (krum needs K >= 2f+3 = 5, so K=2 is rejected).
+    good = {"problem": "poisson", "aggregator": "fedavg", "n_clients": 2,
+            "total_rounds": 1, "local_epochs": 1, "seed": 42}
+    bad = {"problem": "poisson", "aggregator": "krum", "n_clients": 2,
+           "total_rounds": 1, "local_epochs": 1, "seed": 42}
+    results = runner.run_configs([good, bad, good], results_dir="/tmp/orient_sweep_iso",
+                                 server_url=None)
+    check(len(results) == 3, f"all 3 configs were attempted, got {len(results)}")
+    check(results[1].get("error") is not None, "the invalid config recorded an error")
+    check("krum requires K" in str(results[1].get("error")),
+          f"the error names the real cause: {str(results[1].get('error'))[:60]}")
+    check(results[0].get("status", {}).get("phase") == "complete"
+          and results[2].get("status", {}).get("phase") == "complete",
+          "the configs after the failure still ran to completion")
+
+    # The shipped Appendix A.4 sweep must now expand AND be runnable: krum needs
+    # n_clients >= 5, and the file used to say 2.
+    from app.experiment_config import config_to_run_start, expand_sweeps, load_yaml
+    shipped = expand_sweeps(load_yaml("/home/user/fedsciml/orient/configs/sweep_example.yaml"))
+    krum = [c for c in shipped if c["aggregator"] == "krum"]
+    check(len(krum) == 3, f"{len(krum)} krum cells in the shipped sweep")
+    check(all(int(c["n_clients"]) >= 5 for c in krum),
+          f"every krum cell has n_clients >= 5 (got {sorted({int(c['n_clients']) for c in krum})})")
+
+
 def main() -> int:
     test_median_is_a_real_median_at_even_k()
     test_noise_fraction_always_compromises_someone()
@@ -571,6 +608,7 @@ def main() -> int:
     test_allen_cahn_ground_truth_solves_its_own_pde()
     test_architectures_match_srs_table_4()
     test_sweep_expansion_is_neither_empty_nor_partly_ignored()
+    test_one_bad_sweep_config_cannot_abort_the_rest()
     print("\n" + "=" * 60)
     if failures:
         print(f"{len(failures)} FAILURE(S):")
