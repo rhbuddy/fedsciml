@@ -509,6 +509,48 @@ def test_architectures_match_srs_table_4() -> None:
               f"{name}: d={depth} w={width} act={act} (SRS d={wd} w={ww} act={wa})")
 
 
+# ------------------------------------------------------- experiment_config.py
+def test_sweep_expansion_is_neither_empty_nor_partly_ignored() -> None:
+    """An empty dimension expanded to 0 configs; a top-level list was dropped."""
+    print("\n=== sweep expansion ===")
+    from app.experiment_config import config_to_run_start, expand_sweeps, load_yaml
+    from app.protocol import RunStartRequest
+
+    # (1) An empty sweep dimension used to make itertools.product yield nothing,
+    # so the runner looped over zero configs and exited 0 having done nothing.
+    try:
+        expand_sweeps({"problem": "poisson", "aggregator": ["fedavg", "fedprox"], "seed": []})
+        check(False, "empty sweep dimension should raise")
+    except ValueError as exc:
+        check("empty list" in str(exc), f"empty dimension raises: {str(exc)[:60]}")
+
+    # (2) A top-level list next to a 'sweep' mapping used to be passed through
+    # unexpanded, and RunStartRequest then rejected the list.
+    out = expand_sweeps({"problem": "poisson", "aggregator": "fedavg",
+                         "seeds": [1, 2, 3], "sweep": {"total_rounds": [2, 4]}})
+    check(len(out) == 6, f"both syntaxes cross-product: {len(out)} configs (expected 6)")
+    check(not any(isinstance(c.get("seed"), list) for c in out),
+          "no list survives into a concrete config")
+    check(sorted({c["seed"] for c in out}) == [1, 2, 3], "every seed value is swept")
+    check(sorted({c["total_rounds"] for c in out}) == [2, 4], "every rounds value is swept")
+
+    req = RunStartRequest(**{k: v for k, v in config_to_run_start(out[0]).items()
+                             if v is not None or k in ("problem", "aggregator")})
+    check(isinstance(req.seed, int), f"RunStartRequest accepts the result (seed={req.seed})")
+
+    # (3) The two existing forms must keep working unchanged.
+    plain = expand_sweeps({"problem": "poisson",
+                           "aggregator": ["fedavg", "fedprox"], "seed": [1, 2]})
+    check(len(plain) == 4, f"plain list sweep still gives 4, got {len(plain)}")
+    single = expand_sweeps({"problem": "poisson", "aggregator": "fedavg", "total_rounds": 5})
+    check(len(single) == 1 and single[0]["total_rounds"] == 5, "concrete config unchanged")
+
+    # (4) The shipped Appendix A.4 sweep must still expand to its documented 9.
+    shipped = load_yaml("/home/user/fedsciml/orient/configs/sweep_example.yaml")
+    check(len(expand_sweeps(shipped)) == 9,
+          f"sweep_example.yaml expands to {len(expand_sweeps(shipped))} (documented 3*3=9)")
+
+
 def main() -> int:
     test_median_is_a_real_median_at_even_k()
     test_noise_fraction_always_compromises_someone()
@@ -528,6 +570,7 @@ def main() -> int:
     test_burgers_operator_actually_depends_on_the_ic()
     test_allen_cahn_ground_truth_solves_its_own_pde()
     test_architectures_match_srs_table_4()
+    test_sweep_expansion_is_neither_empty_nor_partly_ignored()
     print("\n" + "=" * 60)
     if failures:
         print(f"{len(failures)} FAILURE(S):")
