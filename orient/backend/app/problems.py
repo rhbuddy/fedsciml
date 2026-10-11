@@ -278,10 +278,61 @@ class AllenCahn(Problem):
 
     @staticmethod
     def u_true(xt: np.ndarray) -> np.ndarray:
-        # Manufactured smooth solution for evaluation: decay of initial hump
+        """Manufactured solution: u(x,t) = x^2 cos(pi x) * (1 - 5 t (1 - x^2)).
+
+        Chosen to satisfy BOTH constraints the problem imposes, which the
+        previous ``x^2 cos(pi x) exp(-5 t)`` did not:
+
+        1. It is an exact solution of the *forced* Allen-Cahn equation; see
+           :meth:`forcing` for the derived source term.
+        2. It is exactly representable by ``allen_cahn_transform``, which can
+           only express u = ic(x) + t (1 - x^2) y(x,t). Here
+           y = -5 x^2 cos(pi x) is bounded, so a perfect fit scores 0.
+
+        The old exponential decay violated (2): the transform pins
+        u(+/-1, t) = ic(+/-1) = -1 for every t, while exp(-5t) gives
+        u(+/-1, t) = -exp(-5t). Those disagree for all t > 0, so the best
+        achievable relative L2 was 0.481 no matter how well the network
+        trained, and the allen_cahn benchmark number could not be interpreted
+        as an accuracy.
+        """
         x = xt[:, 0:1]
         t = xt[:, 1:2]
-        return (x ** 2) * np.cos(np.pi * x) * np.exp(-5 * t)
+        return (x ** 2) * np.cos(np.pi * x) * (1.0 - 5.0 * t * (1.0 - x ** 2))
+
+    @staticmethod
+    def forcing(xt: torch.Tensor) -> torch.Tensor:
+        """Source term q(x,t) making :meth:`u_true` an exact solution.
+
+        Method of manufactured solutions. Writing u = A(x) B(x,t) with
+        A = x^2 cos(pi x) and B = 1 - 5 t (1 - x^2):
+
+            A'   = 2x cos(pi x) - pi x^2 sin(pi x)
+            A''  = 2 cos(pi x) - 4 pi x sin(pi x) - pi^2 x^2 cos(pi x)
+            B_t  = -5 (1 - x^2)
+            B_x  = 10 t x
+            B_xx = 10 t
+
+            u_t  = A B_t
+            u_xx = A'' B + 2 A' B_x + A B_xx
+
+        and q = u_t - 0.001 u_xx + 5 (u^3 - u) makes the equation exact.
+        """
+        x = xt[:, 0:1]
+        t = xt[:, 1:2]
+        c = torch.cos(np.pi * x)
+        s = torch.sin(np.pi * x)
+        A = x ** 2 * c
+        Ap = 2 * x * c - np.pi * x ** 2 * s
+        App = 2 * c - 4 * np.pi * x * s - (np.pi ** 2) * x ** 2 * c
+        B = 1.0 - 5.0 * t * (1.0 - x ** 2)
+        Bt = -5.0 * (1.0 - x ** 2)
+        Bx = 10.0 * t * x
+        Bxx = 10.0 * t
+        u = A * B
+        u_t = A * Bt
+        u_xx = App * B + 2 * Ap * Bx + A * Bxx
+        return u_t - 0.001 * u_xx + 5 * (u ** 3 - u)
 
     def model_spec(self) -> ModelSpec:
         return ModelSpec(
@@ -290,7 +341,8 @@ class AllenCahn(Problem):
             output_dim=1,
             params={
                 "layer_sizes": [2, 64, 64, 64, 1],
-                "activation": "tanh",
+                # SRS Table 4 (arXiv:2410.13141) specifies sine for Allen-Cahn.
+                "activation": "sine",
                 "output_transform": "allen_cahn",
             },
         )
@@ -311,7 +363,9 @@ class AllenCahn(Problem):
         dy_dx = grads[:, 0:1]
         dy_dt = grads[:, 1:2]
         d2y_dx2 = torch.autograd.grad(dy_dx, xb, torch.ones_like(dy_dx), create_graph=True)[0][:, 0:1]
-        residual = dy_dt - 0.001 * d2y_dx2 + 5 * (y ** 3 - y)
+        # Forced Allen-Cahn: the source term makes u_true an exact solution, so a
+        # perfect fit scores 0. See AllenCahn.forcing.
+        residual = dy_dt - 0.001 * d2y_dx2 + 5 * (y ** 3 - y) - self.forcing(xb)
         return torch.mean(residual ** 2)
 
     def evaluate(self, model, num_test: int = 400, seed: int = 1234) -> Dict[str, float]:
@@ -535,19 +589,36 @@ class BurgersDeepONet(Problem):
         ics = np.tensordot(coeffs, waves[:, 0, :], axes=(1, 0))
         return ics
 
+    NU = 0.1
+    K_MODES = 5
+
     def _solution(self, ic: np.ndarray, trunk: np.ndarray) -> np.ndarray:
-        # proxy: advect+diffuse: u(x,t) ≈ IC(x - c*t) * exp(-nu*k² t)
-        # for demo we use linear superposition decay
-        n = ic.shape[0]
-        m = trunk.shape[0]
-        out = np.zeros((n, m), dtype=np.float64)
-        for i in range(n):
-            # reconstruct IC as Fourier, evaluate at shifted x
-            # simple: average IC value as proxy for field
-            base = float(np.mean(ic[i]))
-            for j, (x, t) in enumerate(trunk):
-                out[i, j] = base * np.exp(-0.1 * t) * np.cos(np.pi * (x - 0.2 * t))
-        return out
+        """Viscous-decay proxy: u(x,t) = sum_k a_k exp(-nu k^2 pi^2 t) sin(k pi x).
+
+        This is the exact solution of the linearized (heat) limit of Burgers with
+        Dirichlet ends, and - importantly - it is a *faithful* operator: the whole
+        shape of the initial condition survives into the field. The previous
+        implementation collapsed every IC to ``np.mean(ic[i])``, which made the
+        IC -> solution map rank 1 (two ICs with equal means but completely
+        different shapes produced bit-identical fields, and an IC with mean 0
+        produced the all-zero field). A DeepONet trained on that only has to
+        regress a scalar, so the reported "operator learning" error measured
+        nothing.
+
+        The IC arrives as samples on ``self.sensors``; project onto the sine
+        basis (least squares, exact for ICs drawn by ``_sample_ic``) and decay
+        each mode. Fully vectorized - no per-sample Python loop.
+        """
+        ic = np.asarray(ic, dtype=np.float64)
+        ks = np.arange(1, self.K_MODES + 1, dtype=np.float64)          # (K,)
+        basis = np.sin(np.pi * np.outer(self.sensors, ks))             # (S,K)
+        coef, *_ = np.linalg.lstsq(basis, ic.T, rcond=None)            # (K,n)
+        coef = coef.T                                                  # (n,K)
+        xs = np.asarray(trunk, dtype=np.float64)[:, 0]                 # (m,)
+        ts = np.asarray(trunk, dtype=np.float64)[:, 1]                 # (m,)
+        decay = np.exp(-self.NU * (ks * np.pi) ** 2 * ts[:, None])     # (m,K)
+        shape = np.sin(np.pi * np.outer(xs, ks))                       # (m,K)
+        return coef @ (decay * shape).T                                # (n,m)
 
     def model_spec(self) -> ModelSpec:
         return ModelSpec(

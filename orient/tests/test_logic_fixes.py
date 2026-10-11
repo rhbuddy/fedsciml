@@ -406,6 +406,109 @@ def test_validation_gate_supports_both_tolerance_readings() -> None:
           f"relative {rel:.3f} > 0.05 but absolute {absd:.3f} < 0.05: the modes disagree")
 
 
+# ------------------------------------------------------------- problems.py
+def test_burgers_operator_actually_depends_on_the_ic() -> None:
+    """The Burgers IC->solution map was rank 1: only mean(IC) survived."""
+    print("\n=== Burgers operator is not a scalar regression ===")
+    import numpy as np
+    from app.problems import get_problem
+
+    b = get_problem("burgers")
+    xs = b.sensors
+    ic_a = np.sin(np.pi * xs) - np.sin(2 * np.pi * xs)
+    ic_b = np.sin(3 * np.pi * xs) - np.sin(4 * np.pi * xs)
+    check(np.abs(ic_a - ic_b).max() > 1.0, "the two ICs really are different")
+
+    sa = b._solution(ic_a[None, :], b.trunk)[0]
+    sb = b._solution(ic_b[None, :], b.trunk)[0]
+    check(not np.allclose(sa, sb),
+          f"different ICs give different fields (max diff {np.abs(sa - sb).max():.4f})")
+
+    rng = np.random.default_rng(0)
+    M = np.array([b._solution(r[None, :], b.trunk)[0] for r in rng.normal(size=(40, 101))])
+    rank = int(np.linalg.matrix_rank(M))
+    check(rank >= 4, f"IC -> solution map has rank {rank}, not 1")
+
+    # The field at t=0 must reproduce the initial condition exactly.
+    ics = b._sample_ic(3, seed=11)
+    sol = b._solution(ics, b.trunk)
+    j = int(np.argmin(np.abs(b.trunk[:, 1])))
+    truth = np.array([np.interp(b.trunk[j, 0], xs, r) for r in ics])
+    check(np.abs(sol[:, j] - truth).max() < 1e-9,
+          f"field at t=0 equals the IC (max err {np.abs(sol[:, j] - truth).max():.3g})")
+
+
+def test_allen_cahn_ground_truth_solves_its_own_pde() -> None:
+    """u_true violated the Allen-Cahn operator by ~8.5x its own magnitude."""
+    print("\n=== Allen-Cahn manufactured solution is exact ===")
+    import numpy as np
+    import torch
+    from app.models import allen_cahn_transform
+    from app.problems import get_problem
+
+    ac = get_problem("allen_cahn")
+    x = np.linspace(-1, 1, 60)
+    t = np.linspace(0, 1, 40)
+    X, T = np.meshgrid(x, t)
+    X = X.ravel()[:, None]; T = T.ravel()[:, None]
+    xt = np.hstack([X, T])
+    u = ac.u_true(xt)
+
+    # (1) exact solution of the FORCED Allen-Cahn equation
+    A = X ** 2 * np.cos(np.pi * X)
+    Ap = 2 * X * np.cos(np.pi * X) - np.pi * X ** 2 * np.sin(np.pi * X)
+    App = 2 * np.cos(np.pi * X) - 4 * np.pi * X * np.sin(np.pi * X) \
+        - np.pi ** 2 * X ** 2 * np.cos(np.pi * X)
+    B = 1 - 5 * T * (1 - X ** 2)
+    Bt = -5 * (1 - X ** 2); Bx = 10 * T * X; Bxx = 10 * T
+    q = ac.forcing(torch.tensor(xt, dtype=torch.float64)).numpy()
+    resid = (A * Bt) - 0.001 * (App * B + 2 * Ap * Bx + A * Bxx) + 5 * (u ** 3 - u) - q
+    rms = float(np.sqrt(np.mean(resid ** 2)))
+    scale = float(np.sqrt(np.mean(u ** 2)))
+    check(rms / scale < 1e-10,
+          f"residual/|u| = {rms/scale:.3e} (was 8.48 before the source term)")
+
+    # (2) exactly representable by the hard-constraint transform, otherwise the
+    # achievable L2 has a nonzero floor and the benchmark is uninterpretable.
+    ic = X ** 2 * np.cos(np.pi * X)
+    y = (u - ic) / np.where(np.abs(T * (1 - X ** 2)) > 1e-14, T * (1 - X ** 2), 1.0)
+    rec = allen_cahn_transform(torch.tensor(xt, dtype=torch.float64),
+                               torch.tensor(y, dtype=torch.float64)).numpy()
+    floor = float(np.linalg.norm(rec - u) / np.linalg.norm(u))
+    check(floor < 1e-10,
+          f"transform can represent u_true exactly (floor {floor:.3e}; was 0.481)")
+
+    # The training residual must include the source, or the fix is inert.
+    import inspect
+    check("forcing" in inspect.getsource(type(ac).local_loss),
+          "local_loss subtracts the manufactured source term")
+
+
+def test_architectures_match_srs_table_4() -> None:
+    """SRS Table 4 pins width/depth/activation per problem."""
+    print("\n=== architectures vs SRS Table 4 ===")
+    from app.problems import list_problems, get_problem
+
+    # Rows read as (depth, width, activation). DeepONet branch_sizes has no
+    # separate output layer, so every entry after the input is hidden.
+    SRS = {
+        "gramacy_lee": (3, 64, "tanh"), "schaffer": (3, 64, "tanh"),
+        "poisson": (3, 20, "tanh"), "helmholtz": (3, 64, "sine"),
+        "allen_cahn": (3, 64, "sine"), "inverse_ns": (6, 50, "tanh"),
+        "inverse_dr": (3, 20, "tanh"), "antiderivative": (2, 40, "relu"),
+        "diffusion_reaction": (3, 100, "relu"), "burgers": (2, 64, "relu"),
+    }
+    for name in list_problems():
+        par = get_problem(name).model_spec().params
+        act = str(par.get("activation", "?")).lower()
+        hidden = (par["layer_sizes"][1:-1] if "layer_sizes" in par
+                  else par["branch_sizes"][1:])
+        width, depth = max(hidden), len(hidden)
+        wd, ww, wa = SRS[name]
+        check(depth == wd and width == ww and act == wa,
+              f"{name}: d={depth} w={width} act={act} (SRS d={wd} w={ww} act={wa})")
+
+
 def main() -> int:
     test_median_is_a_real_median_at_even_k()
     test_noise_fraction_always_compromises_someone()
@@ -422,6 +525,9 @@ def main() -> int:
     test_validation_gate_needs_the_published_value()
     test_w1_self_check_matches_manual_calculation()
     test_validation_gate_supports_both_tolerance_readings()
+    test_burgers_operator_actually_depends_on_the_ic()
+    test_allen_cahn_ground_truth_solves_its_own_pde()
+    test_architectures_match_srs_table_4()
     print("\n" + "=" * 60)
     if failures:
         print(f"{len(failures)} FAILURE(S):")
