@@ -60,7 +60,7 @@ meta = api("GET", "/aggregators")
 aggregators = meta.get("aggregators", [])
 weighting_modes = meta.get("weighting_modes", ["uniform"])
 
-tab_run, tab_metrics, tab_clients, tab_results, tab_compare = st.tabs(["🚀 Run control", "📈 Metrics", "🧩 Clients", "📁 Results", "⚖️ Compare"])
+tab_run, tab_metrics, tab_clients, tab_datasets, tab_results, tab_compare = st.tabs(["🚀 Run control", "📈 Metrics", "🧩 Clients", "📦 Datasets & Sweep", "📁 Results", "⚖️ Compare"])
 
 # ----------------------------------------------------------------------- run control
 with tab_run:
@@ -305,6 +305,112 @@ with tab_clients:
             st.info("No clients registered yet. Start a client app (`client/ui/app.py` or `python -m app.main --dataset ...`) and press 'Connect & register'.")
     except Exception:
         st.info("Clients endpoint unavailable")
+
+with tab_datasets:
+    st.subheader("📦 Datasets & Sweep — 100% UI, no CLI")
+    st.caption("Generate heterogeneous bundles, run sweeps and validation gate directly from the browser — replaces `python client.py --make-datasets` and `python server.py --config`.")
+
+    # ---- Bundle status ----
+    try:
+        ds_status = api("GET", "/admin/datasets/status")
+        bc = ds_status.get("bundle_count", 0)
+        bundles = ds_status.get("bundles", [])
+        probs_have = ds_status.get("problems", [])
+        st.info(f"**{bc} bundles** in `{ds_status.get('out_dir','')}` · problems: {', '.join(probs_have) or '—'}")
+        if bundles:
+            with st.expander(f"Show {len(bundles)} bundles", expanded=False):
+                st.code("\n".join(bundles))
+    except Exception as e:
+        st.warning(f"Dataset status unavailable: {e}")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("#### 🧬 Generate datasets")
+        st.caption("Replaces `python client.py --make-datasets --clients K --samples N` — each client sees a disjoint x-slice / Fourier-mode subset (FR-DATA-2).")
+        with st.form("gen_form"):
+            g_clients = st.slider("Clients per problem", 1, 16, 5, help="Krum needs K≥5 for f=1 (2f+3)")
+            g_samples = st.number_input("Samples per client", 100, 10000, 1500, step=100)
+            g_problems = st.multiselect("Problems (empty = all 10)", problems, default=[], help="Leave empty to generate all 10 problems")
+            g_overwrite = st.checkbox("Overwrite existing", value=True)
+            gen_btn = st.form_submit_button("▶ Generate bundles", type="primary", use_container_width=True)
+        if gen_btn:
+            try:
+                with st.spinner(f"Generating {g_clients}×10 bundles ({g_samples} samples each) — ~2-5s..."):
+                    res = httpx.post(f"{server_url}/admin/datasets/generate", json={"clients": int(g_clients), "samples": int(g_samples), "problems": g_problems or None, "overwrite": g_overwrite}, timeout=60.0).json()
+                st.success(f"✓ Generated {res.get('bundle_count')} bundles → `{res.get('out_dir')}`")
+                st.code("\n".join(res.get("bundles", [])[:20]))
+                st.toast(f"Generated {res.get('bundle_count')} bundles", icon="✅")
+            except Exception as exc:
+                st.error(f"Generate failed: {exc}")
+
+    with c2:
+        st.markdown("#### ✅ Validation gate")
+        st.caption("FR-RUN-5 — reproduces paper FedAvg Poisson `30 rounds×10 epochs` and checks L2 improves.")
+        if st.button("▶ Run validation gate (Poisson)", use_container_width=True):
+            try:
+                with st.spinner("Running gate (~15s in-memory)..."):
+                    res = httpx.post(f"{server_url}/admin/run/validation-gate", params={"problem": "poisson"}, timeout=90.0).json()
+                if res.get("ok"):
+                    st.success("✓ Gate PASSED — FedAvg reproduced")
+                else:
+                    st.error(f"Gate FAILED (exit {res.get('exit_code')})")
+                st.code(res.get("output", "")[-2000:])
+            except Exception as exc:
+                st.error(f"Gate error: {exc}")
+
+    st.divider()
+    st.markdown("#### 🌀 Sweep runner — YAML (no CLI)")
+    st.caption("Upload a sweep YAML (`sweep:` or lists) or use presets. Runs in-memory via `app.runner` and writes `results/` + `sweep_summary_*.json` + trade-off plots.")
+    # Preset YAMLs
+    preset_map = {
+        "poisson_fedavg (single)": "orient/configs/poisson_fedavg.yaml",
+        "schaffer krum adversarial": "orient/configs/schaffer_krum_adversarial.yaml",
+        "framework_v2_all (helmholtz C0.5 int8_topk dp0.1)": "orient/configs/framework_v2_all.yaml",
+        "deep_benchmark (3 problems × aggs)": "orient/configs/deep_benchmark.yaml",
+        "sweep_example (tiny)": "orient/configs/sweep_example.yaml",
+    }
+    p1, p2 = st.columns([2, 3])
+    preset_choice = p1.selectbox("Preset sweep", ["(custom upload)"] + list(preset_map.keys()))
+    uploaded = p2.file_uploader("Upload YAML sweep", type=["yaml", "yml"], help="Or paste YAML below")
+    yaml_text = ""
+    if uploaded is not None:
+        yaml_text = uploaded.getvalue().decode("utf-8")
+        st.code(yaml_text[:1200], language="yaml")
+    elif preset_choice != "(custom upload)":
+        try:
+            # presets are relative to orient backend dir; resolve
+            raw_path = Path(__file__).resolve().parents[1] / preset_map[preset_choice].replace("orient/", "")
+            alt_path = Path(__file__).resolve().parents[2] / preset_map[preset_choice]
+            src = alt_path if alt_path.exists() else raw_path
+            if src.exists():
+                yaml_text = src.read_text(encoding="utf-8")
+                st.code(yaml_text[:1200], language="yaml")
+            else:
+                st.warning(f"Preset not found at {src}")
+        except Exception as e:
+            st.warning(f"Cannot load preset: {e}")
+    else:
+        yaml_text = st.text_area("Paste YAML sweep", height=180, placeholder="problem: poisson\naggregator: [fedavg, fedprox]\ntotal_rounds: 30\n...")
+    sweep_col1, sweep_col2 = st.columns([2, 2])
+    sweep_results_dir = sweep_col1.text_input("Results dir", "results")
+    sweep_use_http = sweep_col2.checkbox("Drive live server (spawn demo clients)", value=False, help="If checked, sweep drives REST server and auto-spawns demo clients; else runs pure in-memory")
+    if st.button("▶ Run sweep from UI", type="primary", use_container_width=True, disabled=not yaml_text.strip()):
+        try:
+            with st.spinner("Running sweep — this may take 30s-5min..."):
+                res = httpx.post(f"{server_url}/admin/run/sweep", json={"yaml_text": yaml_text, "results_dir": sweep_results_dir, "use_http": sweep_use_http}, timeout=300.0).json()
+            st.success(f"✓ Sweep done: {res.get('configs')} configs → `{res.get('results_dir')}`")
+            st.json(res.get("summary", []))
+            st.toast("Sweep complete", icon="🌀")
+        except Exception as exc:
+            # Try to extract detail
+            detail = str(exc)
+            try:
+                if hasattr(exc, 'response'):
+                    detail = exc.response.text[:1000]  # type: ignore
+            except: pass
+            st.error(f"Sweep failed: {detail[:1000]}")
+
+    st.caption("After sweep, check **📁 Results** (`metrics.csv`) and **⚖️ Compare** (trade-off plot `results/plots/tradeoff_*.png`). No terminal needed.")
 
 with tab_results:
     st.subheader("📁 Results browser")
