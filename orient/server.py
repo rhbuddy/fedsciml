@@ -135,6 +135,8 @@ def _run_runner(args: argparse.Namespace) -> int:
             argv += ["--expected-l2", str(args.expected_l2)]
         if args.gate_tolerance is not None:
             argv += ["--gate-tolerance", str(args.gate_tolerance)]
+        if args.gate_mode is not None:
+            argv += ["--gate-mode", str(args.gate_mode)]
     if args.list_problems:
         argv += ["--list-problems"]
     return int(runner_main(argv) or 0)
@@ -168,6 +170,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--validation-gate", nargs="?", const="poisson", default=None, help="Run validation gate (FR-RUN-5) for problem (default poisson)")
     p.add_argument("--expected-l2", type=float, default=None, help="Published relative L2; enables the FR-RUN-5 +/-tolerance comparison")
     p.add_argument("--gate-tolerance", type=float, default=0.05, help="FR-RUN-5 tolerance (default 0.05)")
+    p.add_argument("--gate-mode", type=str, default=None, choices=["relative", "absolute"],
+                   help="FR-RUN-5 tolerance reading: relative (default) or absolute difference")
     p.add_argument("--list-problems", action="store_true", help="List 10 benchmark problems and exit")
     return p
 

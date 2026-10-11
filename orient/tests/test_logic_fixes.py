@@ -352,6 +352,60 @@ def test_validation_gate_needs_the_published_value() -> None:
           f"validation_gate{sig} takes the published value and the tolerance")
 
 
+# --------------------------------------------------------------- FR-DATA-7
+def test_w1_self_check_matches_manual_calculation() -> None:
+    """FR-DATA-7: W1 must be verified against hand-computed values in the gate."""
+    print("\n=== FR-DATA-7 W1 self-check ===")
+    import numpy as np
+    from app.metrics import self_check_w1, w1_1d, w1_nd
+
+    results = self_check_w1()
+    check(len(results) >= 5, f"{len(results)} manual W1 cases are checked")
+    for name, ok, detail in results:
+        check(ok, f"{name}: {detail}")
+
+    # The cases must actually be able to fail - a self-check that cannot fail is
+    # not a check. Re-run the mean-difference shortcut the code used to use and
+    # confirm it disagrees with the manual answer on the symmetric-cloud case.
+    A = np.array([[0.0, 0.0], [0.0, 0.0]])
+    B = np.array([[-1.0, 0.0], [1.0, 0.0]])
+    mean_diff = float(np.linalg.norm(A.mean(axis=0) - B.mean(axis=0)))
+    check(abs(mean_diff - 0.0) < 1e-12, f"the old mean-diff shortcut gives {mean_diff} here ...")
+    check(abs(w1_nd(A, B) - 1.0) < 1e-9, f"... while the real W1 is {w1_nd(A, B)}")
+
+    # And the gate must call it.
+    import inspect
+    from app import runner
+    check("self_check_w1" in inspect.getsource(runner.validation_gate),
+          "validation_gate invokes the FR-DATA-7 self-check")
+
+
+# ----------------------------------------------------------------- FR-RUN-5
+def test_validation_gate_supports_both_tolerance_readings() -> None:
+    """FR-RUN-5 asks for '+/-5% relative ... (absolute difference)'; support both."""
+    print("\n=== FR-RUN-5 tolerance modes ===")
+    import inspect
+    from app import runner
+
+    sig = inspect.signature(runner.validation_gate)
+    check("tolerance_mode" in sig.parameters, f"validation_gate{sig} takes tolerance_mode")
+    check(sig.parameters["tolerance_mode"].default == "relative",
+          "defaults to the relative ('+/-5%') reading")
+
+    main_src = inspect.getsource(runner.main)
+    check("--gate-mode" in main_src and "relative" in main_src and "absolute" in main_src,
+          "--gate-mode is wired into the CLI with both choices")
+
+    # The two readings must actually diverge, otherwise the flag is decorative.
+    # best=0.054, published=0.10: relative deviation 46% (fails 5%), absolute
+    # deviation 0.046 (passes 0.05).
+    best, published = 0.054, 0.10
+    rel = abs(best - published) / published
+    absd = abs(best - published)
+    check(rel > 0.05 and absd < 0.05,
+          f"relative {rel:.3f} > 0.05 but absolute {absd:.3f} < 0.05: the modes disagree")
+
+
 def main() -> int:
     test_median_is_a_real_median_at_even_k()
     test_noise_fraction_always_compromises_someone()
@@ -366,6 +420,8 @@ def main() -> int:
     test_server_adaptive_does_not_double_apply_momentum()
     test_trimmed_mean_reports_when_it_trims_nothing()
     test_validation_gate_needs_the_published_value()
+    test_w1_self_check_matches_manual_calculation()
+    test_validation_gate_supports_both_tolerance_readings()
     print("\n" + "=" * 60)
     if failures:
         print(f"{len(failures)} FAILURE(S):")

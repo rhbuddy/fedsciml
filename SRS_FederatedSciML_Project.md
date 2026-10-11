@@ -396,7 +396,7 @@ federated-sciml-main/
 | FR-SERVERAPP-2 | The Server app SHALL maintain a client registry and a per-round update store. |
 | FR-SERVERAPP-3 | The Server app SHALL drive synchronous rounds: broadcast global model → collect client updates → aggregate → advance round. |
 | FR-SERVERAPP-4 | The Server app SHALL expose endpoints: `/health`, `/clients/register`, `/clients/{id}/assignment`, `/clients/{id}/weights`, `/clients/{id}/update`, `/run/status`, `/admin/run/start`, `/admin/run/stop`. |
-| FR-SERVERAPP-5 | The Server app SHALL reuse the existing aggregation engine (`aggregators.py`, `robust.py`) and SHALL NOT reimplement aggregation. |
+| FR-SERVERAPP-5 | The Server app SHALL reuse the existing aggregation engine (`aggregators.py`, which contains the robust rules — `median`, `trimmed_mean`, `krum`; see `ROBUST_AGGREGATORS`) and SHALL NOT reimplement aggregation. *Note: no separate `robust.py` module exists or is planned; the robust aggregators live in `aggregators.py` and `orchestrator.py` reaches them only via `aggregators.aggregate(...)`. Verified: zero aggregation reimplementation in `api.py`/`orchestrator.py`/`runner.py`.* |
 | FR-SERVERAPP-6 | The Server app SHALL persist results through the logging layer (`results/<problem>/<aggregator>/`). |
 
 ### 4.12 Wire Protocol (FR-PROTO)

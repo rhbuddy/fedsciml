@@ -102,6 +102,52 @@ def _assignment_w1(a: np.ndarray, b: np.ndarray, max_n: int = 512, seed: int = 0
     return float(cost[rows, cols].mean())
 
 
+def self_check_w1(tol: float = 1e-9) -> List[Tuple[str, bool, str]]:
+    """FR-DATA-7: verify the W1 implementation against hand-computable cases.
+
+    Every expectation below is exact by construction, so a failure means the W1
+    code is wrong rather than the case being an approximation. Returns
+    ``(name, ok, detail)`` triples; the caller decides how loudly to complain.
+
+    The cases are chosen to catch the specific ways this has been wrong:
+      * "2d symmetric clouds" is 0.0 under a ||mean(a)-mean(b)|| fallback, which
+        is what w1_nd used to do when POT was unavailable.
+      * "1d translation" and "2d translation" are 0.0 under any
+        mean-matching or sliced-Wasserstein shortcut that loses the shift.
+    """
+    n = 64
+    out: List[Tuple[str, bool, str]] = []
+
+    def _rec(name: str, got: float, want: float) -> None:
+        ok = bool(np.isfinite(got)) and abs(got - want) <= tol * max(1.0, abs(want))
+        out.append((name, ok, f"got {got:.10g}, manual {want:.10g}"))
+
+    # Two 1-D uniforms, one translated by exactly 1. W1 = 1 (uniform mass, so the
+    # optimal plan matches the i-th order statistic of each: |b_i - a_i| = 1).
+    a = np.linspace(0.0, 1.0, n)
+    _rec("1d translation U[0,1] vs U[1,2]", w1_1d(a, a + 1.0), 1.0)
+    _rec("1d translation via w1_nd", w1_nd(a, a + 1.0), 1.0)
+
+    # Same distribution: W1 = 0.
+    _rec("1d identical", w1_1d(a, a.copy()), 0.0)
+
+    # U[0,1] vs U[0,2] on n matched atoms: mean |b_i - a_i| = mean i/(n-1) = 0.5.
+    b = np.linspace(0.0, 2.0, n)
+    _rec("1d scaled U[0,1] vs U[0,2]", w1_1d(a, b), 0.5)
+
+    # 2-D, two point clouds with identical means but unit separation.
+    A = np.array([[0.0, 0.0], [0.0, 0.0]])
+    B = np.array([[-1.0, 0.0], [1.0, 0.0]])
+    _rec("2d symmetric clouds (mean-diff would give 0)", w1_nd(A, B), 1.0)
+
+    # 2-D pure translation by (3,4): W1 = 5, the Euclidean shift.
+    rng = np.random.default_rng(0)
+    P = rng.normal(size=(50, 2))
+    _rec("2d translation by (3,4)", w1_nd(P, P + np.array([3.0, 4.0])), 5.0)
+
+    return out
+
+
 def w1_between_clients(client_samples: Sequence[np.ndarray]) -> float:
     """Mean pairwise W1 per paper Eq.4 (direct W1 for K=2). Supports 1-D and ND samples."""
     k = len(client_samples)
