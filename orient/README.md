@@ -37,7 +37,7 @@ orient/
 │   ├── app/
 │   │   ├── api.py               #   FastAPI routes
 │   │   ├── orchestrator.py      #   Federation state + round engine
-│   │   ├── aggregators.py       #   fedavg fedprox fedadam fedadagrad fedyogi
+│   │   ├── aggregators.py       #   fedavg fedprox fedadam fedadagrad fedyogi scaffold feddyn
 │   │   │                        #   median trimmed_mean krum
 │   │   ├── weighting.py         #   uniform | data_size | quality
 │   │   ├── models.py            #   pure-PyTorch model factory (MLP, DeepONet)
@@ -238,24 +238,28 @@ global model's relative L2 error per round. Artifacts land in
 
 ---
 
-## Problems
+## Problems (10-problem benchmark suite — SRS §9.1, Table 4)
 
-| Name | Family | Model | Data | Ground truth |
+| Name | Family | Model (SRS default) | Data | Ground truth |
 |---|---|---|---|---|
-| `gramacy_lee` | supervised | MLP `[1,64,64,64,1]` | `x_train, y_train` | `sin(10πx)/(2x) + (x−1)⁴`, x∈[0.5,2.5] |
-| `schaffer` | supervised | MLP `[2,64,64,64,1]` | `x_train, y_train` | Schaffer N.2 on [−2,2]² |
-| `poisson` | **pinn** | MLP `[1,20,20,20,1]` + hard-constraint transform | `x_train` (collocation) | `u(x)=x+(1/8)sin8x+Σ(1/i)sin(ix)` on [0,π] |
-| `antiderivative` | **operator** | DeepONet (50 sensors, [40,40] ReLU branch/trunk) | `branch_train, trunk_train, y_train` | truncated Fourier series |
+| `gramacy_lee` | supervised | MLP `[1,64,64,64,1]` tanh | `x_train, y_train` | `sin(10πx)/(2x)+(x−1)⁴`, x∈[0.5,2.5] |
+| `schaffer` | supervised | MLP `[2,64,64,64,1]` tanh | `x_train, y_train` | Schaffer N.2 on [−2,2]² |
+| `poisson` | **pinn** | MLP `[1,20,20,20,1]` tanh + hard `poisson1d_hard` | `x_train` | `u=x+1/8 sin8x+Σ1/i sin(ix)` on [0,π] |
+| `helmholtz` | **pinn** | MLP `[2,64,64,64,1]` **sine** + `helmholtz_hard` `x(1−x)y(1−y)` | `x_train` (x,y) | `sin(4πx)sin(4πy)` |
+| `allen_cahn` | **pinn** | MLP `[2,64,64,64,1]` **sine/tanh** + `allen_cahn` transform | `x_train` (x,t) | manufactured `x²cos(πx) e^(−5t)` |
+| `inverse_ns` | **pinn** | MLP `[3,50×6,3]` tanh | `x_train`(x,y,t),`y_train`(u,v,p) | vortex `[-sinπx cosπy, cosπx sinπy] e^(−t)` |
+| `inverse_dr` | **pinn** | MLP `[1,20,20,20,2]` tanh | `x_train`,`y_train`(u,k) | `k=1+exp(−0.5(x−0.5)²/1.05²)`, `u=sinπx e^(−10(x−0.5)²)` |
+| `antiderivative` | **operator** | DeepONet `[50,40,40]` branch `[1,40,40]` trunk ReLU | `branch_train, trunk_train, y_train` | Fourier series `Σ a_k sin(kπx)` |
+| `burgers` | **operator** | DeepONet `[101,64,64]` branch `[2,64,64]` trunk ReLU | `branch_train, trunk_train, y_train` | viscous Burgers proxy ν=0.1 |
+| `diffusion_reaction` | **operator** | DeepONet `[101,100×3]` branch `[1,100×3]` trunk ReLU | `branch_train, trunk_train, y_train` | reaction-diffusion source→field |
 
-`poisson` reproduces the paper's setup: `u(0)=0` and `u(π)=π` are enforced
-*exactly* by the output transform `u = x + tanh(x)·tanh(π−x)·ŷ`, so the loss is
-the pure PDE residual `−u″ − f`.
+All 10 are in `app/problems.py` (identical in client & server), with `sample_dataset()`, PINN residuals (autograd) + `evaluate()` L2. `poisson` hard constraint `u(0)=0,u(π)=π` via `x+tanh(x)tanh(π−x)·ŷ` (pure residual loss).
 
-## Aggregators
+## Aggregators (10 — SRS §4.4)
 
 | Group | Algorithms |
 |---|---|
-| Standard | `fedavg`, `fedprox`, `fedadam`, `fedadagrad`, `fedyogi` |
+| Standard | `fedavg`, `fedprox`, `fedadam`, `fedadagrad`, `fedyogi`, **`scaffold`** |
 | Byzantine-robust | `median`, `trimmed_mean`, `krum` (multi‑Krum) |
 
 Weighting: `uniform` · `data_size` (the paper's default) · `quality`.
@@ -348,12 +352,12 @@ bundle is rejected with a clear error before training starts.
 
 | Test | Covers |
 |---|---|
-| `tests/test_static_imports.py` | 63 imports resolve; shared modules byte-identical |
-| `tests/test_runtime.py` | 33 checks — safetensors round-trip, all 8 aggregators (incl. median/Krum rejecting Byzantine updates), 3 weighting modes, all 4 problems, Poisson hard constraints exact (`u(0)=0`, `u(π)=π`) |
-| `tests/test_server_logic.py` | run-config validation, registration guards, seed reproducibility, round engine, weighting robustness |
-| `tests/test_client.py` | FedProx proximal term is differentiable, dataset bundle validation, all shipped bundles load |
-| `tests/test_e2e.py` | real uvicorn server + real client processes |
-| `tests/run_all_aggregators.py` | the E2E test for **all 8 aggregators** (per-aggregator budgets; Krum with 5 clients) — **all 8 pass** |
+| `tests/test_static_imports.py` | 83 imports resolve; shared modules byte-identical |
+| `tests/test_runtime.py` | 40+ checks — safetensors round-trip, all **10 aggregators** (incl. scaffold, median/Krum rejecting Byzantine, adaptive converging), 3 weighting modes, all **10 problems**, Poisson hard constraints exact |
+| `tests/test_server_logic.py` | run-config validation, registration guards, seed reproducibility, round engine, weighting robustness, noise & clipping |
+| `tests/test_client.py` | FedProx proximal differentiable, dataset validation (NaN/Inf/2-D), all **50 bundles** load (10 problems ×5) |
+| `tests/test_e2e.py` | real uvicorn server + 5 real client processes → L2 improves |
+| `tests/run_all_aggregators.py` | E2E for **all 10 aggregators** (per-aggregator budgets; Krum 5 clients, scaffold, adaptive) — **all 10 pass** |
 
 Observed convergence: `gramacy_lee`, FedAvg, 60 rounds × 10 epochs → L2
 **0.6225 → 0.2109**; `poisson` PINN → residual **23.7 → 2.2**.
@@ -374,14 +378,14 @@ Observed convergence: `gramacy_lee`, FedAvg, 60 rounds × 10 epochs → L2
 - **Dataset bundles were not shape-validated**, despite FR-CLIENTAPP-8.
 - **Missing `None` guards** on `model_spec` in the client UI.
 
-Not yet done (next steps):
-- **SCAFFOLD** is not implemented — it needs persistent per-client control
-  variates, which does not fit the stateless poll-based client yet.
-- **Byzantine / noisy-client injection** (`noise_sim.py`) is not wired in; the
-  robust aggregators are implemented and selectable, but nothing corrupts an
-  update yet.
-- **Wasserstein (W1) heterogeneity metric** is not computed yet.
-- Models here are pure-PyTorch (`models.py`); DeepXDE-based PINN/DeepONet models
-  from `federated-sciml-main/` are not yet wrapped by an adapter.
-- The Streamlit UIs were written but not yet launched interactively (they need
-  `streamlit`, which is listed in both `requirements.txt` files).
+Framework v2 (user requested: 3/4, postgres+s3+redis excluded — stays filesystem `results/`):
+
+| Change | How | Effort |
+|---|---|---|
+| **Async + C=0.5 sampling** | sample 50% per round + `round_timeout=60s` (setting `ORIENT_ROUND_TIMEOUT` or per-run `round_timeout`, resamples deterministically `seed+round`). Sync stall on 1 slow client → async. | 1h — `orchestrator._sample_clients`, `RunState.client_fraction/round_timeout`, dashboard slider + `federated-sciml-main` sampling |
+| **Compression int8 + top_k 1%** | `weights.py` quantize per-tensor `scale=max/127` + sparse indices for top 1% magnitude before `safetensors`. Helmh 34KB→3.6KB (89% saving, 10x), Burgers 59KB→4.6KB, 50k params 200KB→20KB. Dashboard + `storage` plot comm vs L2. | 5 lines in `weights.py` (`compress_state_dict`, `state_dict_to_bytes(compression, topk_ratio)`) |
+| **DP (opacus) σ=0.1 + RDP** | after `norm` clip, add `N(0, σ²·C²)` per grad (`trainer.train dp_noise_multiplier`), track `ε` via RDP `α/(2σ²)` or `opacus.RDPAccountant` if installed, logged per round `dp_epsilon` + plot. `gradient_clip: norm` required. | Low — `trainer` 5 lines, `orchestrator._dp_epsilon`, dashboard `ε` chart |
+
+Excluded per spec: **postgres+s3+redis** — stays **filesystem** `results/<problem>/<aggregator>/<run_id>/` (simple, no external DB). All artifacts via `RunStorage` (`config.yaml`, `server_best.pth`, `loss.npz`, `l2_error.npz`, `weight_divergence.npz`, `bytes.npz`, `dp_epsilon.npz`, `baselines.json`, `plots/*.png`).
+
+Previous gaps now closed: SCAFFOLD (control variates), W1 heterogeneity (POT), noisy/adversarial `noise_sim`, centralized/extrapolation baselines, weight divergence, 10 problems × 10 aggregators.

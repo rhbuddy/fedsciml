@@ -1,9 +1,16 @@
 """Structured run storage: ``results/<problem>/<aggregator>/<run_id>/``.
 
-Artifacts (SRS v1.4 FR-SERVERAPP-6):
-  - ``config.json``          the run configuration
-  - ``metrics.jsonl``        one JSON record per completed round
-  - ``final_model.safetensors``  final global weights
+Artifacts (SRS v1.4 §8.2 + FR-STORE-1..5, FR-SERVERAPP-6, backward-compat):
+  - ``config.json``              run configuration (+ run_id, created_at)
+  - ``config.yaml``              exact YAML snapshot (reproducibility FR-CFG-6)
+  - ``metrics.jsonl``            one JSON record per completed round
+  - ``metrics.json``             aggregated summary (final)
+  - ``final_model.safetensors``  final global weights (wire format)
+  - ``server_final.pth``        torch.save final weights (SRS §8.2)
+  - ``server_best.pth``         best (lowest L2) weights
+  - ``loss.npz``                 training loss curve
+  - ``l2_error.npz``             L2 error over rounds
+  - ``weight_divergence.npz``    per-layer divergence vs initial/central proxy
 """
 
 from __future__ import annotations
@@ -14,18 +21,50 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import numpy as np
+import torch
+import yaml
+
 from .weights import save_state_dict
+
+
+def _sanitize_run_component(name: str) -> str:
+    # Allow only alphanumerics, dash, underscore; reject path traversal
+    import re
+    if not re.match(r"^[a-zA-Z0-9_-]{1,64}$", name):
+        raise ValueError(f"Invalid run component '{name}': must match ^[a-zA-Z0-9_-]+$")
+    if ".." in name or "/" in name or "\\" in name:
+        raise ValueError(f"Path traversal in '{name}'")
+    return name
 
 
 class RunStorage:
     def __init__(self, root: str | Path, problem: str, aggregator: str) -> None:
+        # Validate components to prevent path traversal (e.g. problem="../../etc")
+        _sanitize_run_component(problem)
+        _sanitize_run_component(aggregator)
+        # Jail root: resolve and ensure it does not escape a reasonable base.
+        # We allow absolute or relative `root`, but forbid `..` traversal.
+        root_path = Path(root)
+        if ".." in str(root_path):
+            # simple check, further jail in api.py for user-controlled results_dir
+            raise ValueError(f"Invalid results_dir '{root}': must not contain '..'")
         # Include a short random suffix so two runs started in the same second do
         # not collide and append metrics into the same directory.
         run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
-        self.root = Path(root)
+        self.root = root_path
         self.dir = self.root / problem / aggregator / run_id
-        self.dir.mkdir(parents=True, exist_ok=True)
+        self.dir.mkdir(parents=True, exist_ok=True, mode=0o750)
         self.metrics_path = self.dir / "metrics.jsonl"
+        # best tracking for server_best.pth
+        self._best_l2: float | None = None
+        self._best_state: Optional[Dict[str, torch.Tensor]] = None
+        self._l2_history: List[float] = []
+        self._loss_history: List[float] = []
+        self._wd_history: List[Dict[str, float]] = []
+        self._bytes_history: List[float] = []
+        self._dp_history: List[float] = []
+        self._initial_state: Optional[Dict[str, torch.Tensor]] = None
 
     @property
     def run_id(self) -> str:
@@ -36,13 +75,186 @@ class RunStorage:
         payload["run_id"] = self.run_id
         payload["created_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
         (self.dir / "config.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        # SRS FR-CFG-6: save exact YAML snapshot
+        try:
+            # preserve original yaml if provided
+            if "_raw_yaml" in payload:
+                (self.dir / "config.yaml").write_text(payload["_raw_yaml"], encoding="utf-8")
+            else:
+                # dump json-like config as yaml for reproducibility
+                safe = {k: v for k, v in payload.items() if k != "_raw_yaml"}
+                (self.dir / "config.yaml").write_text(yaml.safe_dump(safe, sort_keys=False), encoding="utf-8")
+        except Exception:
+            pass
+
+    def set_initial_state(self, state: Dict[str, torch.Tensor]) -> None:
+        if self._initial_state is None:
+            self._initial_state = {k: v.detach().cpu().clone() for k, v in state.items()}
 
     def log_round(self, record: Dict[str, Any]) -> None:
         with self.metrics_path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
+        # track histories for SRS artifacts
+        try:
+            if "l2_relative_error" in record and record["l2_relative_error"] is not None:
+                v = float(record["l2_relative_error"])
+                if np.isfinite(v):
+                    self._l2_history.append(v)
+            if "mean_local_loss" in record and record["mean_local_loss"] is not None:
+                self._loss_history.append(float(record["mean_local_loss"]))
+            if "weight_divergence" in record and isinstance(record["weight_divergence"], dict):
+                self._wd_history.append(dict(record["weight_divergence"]))
+            if "total_bytes" in record and record["total_bytes"] is not None:
+                self._bytes_history.append(float(record["total_bytes"]))
+            if "dp_epsilon" in record and record["dp_epsilon"] is not None:
+                self._dp_history.append(float(record["dp_epsilon"]))
+        except Exception:
+            pass
 
-    def save_model(self, state_dict) -> None:
+    def save_model(self, state_dict, is_best: bool = False) -> None:
+        # Always save final via safetensors (wire compat)
         save_state_dict(state_dict, self.dir / "final_model.safetensors")
+        # SRS: torch.save variants
+        try:
+            torch.save(state_dict, self.dir / "server_final.pth")
+        except Exception:
+            pass
+        # Update best tracking externally via notify_best
+
+    def notify_best(self, l2: float, state_dict: Dict[str, torch.Tensor]) -> None:
+        """Track best model (lowest L2) for server_best.pth."""
+        try:
+            if l2 is None or not np.isfinite(l2):
+                return
+            if self._best_l2 is None or float(l2) < self._best_l2:
+                self._best_l2 = float(l2)
+                self._best_state = {k: v.detach().cpu().clone() for k, v in state_dict.items()}
+        except Exception:
+            pass
+
+    def finalize(self, final_state: Dict[str, torch.Tensor], extra_metrics: Optional[Dict[str, Any]] = None) -> None:
+        """Write SRS artifacts at run completion: metrics.json, npz files, best model."""
+        # Save best
+        if self._best_state is not None:
+            try:
+                save_state_dict(self._best_state, self.dir / "server_best.safetensors")
+                torch.save(self._best_state, self.dir / "server_best.pth")
+            except Exception:
+                pass
+        else:
+            # no best tracked, duplicate final as best
+            try:
+                save_state_dict(final_state, self.dir / "server_best.safetensors")
+                torch.save(final_state, self.dir / "server_best.pth")
+            except Exception:
+                pass
+        # loss.npz
+        try:
+            np.savez_compressed(self.dir / "loss.npz", loss=np.array(self._loss_history, dtype=np.float64))
+        except Exception:
+            pass
+        try:
+            np.savez_compressed(self.dir / "l2_error.npz", l2=np.array(self._l2_history, dtype=np.float64))
+        except Exception:
+            pass
+        try:
+            # weight_divergence.npz: save per-round mean divergence plus per-layer stacks
+            if self._wd_history:
+                # collect keys
+                keys = set()
+                for d in self._wd_history:
+                    keys.update(d.keys())
+                # remove summary keys for per-layer array? keep all
+                wd_arr = {}
+                for k in keys:
+                    vals = [float(d.get(k, np.nan)) for d in self._wd_history]
+                    wd_arr[k] = np.array(vals, dtype=np.float64)
+                np.savez_compressed(self.dir / "weight_divergence.npz", **wd_arr)
+            else:
+                np.savez_compressed(self.dir / "weight_divergence.npz", mean=np.array([], dtype=np.float64))
+        except Exception:
+            pass
+        try:
+            if self._bytes_history:
+                np.savez_compressed(self.dir / "bytes.npz", bytes=np.array(self._bytes_history, dtype=np.float64))
+            if self._dp_history:
+                np.savez_compressed(self.dir / "dp_epsilon.npz", epsilon=np.array(self._dp_history, dtype=np.float64))
+        except Exception:
+            pass
+        # metrics.json (summary)
+        try:
+            summary: Dict[str, Any] = {
+                "run_id": self.run_id,
+                "best_l2": self._best_l2,
+                "final_l2": self._l2_history[-1] if self._l2_history else None,
+                "l2_history": self._l2_history,
+                "loss_history": self._loss_history,
+                "total_rounds": len(self._l2_history),
+            }
+            if extra_metrics:
+                summary.update(extra_metrics)
+            (self.dir / "metrics.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+        # SRS §8.2 + §10.4: optional plots (L2, loss, weight divergence)
+        try:
+            import matplotlib.pyplot as plt  # type: ignore
+
+            plots = self.dir / "plots"
+            plots.mkdir(parents=True, exist_ok=True)
+            if self._loss_history:
+                plt.figure(figsize=(5, 3))
+                plt.plot(self._loss_history, label="mean_local_loss")
+                plt.xlabel("round")
+                plt.ylabel("loss")
+                plt.title("Loss curve")
+                plt.grid(alpha=0.3)
+                plt.tight_layout()
+                plt.savefig(plots / "loss.png", dpi=120)
+                plt.close()
+            if self._l2_history:
+                plt.figure(figsize=(5, 3))
+                plt.plot(self._l2_history, label="L2 relative error", color="tab:orange")
+                plt.xlabel("round")
+                plt.ylabel("L2 error")
+                plt.title("L2 error curve")
+                plt.grid(alpha=0.3)
+                plt.tight_layout()
+                plt.savefig(plots / "l2_error.png", dpi=120)
+                plt.close()
+            if self._wd_history and any("_mean" in d for d in self._wd_history):
+                vals = [float(d.get("_mean", float("nan"))) for d in self._wd_history]
+                plt.figure(figsize=(5, 3))
+                plt.plot(vals, label="weight divergence (mean)", color="tab:green")
+                plt.xlabel("round")
+                plt.ylabel("divergence")
+                plt.title("Weight divergence")
+                plt.grid(alpha=0.3)
+                plt.tight_layout()
+                plt.savefig(plots / "weight_divergence.png", dpi=120)
+                plt.close()
+            if self._bytes_history:
+                plt.figure(figsize=(5, 3))
+                plt.plot([b/1024 for b in self._bytes_history], label="KB per round", color="tab:orange")
+                plt.xlabel("round")
+                plt.ylabel("KB")
+                plt.title("Communication cost (int8/topk)")
+                plt.grid(alpha=0.3)
+                plt.tight_layout()
+                plt.savefig(plots / "comm.png", dpi=120)
+                plt.close()
+            if self._dp_history and any(v>0 for v in self._dp_history):
+                plt.figure(figsize=(5, 3))
+                plt.plot(self._dp_history, label="ε (RDP)", color="tab:purple")
+                plt.xlabel("round")
+                plt.ylabel("ε")
+                plt.title("DP privacy budget")
+                plt.grid(alpha=0.3)
+                plt.tight_layout()
+                plt.savefig(plots / "dp_epsilon.png", dpi=120)
+                plt.close()
+        except Exception:
+            pass
 
     def read_metrics(self) -> List[Dict[str, Any]]:
         if not self.metrics_path.exists():

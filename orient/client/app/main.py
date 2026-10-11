@@ -121,9 +121,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 trainer.load_weights(bytes_to_state_dict(raw))
 
                 logger.info(
-                    "Round %d/%d: training %d epoch(s) on %d samples",
-                    resp.round, resp.total_rounds, resp.local_epochs, bundle.size,
+                    "Round %d/%d: training %d epoch(s) on %d samples (clip=%s)",
+                    resp.round, resp.total_rounds, resp.local_epochs, bundle.size, resp.gradient_clip,
                 )
+                # SRS gradient clipping: server config takes precedence over CLI legacy flag
                 stats = trainer.train(
                     bundle.arrays,
                     epochs=resp.local_epochs,
@@ -131,18 +132,40 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     batch_size=args.batch_size,
                     prox_mu=resp.prox_mu,
                     grad_clip=args.grad_clip,
+                    gradient_clip=resp.gradient_clip,
+                    max_norm=resp.max_norm,
+                    clip_value=resp.clip_value,
+                    dp_noise_multiplier=resp.dp_noise_multiplier,
+                    dp_delta=resp.dp_delta,
                 )
                 logger.info(
-                    "Round %d: local loss %.6g (%d steps)",
-                    resp.round, stats["loss"], stats["steps"],
+                    "Round %d: local loss %.6g (%d steps) dp=%.3g comp=%s",
+                    resp.round, stats["loss"], stats["steps"], resp.dp_noise_multiplier, resp.compression,
                 )
 
+                # SRS FR-AGG-12: quality weighting uses validation loss on 20% held-out shard
+                local_loss = float(stats.get("val_loss", stats["loss"]))
+                # Framework v2: optional compression (int8 + topk) before upload
+                raw_bytes = state_dict_to_bytes(
+                    trainer.state_dict(),
+                    compression=resp.compression,
+                    topk_ratio=resp.topk_ratio,
+                )
+                # log compression saving when enabled
+                if resp.compression and resp.compression != "none":
+                    # estimate raw size for logging
+                    try:
+                        raw_uncompressed = state_dict_to_bytes(trainer.state_dict(), compression="none")
+                        saving = 100 * (1 - len(raw_bytes) / max(1, len(raw_uncompressed)))
+                        logger.info("Compression %s topk=%.3g: %d -> %d bytes (%.1f%% saved)", resp.compression, resp.topk_ratio, len(raw_uncompressed), len(raw_bytes), saving)
+                    except Exception:
+                        pass
                 server.upload_weights(
                     args.client_id,
                     resp.round,
                     bundle.size,
-                    stats["loss"],
-                    state_dict_to_bytes(trainer.state_dict()),
+                    local_loss,
+                    raw_bytes,
                 )
                 rounds_done += 1
 

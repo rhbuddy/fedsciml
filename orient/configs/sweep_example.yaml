@@ -1,0 +1,11 @@
+# Appendix A.4 Performance Sweep (Optimizer Comparison)
+sweep:
+  problem: [poisson, antiderivative, schaffer]
+  aggregator: [fedavg, fedprox, krum]
+  optimizer: [adam]
+  n_clients: 2
+  heterogeneity:
+    mode: 1d_partition
+    n_pieces: 10
+  seed: [42]
+# This sweep expands to 3*3=9 configs; seeds expanded via separate runner handling

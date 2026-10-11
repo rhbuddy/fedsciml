@@ -1,6 +1,6 @@
 {
   "problem": "antiderivative",
-  "n_samples": 2000,
+  "n_samples": 1500,
   "domain": {
     "fourier_modes": [
       4,

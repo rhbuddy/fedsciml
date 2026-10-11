@@ -74,7 +74,7 @@ def load_bundle(path: str | Path, problem: Optional[str] = None) -> DatasetBundl
 
     problem_obj = get_problem(resolved_problem)
 
-    arrays = {k: np.asarray(v) for k, v in np.load(str(arrays_path)).items()}
+    arrays = {k: np.asarray(v) for k, v in np.load(str(arrays_path), allow_pickle=False).items()}
     missing = [k for k in problem_obj.required_arrays if k not in arrays]
     if missing:
         raise ValueError(

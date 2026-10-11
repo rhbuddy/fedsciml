@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 
 @dataclass
 class Settings:
-    host: str = field(default_factory=lambda: os.environ.get("ORIENT_HOST", "0.0.0.0"))
+    host: str = field(default_factory=lambda: os.environ.get("ORIENT_HOST", "0.0.0.0"))  # nosec B104 - intentional for docker; override with ORIENT_HOST=127.0.0.1 for lockdown
     port: int = field(default_factory=lambda: int(os.environ.get("ORIENT_PORT", "8000")))
     results_dir: str = field(default_factory=lambda: os.environ.get("ORIENT_RESULTS_DIR", "results"))
     seed: int = field(default_factory=lambda: int(os.environ.get("ORIENT_SEED", "0")))
@@ -26,6 +26,9 @@ class Settings:
     client_ttl_seconds: int = field(
         default_factory=lambda: int(os.environ.get("ORIENT_CLIENT_TTL", "300"))
     )
+    # Optional API key for admin endpoints (if set, clients must send X-API-Key header).
+    # When empty, auth is disabled to keep local/dev and existing tests frictionless.
+    api_key: str = field(default_factory=lambda: os.environ.get("ORIENT_API_KEY", ""))
 
 
 settings = Settings()

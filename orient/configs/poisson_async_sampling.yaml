@@ -1,0 +1,22 @@
+# Async + C=0.5 sampling + round_timeout=60s (Framework v2, 1h effort)
+# Sync wait for all K stalls on 1 slow client. Sample 50% per round + timeout 60s.
+# Uses settings ORIENT_ROUND_TIMEOUT fallback but per-run round_timeout exposed in dashboard.
+problem: poisson
+n_clients: 4
+aggregator: fedavg
+aggregation_weights: data_size
+local_epochs: 5
+global_rounds: 30
+heterogeneity:
+  mode: 1d_partition
+  n_pieces: 10
+learning_rate: 0.001
+optimizer: adam
+seed: 42
+noise_mode: none
+noise_fraction: 0.0
+gradient_clip: none
+client_fraction: 0.5
+round_timeout: 60
+compression: none
+output_dir: results/poisson/async_sampling/

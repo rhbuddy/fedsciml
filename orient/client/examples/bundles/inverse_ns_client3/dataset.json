@@ -1,0 +1,10 @@
+{
+  "problem": "inverse_ns",
+  "n_samples": 1500,
+  "domain": {
+    "x_interval": [
+      3.8,
+      5.199999999999999
+    ]
+  }
+}

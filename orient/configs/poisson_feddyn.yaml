@@ -1,0 +1,22 @@
+# FedDyn on Poisson — dynamic regularization for heterogeneous data (Acar et al. 2021)
+# Benefits most when n_pieces is small (high heterogeneity, W1 large).
+problem: poisson
+n_clients: 2
+aggregator: feddyn
+aggregation_weights: data_size
+local_epochs: 5
+global_rounds: 30
+heterogeneity:
+  mode: 1d_partition
+  n_pieces: 2
+learning_rate: 0.001
+optimizer: adam
+seed: 42
+noise_mode: none
+noise_fraction: 0.0
+gradient_clip: none
+aggregator_params:
+  alpha: 0.05
+  beta: 0.9
+  server_lr: 1.0
+output_dir: results/poisson/feddyn/

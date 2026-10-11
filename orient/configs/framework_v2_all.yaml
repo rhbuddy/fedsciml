@@ -1,0 +1,23 @@
+# Framework v2 — all 3 (exclude postgres+s3+redis per user spec): async C=0.5 + int8/topk + DP
+# Combines: sampling 50% + timeout 60s, compression int8_topk 1%, DP σ=0.1
+problem: helmholtz
+n_clients: 4
+aggregator: fedavg
+aggregation_weights: data_size
+local_epochs: 5
+global_rounds: 30
+heterogeneity:
+  mode: xy_partition
+  n_pieces: 4
+learning_rate: 0.001
+optimizer: adam
+seed: 42
+gradient_clip: norm
+max_norm: 1.0
+client_fraction: 0.5
+round_timeout: 60
+compression: int8_topk
+topk_ratio: 0.01
+dp_noise_multiplier: 0.1
+dp_delta: 1e-5
+output_dir: results/helmholtz/framework_v2/

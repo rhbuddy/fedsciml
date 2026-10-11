@@ -1,0 +1,10 @@
+{
+  "problem": "allen_cahn",
+  "n_samples": 1500,
+  "domain": {
+    "x_interval": [
+      -1.0,
+      -0.6
+    ]
+  }
+}

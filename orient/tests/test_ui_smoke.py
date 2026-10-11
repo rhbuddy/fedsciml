@@ -117,6 +117,14 @@ def build_stub(server_url: str, calls: list[str]) -> types.ModuleType:
         record("selectbox")
         return list(options)[index] if len(options) else None
 
+    def multiselect(label, options, default=None, **k):
+        record("multiselect")
+        return default if default is not None else []
+
+    def text_area(label, value="", **k):
+        record("text_area")
+        return value
+
     def button(label, **k):
         record("button")
         return False
@@ -141,6 +149,18 @@ def build_stub(server_url: str, calls: list[str]) -> types.ModuleType:
         record("progress")
         return Ctx()
 
+    def spinner(text=""):
+        record("spinner")
+        return Ctx()
+
+    def toast(msg, icon=None):
+        record("toast")
+        return None
+
+    def download_button(*a, **k):
+        record("download_button")
+        return False
+
     def stop():
         raise Stop()
 
@@ -148,6 +168,8 @@ def build_stub(server_url: str, calls: list[str]) -> types.ModuleType:
         record("rerun")
 
     st.stop, st.rerun = stop, rerun
+    st.spinner, st.toast, st.download_button = spinner, toast, download_button
+    st.multiselect, st.text_area = multiselect, text_area
     st.text_input, st.number_input, st.slider = text_input, number_input, slider
     st.selectbox, st.button, st.checkbox, st.toggle = selectbox, button, checkbox, toggle
 

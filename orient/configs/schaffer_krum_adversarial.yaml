@@ -1,0 +1,19 @@
+# Appendix A.3 Krum with Adversarial Clients
+problem: schaffer
+n_clients: 5
+aggregator: krum
+aggregation_weights: data_size
+local_epochs: 5
+global_rounds: 100
+heterogeneity:
+  mode: xy_partition
+  n_pieces: 5
+learning_rate: 0.001
+optimizer: adam
+seed: 42
+noise_mode: adversarial
+noise_fraction: 0.2  # 1 out of 5 clients is malicious (0.2 × 5 = 1)
+aggregator_params:
+  n_byzantine: 1
+  multi_k: 1
+output_dir: results/schaffer/krum_adversarial/
