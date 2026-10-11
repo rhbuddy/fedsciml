@@ -332,8 +332,15 @@ class Federation:
                 self._min_aggregation_k = max(MIN_CLIENTS_PER_ROUND, 3)
                 self._min_k_reason = f"{aggregator_name} requires K >= 3"
             else:
-                self._min_aggregation_k = MIN_CLIENTS_PER_ROUND
-                self._min_k_reason = f"at least {MIN_CLIENTS_PER_ROUND} clients are required"
+                # Plain and server-adaptive aggregators have no robustness minimum.
+                # MIN_CLIENTS_PER_ROUND is a floor on how many clients a round
+                # *samples* (see _sample_clients), not a validity condition: a round
+                # with a single participating client is uninteresting but perfectly
+                # legal, and rejecting it here breaks the single-client flow.
+                # Only median/trimmed_mean/krum have a real minimum, because below it
+                # the robustness guarantee silently evaporates.
+                self._min_aggregation_k = 1
+                self._min_k_reason = "at least 1 client is required"
             _k_for_check = len(expected) if expected else len(self.live_client_ids(req.problem))
             if expected and _k_for_check < self._min_aggregation_k:
                 # K is known and definitively too small - fail now, not mid-run.

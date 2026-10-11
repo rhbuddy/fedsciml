@@ -231,15 +231,24 @@ def test_protocol_weights():
         check(resp2.model_spec.family=="mlp", "AssignmentResponse round-trip")
         check(resp2.model_spec.params["layer_sizes"]==[2,8,1], "params survive")
         sd={"w":torch.randn(100,10),"b":torch.randn(10)}
+        # topk/int8_topk encode a sparse DELTA against the previous global weights, so
+        # the reference must be supplied on both the encode and the decode side.
+        ref={k: torch.zeros_like(v) for k,v in sd.items()}
         for mode in ["none","int8","topk","int8_topk"]:
-            b=state_dict_to_bytes(sd, compression=mode, topk_ratio=0.01)
-            sd2=bytes_to_state_dict(b)
+            b=state_dict_to_bytes(sd, compression=mode, topk_ratio=0.01, reference=ref)
+            sd2=bytes_to_state_dict(b, reference=ref)
             check(set(sd)==set(sd2), f"weights {mode} keys")
             check(sd2["w"].shape==sd["w"].shape, f"weights {mode} shape {len(b)}")
             if mode=="none": check(torch.allclose(sd["w"], sd2["w"]), "none bit-identical")
+        # topk without a reference is a programming error, not a silently lossy one
+        try:
+            state_dict_to_bytes(sd, compression="topk", topk_ratio=0.01)
+            check(False, "topk without reference should raise")
+        except ValueError: check(True, "topk without reference raises ValueError")
         big={f"layer{i}.weight":torch.randn(64,64) for i in range(3)}
+        big_ref={k: torch.zeros_like(v) for k,v in big.items()}
         b_none=state_dict_to_bytes(big, compression="none")
-        b_int8=state_dict_to_bytes(big, compression="int8_topk", topk_ratio=0.01)
+        b_int8=state_dict_to_bytes(big, compression="int8_topk", topk_ratio=0.01, reference=big_ref)
         ratio=len(b_int8)/len(b_none)
         check(ratio<0.5, f"int8_topk saves {len(b_none)}->{len(b_int8)} ratio {ratio:.2f}")
         for frac in [0.1,0.5,1.0]:
