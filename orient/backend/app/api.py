@@ -196,6 +196,7 @@ async def update(
     round_no: int = Query(..., alias="round"),
     n_samples: int = Query(0),
     local_loss: float = Query(0.0),
+    steps: int = Query(0, ge=0, description="local gradient steps this round (for DP accounting)"),
 ) -> AssignmentResponse:
     # Validate client_id format (prevent log injection / path traversal)
     if not _CLIENT_ID_RE.match(client_id):
@@ -205,7 +206,7 @@ async def update(
         raise HTTPException(status_code=400, detail="Empty weight payload")
     if len(payload) > 50 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Weight payload too large (>50MB)")
-    resp = federation.submit_update(client_id, round_no, n_samples, local_loss, payload)
+    resp = federation.submit_update(client_id, round_no, n_samples, local_loss, payload, steps=steps)
     if resp.status == "error":
         raise HTTPException(status_code=400, detail=resp.message)
     return resp

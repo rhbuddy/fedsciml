@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Run artifacts (the runner's default --results-dir is "results" relative to cwd;
+# orient/.gitignore only covers orient/backend/results)
+results/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Test / install artifacts
+*.log
+logs/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -2,22 +2,41 @@
 
 from __future__ import annotations
 
+import logging
+import math
 import random
 from typing import Dict, List, Sequence, Tuple
 
 import torch
 
+logger = logging.getLogger("orient.noise")
+
 StateDict = Dict[str, torch.Tensor]
 
 
 def select_compromised(k: int, fraction: float, seed: int = 0) -> List[int]:
-    """Deterministically select compromised client indices given fraction."""
+    """Deterministically select compromised client indices given fraction.
+
+    Uses ``ceil`` rather than ``round``: Python's ``round`` is banker's
+    rounding, so ``round(0.1 * 5) == round(0.5) == 0`` and a whole cell of the
+    SRS §9.1 noise grid (K=5, noise_fraction=0.1) silently ran as *clean* data,
+    making the robustness benchmark measure nothing. With ``ceil`` any
+    ``fraction > 0`` compromises at least one client, and the realized fraction
+    is logged when it differs from the requested one.
+    """
     if fraction <= 0 or k == 0:
         return []
-    n_bad = int(round(float(fraction) * k))
+    n_bad = int(math.ceil(float(fraction) * k))
     n_bad = max(0, min(n_bad, k))
     if n_bad == 0:
         return []
+    realized = n_bad / k
+    if abs(realized - float(fraction)) > 1e-9:
+        logger.warning(
+            "noise: fraction=%.3g with K=%d cannot be represented exactly; "
+            "compromising %d client(s) (realized fraction %.3g).",
+            fraction, k, n_bad, realized,
+        )
     rng = random.Random(seed)
     return sorted(rng.sample(range(k), n_bad))
 

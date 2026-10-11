@@ -37,6 +37,10 @@ class ServerOptimizerState:
     # SCAFFOLD control variates (Karimireddy et al., ICML 2020)
     scaffold_c: Dict[str, torch.Tensor] = field(default_factory=dict)
     scaffold_cis: List[Dict[str, torch.Tensor]] = field(default_factory=list)
+    # Per-client control variates keyed by client_id. The positional list above
+    # cannot survive partial participation: with C<1 sampling a different set of
+    # clients shows up each round, so "position i" is not the same client.
+    scaffold_ci_by_id: Dict[str, torch.Tensor] = field(default_factory=dict)
     # FedDyn dynamic regularizer state (Acar et al., AISTATS 2021)
     feddyn_h: Dict[str, torch.Tensor] = field(default_factory=dict)
     # FAST vector cache for adaptive (optional, auto-managed)
@@ -154,11 +158,23 @@ def _stack(states: Sequence[StateDict], key: str) -> torch.Tensor:
 
 
 def _elementwise_median(states: Sequence[StateDict]) -> StateDict:
-    # FAST vectorized median
+    """Element-wise median across clients (FR-AGG-8).
+
+    ``torch.median`` returns the LOWER of the two central values for an even
+    number of inputs, which makes the aggregator an element-wise *minimum* at
+    K=2 and biases it low at every even K. The reference implementations
+    (Flower's ``Median`` / ``numpy.median``) average the two central values, so
+    do the same here.
+    """
     keys = list(states[0].keys())
     tmpl = states[0]
     mat = _stack_vecs(states, keys)  # K x P
-    med_vec = mat.median(dim=0).values
+    k = mat.shape[0]
+    if k % 2 == 1:
+        med_vec = mat.median(dim=0).values
+    else:
+        sorted_mat, _ = torch.sort(mat, dim=0)
+        med_vec = (sorted_mat[k // 2 - 1] + sorted_mat[k // 2]) / 2.0
     return _unflatten_vec(med_vec, tmpl, keys)
 
 
@@ -236,93 +252,62 @@ def _server_adaptive(
     params: Dict[str, Any],
     kind: str,
 ) -> StateDict:
-    """FedAdam / FedAdagrad / FedYogi server-side adaptive update.
+    """FedAdam / FedAdagrad / FedYogi server-side adaptive update (Reddi et al. 2020).
 
-    FAST path: vectorize m/v to single vector (one kernel) while keeping dict
-    for backward compat. Falls back to per-key if shapes mismatch.
+    Vectorized: ``m``/``v`` live in a single flat vector (one kernel) and are
+    mirrored back into the per-key dicts for inspection.
+
+    There is deliberately NO blanket ``except`` retry here. The previous
+    implementation caught every exception and re-ran a per-key path, but ``m``
+    and ``v`` had already been mutated *in place* by then, so the retry applied
+    the momentum update a second time and double-incremented ``server.t`` while
+    hiding the original error. ``_validate_states`` already guarantees identical
+    keys/shapes, so a failure here is a real bug and must propagate.
     """
     keys = list(global_state.keys())
-    # vectorized fast path
-    try:
-        # avg via vec
-        avg_state = _weighted_average_vec(states, weights, keys, global_state)
-        # global vec
-        global_vec = _flatten_state(global_state, keys)
-        avg_vec = _flatten_state(avg_state, keys)
-        g_vec = global_vec - avg_vec  # pseudo-gradient
+    if kind not in ("adam", "adagrad", "yogi"):
+        raise ValueError(f"Unknown server optimizer '{kind}'")
 
-        lr = float(params.get("server_lr", 0.1))
-        beta1 = float(params.get("beta1", 0.9))
-        beta2 = float(params.get("beta2", 0.99))
-        tau = float(params.get("tau", 1e-3))
-        server.t += 1
+    avg_state = _weighted_average_vec(states, weights, keys, global_state)
+    global_vec = _flatten_state(global_state, keys)
+    avg_vec = _flatten_state(avg_state, keys)
+    g_vec = global_vec - avg_vec  # pseudo-gradient
 
-        # init vec buffers if needed
-        if server._m_vec is None or server._m_vec.numel() != g_vec.numel():
-            server._m_vec = torch.zeros_like(g_vec)
-            server._v_vec = torch.zeros_like(g_vec)
-        m_vec = server._m_vec
-        v_vec = server._v_vec
+    lr = float(params.get("server_lr", 0.1))
+    beta1 = float(params.get("beta1", 0.9))
+    beta2 = float(params.get("beta2", 0.99))
+    tau = float(params.get("tau", 1e-3))
+    server.t += 1
 
-        if kind == "adam":
-            m_vec.mul_(beta1).add_(g_vec, alpha=1 - beta1)
-            v_vec.mul_(beta2).add_(g_vec * g_vec, alpha=1 - beta2)
-        elif kind == "adagrad":
-            # m = g
-            m_vec.copy_(g_vec)
-            v_vec.add_(g_vec * g_vec)
-        elif kind == "yogi":
-            m_vec.mul_(beta1).add_(g_vec, alpha=1 - beta1)
-            # v = v - (1-beta2)*sign(v - g^2)*g^2
-            v_vec.sub_((1 - beta2) * torch.sign(v_vec - g_vec * g_vec) * g_vec * g_vec)
-        else:
-            raise ValueError(f"Unknown server optimizer '{kind}'")
-        server._m_vec, server._v_vec = m_vec, v_vec
+    if server._m_vec is None or server._m_vec.numel() != g_vec.numel():
+        server._m_vec = torch.zeros_like(g_vec)
+        server._v_vec = torch.zeros_like(g_vec)
+    m_vec = server._m_vec
+    v_vec = server._v_vec
 
-        # keep dict mirrors for inspectability
-        # update dict from vec for backward compat (small cost)
-        # we lazily sync only when needed - here we sync
-        offset = 0
-        for k in keys:
-            n = global_state[k].numel()
-            server.m[k] = m_vec[offset: offset + n].view(global_state[k].shape).clone()
-            server.v[k] = v_vec[offset: offset + n].view(global_state[k].shape).clone()
-            offset += n
+    if kind == "adam":
+        m_vec.mul_(beta1).add_(g_vec, alpha=1 - beta1)
+        v_vec.mul_(beta2).add_(g_vec * g_vec, alpha=1 - beta2)
+    elif kind == "adagrad":
+        m_vec.copy_(g_vec)
+        v_vec.add_(g_vec * g_vec)
+    else:  # yogi
+        m_vec.mul_(beta1).add_(g_vec, alpha=1 - beta1)
+        # v = v - (1-beta2)*sign(v - g^2)*g^2
+        v_vec.sub_((1 - beta2) * torch.sign(v_vec - g_vec * g_vec) * g_vec * g_vec)
 
-        update = lr * m_vec / (torch.sqrt(torch.abs(v_vec)) + tau)
-        new_vec = global_vec - update
-        return _unflatten_vec(new_vec, global_state, keys)
-    except Exception:
-        # fallback to legacy per-key
-        avg = _weighted_average_vec(states, weights, keys, global_state)
-        lr = float(params.get("server_lr", 0.1))
-        beta1 = float(params.get("beta1", 0.9))
-        beta2 = float(params.get("beta2", 0.99))
-        tau = float(params.get("tau", 1e-3))
-        server.t += 1
-        out: StateDict = {}
-        for key in avg:
-            base = _f32(global_state[key])
-            g = base - avg[key]
-            if key not in server.m:
-                server.m[key] = torch.zeros_like(g)
-                server.v[key] = torch.zeros_like(g)
-            m, v = server.m[key], server.v[key]
-            if kind == "adam":
-                m = beta1 * m + (1 - beta1) * g
-                v = beta2 * v + (1 - beta2) * g * g
-            elif kind == "adagrad":
-                m = g
-                v = v + g * g
-            elif kind == "yogi":
-                m = beta1 * m + (1 - beta1) * g
-                v = v - (1 - beta2) * torch.sign(v - g * g) * g * g
-            else:
-                raise ValueError(f"Unknown server optimizer '{kind}'")
-            server.m[key], server.v[key] = m, v
-            update = lr * m / (torch.sqrt(torch.abs(v)) + tau)
-            out[key] = base - update
-        return out
+    server._m_vec, server._v_vec = m_vec, v_vec
+
+    # mirror the flat buffers back into per-key dicts for inspectability
+    offset = 0
+    for k in keys:
+        n = global_state[k].numel()
+        server.m[k] = m_vec[offset: offset + n].view(global_state[k].shape).clone()
+        server.v[k] = v_vec[offset: offset + n].view(global_state[k].shape).clone()
+        offset += n
+
+    update = lr * m_vec / (torch.sqrt(torch.abs(v_vec)) + tau)
+    return _unflatten_vec(global_vec - update, global_state, keys)
 
 
 def _scaffold(
@@ -331,62 +316,72 @@ def _scaffold(
     global_state: StateDict,
     server: ServerOptimizerState,
     params: Dict[str, Any],
+    client_ids: Optional[Sequence[str]] = None,
 ) -> Tuple[StateDict, Dict[str, Any]]:
-    """SCAFFOLD FAST vectorized."""
+    """SCAFFOLD (Karimireddy et al., ICML 2020), vectorized.
+
+    Control variates are keyed by ``client_id`` when ids are supplied. That
+    matters under partial participation: with ``client_fraction < 1`` a
+    different subset of clients reports each round, so indexing ``c_i`` by the
+    position a client happens to occupy would hand one client's control
+    variate to a completely different client (and silently reset them all
+    whenever K changed).
+    """
     k = len(states)
     keys = list(global_state.keys()) if global_state else list(states[0].keys())
-    # vectorize global and client states
     global_vec = _flatten_state(global_state, keys)
     client_mats = _stack_vecs(states, keys)  # K x P
 
-    # lazy init global control vec
     if server._c_vec is None or server._c_vec.numel() != global_vec.numel():
         server._c_vec = torch.zeros_like(global_vec)
-    if server._cis_vec is None or len(server._cis_vec) != k or server._cis_vec[0].numel() != global_vec.numel():
-        # rebuild from dict if exists, else zeros
-        if server.scaffold_c and server.scaffold_cis and len(server.scaffold_cis) == k:
-            # convert dict to vec
-            server._c_vec = _flatten_state(server.scaffold_c, keys)
-            server._cis_vec = [_flatten_state(ci, keys) for ci in server.scaffold_cis]
-        else:
-            server._cis_vec = [torch.zeros_like(global_vec) for _ in range(k)]
     c_vec = server._c_vec
-    cis_vec = server._cis_vec
-    # ensure length
-    while len(cis_vec) < k:
-        cis_vec.append(torch.zeros_like(global_vec))
-    if len(cis_vec) > k:
-        cis_vec = cis_vec[:k]
+
+    ids = list(client_ids) if client_ids is not None else [None] * k
+    if len(ids) != k:
+        raise ValueError(f"Got {len(ids)} client ids for {k} client update(s)")
+
+    # Per-client control variates: look up by id, default to zeros for a client
+    # seen for the first time.
+    cis_vec: List[torch.Tensor] = []
+    for cid in ids:
+        prev = server.scaffold_ci_by_id.get(cid) if cid is not None else None
+        if prev is None or prev.numel() != global_vec.numel():
+            cis_vec.append(torch.zeros_like(global_vec))
+        else:
+            cis_vec.append(prev)
 
     server.t += 1
     global_lr = float(params.get("server_lr", 1.0))
     damping = float(params.get("scaffold_damping", 0.1))
 
     # corrected = client + c - ci
-    # client_mats: K x P, c_vec: P, cis: K x P
     cis_mat = torch.stack(cis_vec, dim=0)  # K x P
     corrected = client_mats + c_vec.unsqueeze(0) - cis_mat  # K x P
-    w = torch.as_tensor(_normalize_weights(weights, k), dtype=torch.float32)  # K, already normalized
+    w = torch.as_tensor(_normalize_weights(weights, k), dtype=torch.float32)
     avg_corrected = (w.unsqueeze(1) * corrected).sum(dim=0)  # P
     new_global_vec = global_vec + global_lr * (avg_corrected - global_vec)
 
-    # update controls: vectorized
-    # mean_drift for c
+    # control-variate updates
     mean_drift = (client_mats - new_global_vec.unsqueeze(0)).mean(dim=0)  # P
     new_c_vec = c_vec + damping * mean_drift
-    new_cis = []
-    for idx in range(k):
-        drift = client_mats[idx] - new_global_vec
-        new_cis.append(cis_vec[idx] + damping * drift)
+    new_cis = [cis_vec[idx] + damping * (client_mats[idx] - new_global_vec) for idx in range(k)]
 
     server._c_vec = new_c_vec
     server._cis_vec = new_cis
-    # sync dict mirrors for inspection / backward compat
+    # dict mirrors for inspection / backward compat
     server.scaffold_c = _unflatten_vec(new_c_vec, global_state, keys)
     server.scaffold_cis = [_unflatten_vec(v, global_state, keys) for v in new_cis]
+    # the authoritative store, keyed so it survives a changing participant set
+    for cid, vec in zip(ids, new_cis):
+        if cid is not None:
+            server.scaffold_ci_by_id[cid] = vec.clone()
 
     new_global = _unflatten_vec(new_global_vec, global_state, keys)
-    info = {"server_round": server.t, "scaffold_c_norm": float(new_c_vec.norm().item())}
+    info = {
+        "server_round": server.t,
+        "scaffold_c_norm": float(new_c_vec.norm().item()),
+        "clients": [c for c in ids if c is not None],
+    }
     return new_global, info
 
 
@@ -467,8 +462,14 @@ def aggregate(
     global_state: StateDict,
     params: Optional[Dict[str, Any]] = None,
     server: Optional[ServerOptimizerState] = None,
+    client_ids: Optional[Sequence[str]] = None,
 ) -> AggregationResult:
-    """Aggregate client ``state_dict`` updates."""
+    """Aggregate client ``state_dict`` updates.
+
+    ``client_ids`` (optional) must be aligned with ``client_states``; SCAFFOLD
+    uses it to keep control variates attached to the right client across rounds
+    with partial participation.
+    """
     name = canonical_name(name)
     params = dict(params or {})
     _validate_states(client_states, global_state)
@@ -496,9 +497,25 @@ def aggregate(
 
     if name == "trimmed_mean":
         trim_ratio = max(0.0, min(float(params.get("trim_ratio", 0.1)), 0.5))
+        # With the default trim_ratio=0.1, floor(K*0.1) == 0 for every K < 10, so
+        # "trimmed mean" silently degenerates into plain FedAvg and provides no
+        # robustness at all. Say so loudly in the logs and in the run metrics.
+        k = len(client_states)
+        n_trim = int(math.floor(k * trim_ratio))
+        if trim_ratio > 0.0 and n_trim == 0:
+            logger.warning(
+                "trimmed_mean: trim_ratio=%.3g with K=%d trims floor(K*trim_ratio)=%d client(s) "
+                "per side, i.e. nothing - this round is a plain weighted mean. "
+                "Raise trim_ratio or use more clients for real trimming.",
+                trim_ratio, k, n_trim,
+            )
         return AggregationResult(
             _elementwise_trimmed_mean(client_states, trim_ratio),
-            {"trim_ratio": trim_ratio},
+            {
+                "trim_ratio": trim_ratio,
+                "trimmed_per_side": n_trim,
+                "effectively_untrimmed": trim_ratio > 0.0 and n_trim == 0,
+            },
         )
 
     if name == "krum":
@@ -522,7 +539,7 @@ def aggregate(
     if name == "scaffold":
         if server is None:
             raise ValueError("Aggregator 'scaffold' requires a ServerOptimizerState")
-        state, info = _scaffold(client_states, norm_w, global_state, server, params)
+        state, info = _scaffold(client_states, norm_w, global_state, server, params, client_ids)
         return AggregationResult(state, info)
 
     if name == "feddyn":

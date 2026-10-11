@@ -74,7 +74,32 @@ def w1_nd(a: np.ndarray, b: np.ndarray) -> float:
         pass
     if a.shape[1] == 1 and b.shape[1] == 1:
         return w1_1d(a.reshape(-1), b.reshape(-1))
-    return float(np.linalg.norm(a.mean(axis=0) - b.mean(axis=0)))
+    # No POT available: fall back to the exact optimal-assignment solution on a
+    # subsample. For two empirical measures with the same number of atoms and
+    # uniform masses, the optimal transport plan is a permutation, so W1 is a
+    # linear assignment problem (Jonker-Volgenant via scipy). That is exact for
+    # the subsample, unlike the previous fallback ||mean(a) - mean(b)||, which is
+    # 0 for any two symmetric point clouds (A=[[0,0],[0,0]], B=[[-1,0],[1,0]]
+    # -> true W1 = 1.0, old code 0.0), and unlike a sliced-W1 approximation,
+    # which is only a lower bound (~0.9x in 2-D).
+    return _assignment_w1(a, b)
+
+
+def _assignment_w1(a: np.ndarray, b: np.ndarray, max_n: int = 512, seed: int = 0) -> float:
+    """Exact 1-Wasserstein distance between two equal-size uniform samples."""
+    from scipy.optimize import linear_sum_assignment
+
+    n = min(len(a), len(b), max_n)
+    if n <= 0:
+        return 0.0
+    rng = np.random.default_rng(seed)
+    if len(a) > n:
+        a = a[rng.choice(len(a), n, replace=False)]
+    if len(b) > n:
+        b = b[rng.choice(len(b), n, replace=False)]
+    cost = np.sqrt(((a[:, None, :] - b[None, :, :]) ** 2).sum(axis=-1))
+    rows, cols = linear_sum_assignment(cost)
+    return float(cost[rows, cols].mean())
 
 
 def w1_between_clients(client_samples: Sequence[np.ndarray]) -> float:

@@ -147,7 +147,8 @@ def run_in_memory(cfg: Dict[str, Any], results_dir: str = "results") -> Dict[str
             trainer = trainers[cid]
             trainer.assert_spec_compatible(resp.model_spec)  # type: ignore[arg-type]
             raw = fed.get_global_bytes(resp.round)
-            trainer.load_weights(bytes_to_state_dict(raw))
+            prev_global = bytes_to_state_dict(raw)
+            trainer.load_weights(prev_global)
             ds = fed._client_datasets[cid]  # type: ignore[attr-defined]
             stats = trainer.train(
                 ds,
@@ -160,11 +161,20 @@ def run_in_memory(cfg: Dict[str, Any], results_dir: str = "results") -> Dict[str
                 clip_value=resp.clip_value,
                 dp_noise_multiplier=resp.dp_noise_multiplier,
                 dp_delta=resp.dp_delta,
+                val_holdout_frac=resp.val_holdout_frac,
             )
             local_loss = float(stats.get("val_loss", stats["loss"]))
-            # compression before upload
-            payload = state_dict_to_bytes(trainer.state_dict(), compression=resp.compression, topk_ratio=resp.topk_ratio)
-            fed.submit_update(cid, resp.round, len(next(iter(ds.values()))), local_loss, payload)
+            # compression before upload (topk encodes a sparse UPDATE vs prev_global)
+            payload = state_dict_to_bytes(
+                trainer.state_dict(),
+                compression=resp.compression,
+                topk_ratio=resp.topk_ratio,
+                reference=prev_global,
+            )
+            fed.submit_update(
+                cid, resp.round, len(next(iter(ds.values()))), local_loss, payload,
+                steps=int(stats.get("steps", 0) or 0),
+            )
         # after all submitted, federation auto-aggregates and advances; if not, force
         if fed.run.phase == "collecting" and fed.run.round == rnd and len(fed.run.updates) >= 2:
             fed.force_aggregate()
@@ -268,10 +278,19 @@ def run_configs(configs: List[Dict[str, Any]], results_dir: str, server_url: str
     return results
 
 
-def validation_gate(problem: str = "poisson", tolerance: float = 0.05) -> int:
-    """Reproduce FedAvg Poisson result within ±tolerance (SRS FR-RUN-5).
+def validation_gate(problem: str = "poisson", tolerance: float = 0.05, expected_l2: float | None = None) -> int:
+    """Validation gate for FR-RUN-5: reproduce the paper's FedAvg result.
 
-    This gate must pass before other aggregators are enabled.
+    SRS FR-RUN-5 requires the gate to reproduce the paper's published Poisson
+    relative L2 within ``tolerance`` (absolute difference). That comparison only
+    happens when ``expected_l2`` is supplied - the SRS never records the number
+    (section 9.1: "the exact tolerance is set in Phase 1 from the paper's
+    reported result", and the Go/No-Go item is still unchecked), so pass it via
+    ``--expected-l2`` once it is known.
+
+    Without ``expected_l2`` the gate falls back to the weaker checks it can
+    actually make (finite + improvement over round 1) and says so explicitly
+    instead of printing a tolerance it never applied.
     """
     _print(f"[gate] Validating FedAvg on {problem} ...")
     # Use small but representative setting: 2 clients, 5 local epochs, 200 rounds for quick check
@@ -296,15 +315,36 @@ def validation_gate(problem: str = "poisson", tolerance: float = 0.05) -> int:
     best = min(m.get("l2_relative_error", float("inf")) for m in metrics)
     last = metrics[-1].get("l2_relative_error")
     _print(f"[gate] L2 first={first:.4g} best={best:.4g} last={last:.4g}")
-    # Gate criteria: best must improve over first, and be finite; if tolerance given, check vs expected range
-    if not (best < first):
-        _print(f"[gate] FAILED: no improvement (best {best:.4g} >= first {first:.4g})")
-        return 1
+    # Gate criteria: finite, and must improve over the first round.
     if not np.isfinite(best):
         _print("[gate] FAILED: non-finite best")
         return 1
-    # Additional: check that federated is better than hypothetical extrapolation (we approximate)
-    _print(f"[gate] PASSED: FedAvg reproduced and improved ({(first-best)/first*100:.1f}% improvement) within tolerance {tolerance}")
+    if not (best < first):
+        _print(f"[gate] FAILED: no improvement (best {best:.4g} >= first {first:.4g})")
+        return 1
+
+    if expected_l2 is None:
+        # Weaker than FR-RUN-5: report exactly what was checked, and do not claim
+        # a tolerance that was never applied.
+        _print(
+            f"[gate] PASSED (WEAK): FedAvg improved {(first-best)/first*100:.1f}% "
+            f"({first:.4g} -> {best:.4g}). The FR-RUN-5 +/-{tolerance} comparison against the "
+            f"paper's published value was NOT applied - no expected_l2 supplied. "
+            f"Re-run with --expected-l2 <published> to close FR-RUN-5."
+        )
+        return 0
+
+    diff = abs(best - float(expected_l2))
+    if diff > tolerance:
+        _print(
+            f"[gate] FAILED: best L2 {best:.4g} is {diff:.4g} from the published "
+            f"{float(expected_l2):.4g}, outside +/-{tolerance} (FR-RUN-5)"
+        )
+        return 1
+    _print(
+        f"[gate] PASSED: best L2 {best:.4g} is within +/-{tolerance} of the published "
+        f"{float(expected_l2):.4g} (|diff|={diff:.4g}); improvement {(first-best)/first*100:.1f}%"
+    )
     return 0
 
 
@@ -315,6 +355,11 @@ def main(argv: List[str] | None = None) -> int:
     parser.add_argument("--results-dir", type=str, default="results", help="Results root")
     parser.add_argument("--server", type=str, default=None, help="Server URL (if omitted, run in-memory)")
     parser.add_argument("--validation-gate", nargs="?", const="poisson", help="Run validation gate for problem (default poisson)")
+    parser.add_argument(
+        "--expected-l2", type=float, default=None,
+        help="Published relative L2 for the validation gate; enables the FR-RUN-5 +/-tolerance check",
+    )
+    parser.add_argument("--gate-tolerance", type=float, default=0.05, help="FR-RUN-5 tolerance (default 0.05)")
     parser.add_argument("--list-problems", action="store_true", help="List available problems")
     args = parser.parse_args(argv)
 
@@ -324,7 +369,7 @@ def main(argv: List[str] | None = None) -> int:
 
     if args.validation_gate:
         prob = args.validation_gate if isinstance(args.validation_gate, str) else "poisson"
-        return validation_gate(prob)
+        return validation_gate(prob, tolerance=float(args.gate_tolerance), expected_l2=args.expected_l2)
 
     cfg_path = args.config or args.sweep
     if not cfg_path:

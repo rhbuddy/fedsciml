@@ -74,11 +74,17 @@ class ServerClient:
         n_samples: int,
         local_loss: float,
         data: bytes,
+        steps: int = 0,
     ) -> AssignmentResponse:
         resp = self._request(
             "POST",
             f"/clients/{client_id}/update",
-            params={"round": round_no, "n_samples": n_samples, "local_loss": local_loss},
+            params={
+                "round": round_no,
+                "n_samples": n_samples,
+                "local_loss": local_loss,
+                "steps": int(steps or 0),
+            },
             content=data,
             headers={"Content-Type": "application/octet-stream"},
         )

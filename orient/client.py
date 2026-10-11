@@ -25,29 +25,58 @@ Usage:
 
 This file is a thin wrapper over orient/client/app/* — all training logic
 lives there, this file just makes it launchable from one place.
+
+It ships in two identical copies (repo root and orient/) and works from
+either location; see the ORIENT resolution below.
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib
+import importlib.util
 import pathlib
 import sys
 
-ROOT = pathlib.Path(__file__).resolve().parent
-ORIENT = ROOT / "orient"
+# ---- path setup: make the client `app` package importable regardless of cwd ----
+HERE = pathlib.Path(__file__).resolve().parent
+# This file lives either at the repo root (next to `orient/`) or inside `orient/`
+# itself. Pick whichever layout actually holds the client app.
+ORIENT = HERE / "orient" if (HERE / "orient" / "client" / "app").is_dir() else HERE
 CLIENT = ORIENT / "client"
-BACKEND = ORIENT / "backend"
-for p in (ROOT, ORIENT, CLIENT, BACKEND):
-    if str(p) not in sys.path:
-        sys.path.insert(0, str(p))
+
+# Put ONLY the client app root on sys.path. `orient/backend` also contains a
+# package named `app`, so adding both makes `import app` ambiguous: whichever
+# comes first wins, and the server's app silently shadows the client's.
+#
+# Likewise, do NOT import this app as `client.app.*`. The file `orient/client.py`
+# is a top-level module named `client` (and `orient/client/` has no `__init__.py`),
+# so `import client` binds to that file and `client.app` is never a package.
+if str(CLIENT) not in sys.path:
+    sys.path.insert(0, str(CLIENT))
+
+
+def _load_client(module: str, attr: str):
+    """Import ``attr`` from client/app/<module>.py.
+
+    Errors from inside the module propagate unchanged — only a missing module is
+    treated as "not this layout".
+    """
+    candidate = f"app.{module}"
+    try:
+        if importlib.util.find_spec(candidate) is None:
+            raise ImportError(f"cannot find {candidate} under {CLIENT}")
+    except ImportError as exc:
+        raise ImportError(
+            f"cannot import '{attr}' from {candidate} (looked under {CLIENT}). "
+            f"Install deps: pip install -r orient/client/requirements.txt"
+        ) from exc
+    return getattr(importlib.import_module(candidate), attr)
 
 
 def _list_problems() -> int:
     try:
-        try:
-            from client.app.problems import list_problems  # type: ignore  # when ORIENT on path
-        except ImportError:
-            from app.problems import list_problems  # type: ignore  # when CLIENT on path
+        list_problems = _load_client("problems", "list_problems")
         print("Problems (10): " + ", ".join(list_problems()))
     except Exception as e:
         print(f"[client] failed to list problems: {e}")
@@ -71,21 +100,22 @@ def _list_bundles() -> int:
 
 def _make_datasets(args: argparse.Namespace) -> int:
     try:
-        import sys as _sys
-        # import as module to respect its CLI
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("make_datasets", CLIENT / "examples" / "make_datasets.py")
+        # import as a module (by path) so we can call its build() directly
+        spec = importlib.util.spec_from_file_location(
+            "orient_make_datasets", CLIENT / "examples" / "make_datasets.py"
+        )
         if spec is None or spec.loader is None:
-            raise ImportError("cannot load make_datasets.py")
+            raise ImportError(f"cannot load {CLIENT / 'examples' / 'make_datasets.py'}")
         mod = importlib.util.module_from_spec(spec)
-        _sys.argv = ["make_datasets.py", "--out", str(args.out or (CLIENT / "examples" / "bundles")), "--samples", str(args.samples), "--clients", str(args.clients)]
         spec.loader.exec_module(mod)  # type: ignore
-        # mod.main() is called via if __name__ == "__main__" not executed, so call build directly
-        if hasattr(mod, "build"):
-            out = pathlib.Path(args.out or (CLIENT / "examples" / "bundles"))
-            mod.build(out, int(args.samples), int(args.clients))
-            names = sorted(p.name for p in out.iterdir() if p.is_dir())
-            print(f"[client] wrote {len(names)} bundles to {out}")
+        # `if __name__ == "__main__"` does not fire for a module loaded by path,
+        # so drive build() ourselves instead of its CLI.
+        if not hasattr(mod, "build"):
+            raise ImportError("make_datasets.py exposes no build()")
+        out = pathlib.Path(args.out or (CLIENT / "examples" / "bundles"))
+        mod.build(out, int(args.samples), int(args.clients))
+        names = sorted(p.name for p in out.iterdir() if p.is_dir())
+        print(f"[client] wrote {len(names)} bundles to {out}")
     except SystemExit as e:
         return int(e.code or 0)
     except Exception as e:
@@ -96,32 +126,39 @@ def _make_datasets(args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_ui(args: argparse.Namespace) -> int:
+def _run_streamlit(script: pathlib.Path, port: int, label: str) -> int:
+    """Run a Streamlit script, reporting failure honestly.
+
+    ``python -m streamlit`` exits non-zero when Streamlit is missing, so the
+    child's return code has to be propagated — a FileNotFoundError here would
+    only fire if the interpreter itself were absent.
+    """
     import subprocess
-    ui = CLIENT / "ui" / "app.py"
-    if not ui.exists():
-        print(f"[client] UI not found at {ui}")
+
+    if not script.exists():
+        print(f"[{label}] UI not found at {script}")
         return 1
-    print(f"[client] launching UI: streamlit run {ui}")
-    cmd = [sys.executable, "-m", "streamlit", "run", str(ui), "--server.port", str(args.ui_port or 8502)]
-    try:
-        subprocess.run(cmd, check=False)
-    except FileNotFoundError:
-        print("streamlit not installed: pip install streamlit pandas")
+    if importlib.util.find_spec("streamlit") is None:
+        print(f"[{label}] streamlit not installed: pip install streamlit pandas")
         return 1
-    return 0
+    print(f"[{label}] launching UI: streamlit run {script}")
+    cmd = [
+        sys.executable, "-m", "streamlit", "run", str(script),
+        "--server.port", str(port),
+    ]
+    return int(subprocess.run(cmd, check=False).returncode or 0)
+
+
+def _run_ui(args: argparse.Namespace) -> int:
+    return _run_streamlit(CLIENT / "ui" / "app.py", args.ui_port or 8502, "client")
 
 
 def _run_client(args: argparse.Namespace) -> int:
     # Delegate to client/app/main.py CLI
     try:
-        try:
-            from client.app.main import main as client_main  # type: ignore
-        except ImportError:
-            from app.main import main as client_main  # type: ignore
+        client_main = _load_client("main", "main")
     except ImportError as e:
         print(f"[client] import failed: {e}")
-        print("Install deps: pip install -r orient/client/requirements.txt")
         import traceback
         traceback.print_exc()
         return 1
