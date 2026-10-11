@@ -118,7 +118,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 waited_since = None
                 trainer.assert_spec_compatible(resp.model_spec)
                 raw = server.download_weights(args.client_id, resp.round)
-                trainer.load_weights(bytes_to_state_dict(raw))
+                prev_global = bytes_to_state_dict(raw)
+                trainer.load_weights(prev_global)
 
                 logger.info(
                     "Round %d/%d: training %d epoch(s) on %d samples (clip=%s)",
@@ -137,6 +138,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     clip_value=resp.clip_value,
                     dp_noise_multiplier=resp.dp_noise_multiplier,
                     dp_delta=resp.dp_delta,
+                    val_holdout_frac=resp.val_holdout_frac,
                 )
                 logger.info(
                     "Round %d: local loss %.6g (%d steps) dp=%.3g comp=%s",
@@ -145,11 +147,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
                 # SRS FR-AGG-12: quality weighting uses validation loss on 20% held-out shard
                 local_loss = float(stats.get("val_loss", stats["loss"]))
-                # Framework v2: optional compression (int8 + topk) before upload
+                # Framework v2: optional compression (int8 + topk) before upload.
+                # topk encodes a sparse UPDATE relative to the global weights this
+                # round started from, so the server must get the same reference.
                 raw_bytes = state_dict_to_bytes(
                     trainer.state_dict(),
                     compression=resp.compression,
                     topk_ratio=resp.topk_ratio,
+                    reference=prev_global,
                 )
                 # log compression saving when enabled
                 if resp.compression and resp.compression != "none":
@@ -166,6 +171,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     bundle.size,
                     local_loss,
                     raw_bytes,
+                    steps=int(stats.get("steps", 0) or 0),
                 )
                 rounds_done += 1
 

@@ -18,35 +18,61 @@ Usage:
 
 This file is a thin wrapper over orient/backend/app/* — all science logic
 lives there, this file just makes it launchable from one place.
+
+It ships in two identical copies (repo root and orient/) and works from
+either location; see the ORIENT resolution below.
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib
+import importlib.util
 import pathlib
 import sys
 
 # ---- path setup: make `orient` importable regardless of cwd ----
-ROOT = pathlib.Path(__file__).resolve().parent
-ORIENT = ROOT / "orient"
+HERE = pathlib.Path(__file__).resolve().parent
+# This file lives either at the repo root (next to `orient/`) or inside `orient/`
+# itself. Pick whichever layout actually holds the backend app.
+ORIENT = HERE / "orient" if (HERE / "orient" / "backend" / "app").is_dir() else HERE
 BACKEND = ORIENT / "backend"
-CLIENT = ORIENT / "client"
-for p in (ROOT, ORIENT, BACKEND, CLIENT):
+
+# The backend app root must come FIRST: `orient/client` also contains a package
+# named `app`, and if that one won, `from app.api import app` would resolve to the
+# *client* package and fail with "No module named 'app.api'". The client path is
+# deliberately NOT added here — runner.py adds it itself when it needs LocalTrainer.
+for p in (ORIENT, BACKEND):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
 
+def _load_backend(module: str, attr: str):
+    """Import ``attr`` from backend/app/<module>.py.
+
+    Tries the plain ``app.<module>`` name first (backend/ on sys.path) and then
+    the fully qualified ``backend.app.<module>`` (orient/ on sys.path). Errors
+    raised from inside the module propagate unchanged.
+    """
+    for candidate in (f"app.{module}", f"backend.app.{module}"):
+        try:
+            if importlib.util.find_spec(candidate) is None:
+                continue
+        except ImportError:
+            continue
+        return getattr(importlib.import_module(candidate), attr)
+    raise ImportError(
+        f"cannot import '{attr}' from backend/app/{module}.py "
+        f"(looked under {BACKEND} and {ORIENT}). "
+        f"Install deps: pip install -r orient/backend/requirements.txt"
+    )
+
+
 def _run_api(args: argparse.Namespace) -> int:
     try:
-        import uvicorn
-        try:
-            from backend.app.api import app  # type: ignore  # when ORIENT on path
-        except ImportError:
-            from app.api import app  # type: ignore  # when BACKEND on path
-        try:
-            from backend.app.config import settings  # type: ignore
-        except ImportError:
-            from app.config import settings  # type: ignore
+        import uvicorn  # noqa: F401  (fail fast with the friendly hint below)
+        app = _load_backend("api", "app")
+        settings = _load_backend("config", "settings")
     except ImportError as e:
         print(f"[server] import failed: {e}")
         print("Install deps: pip install -r orient/backend/requirements.txt")
@@ -61,29 +87,32 @@ def _run_api(args: argparse.Namespace) -> int:
 
 
 def _run_dashboard(args: argparse.Namespace) -> int:
+    """Run the dashboard, reporting failure honestly.
+
+    ``python -m streamlit`` exits non-zero when Streamlit is missing, so the
+    child's return code has to be propagated — a FileNotFoundError here would
+    only fire if the interpreter itself were absent.
+    """
     import subprocess
-    import pathlib
+
     dash = BACKEND / "ui" / "dashboard.py"
     if not dash.exists():
         print(f"[server] dashboard not found at {dash}")
         return 1
-    print(f"[server] launching dashboard: streamlit run {dash}")
-    cmd = [sys.executable, "-m", "streamlit", "run", str(dash), "--server.port", str(args.dashboard_port or 8501)]
-    # also allow --server.address
-    try:
-        subprocess.run(cmd, check=False)
-    except FileNotFoundError:
-        print("streamlit not installed: pip install streamlit pandas")
+    if importlib.util.find_spec("streamlit") is None:
+        print("[server] streamlit not installed: pip install streamlit pandas")
         return 1
-    return 0
+    print(f"[server] launching dashboard: streamlit run {dash}")
+    cmd = [
+        sys.executable, "-m", "streamlit", "run", str(dash),
+        "--server.port", str(args.dashboard_port or 8501),
+    ]
+    return int(subprocess.run(cmd, check=False).returncode or 0)
 
 
 def _run_runner(args: argparse.Namespace) -> int:
     try:
-        try:
-            from backend.app.runner import main as runner_main  # type: ignore
-        except ImportError:
-            from app.runner import main as runner_main  # type: ignore
+        runner_main = _load_backend("runner", "main")
     except ImportError as e:
         print(f"[server] runner import failed: {e}")
         import traceback
@@ -102,6 +131,12 @@ def _run_runner(args: argparse.Namespace) -> int:
         # --validation-gate may be "" (default poisson) or a problem name
         val = args.validation_gate if isinstance(args.validation_gate, str) and args.validation_gate else "poisson"
         argv += ["--validation-gate", val]
+        if args.expected_l2 is not None:
+            argv += ["--expected-l2", str(args.expected_l2)]
+        if args.gate_tolerance is not None:
+            argv += ["--gate-tolerance", str(args.gate_tolerance)]
+        if args.gate_mode is not None:
+            argv += ["--gate-mode", str(args.gate_mode)]
     if args.list_problems:
         argv += ["--list-problems"]
     return int(runner_main(argv) or 0)
@@ -133,6 +168,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--results-dir", type=str, default=None, help="Results root (default results)")
     p.add_argument("--server-url", type=str, default=None, help="If set, drive live server via HTTP instead of in-memory")
     p.add_argument("--validation-gate", nargs="?", const="poisson", default=None, help="Run validation gate (FR-RUN-5) for problem (default poisson)")
+    p.add_argument("--expected-l2", type=float, default=None, help="Published relative L2; enables the FR-RUN-5 +/-tolerance comparison")
+    p.add_argument("--gate-tolerance", type=float, default=0.05, help="FR-RUN-5 tolerance (default 0.05)")
+    p.add_argument("--gate-mode", type=str, default=None, choices=["relative", "absolute"],
+                   help="FR-RUN-5 tolerance reading: relative (default) or absolute difference")
     p.add_argument("--list-problems", action="store_true", help="List 10 benchmark problems and exit")
     return p
 

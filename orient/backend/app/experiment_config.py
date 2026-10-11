@@ -160,35 +160,48 @@ def expand_sweeps(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     Special key 'sweep' (mapping of param->list) is also supported per Appendix A.4.
     Returns list of concrete validated configs.
-    """
-    # Handle top-level 'sweep' mapping
-    if "sweep" in cfg and isinstance(cfg["sweep"], dict):
-        sweep_map = cfg["sweep"]
-        base = {k: v for k, v in cfg.items() if k != "sweep"}
-        keys = list(sweep_map.keys())
-        values = [_ensure_list(sweep_map[k]) for k in keys]
-        out: List[Dict[str, Any]] = []
-        for combo in itertools.product(*values):
-            concrete = dict(base)
-            for k, v in zip(keys, combo):
-                # handle nested heterogeneity etc.
-                concrete[k] = v
-            out.append(validate_config(concrete))
-        return out
 
-    # Otherwise expand any list-valued fields as sweep dimensions
-    sweep_keys = [k for k, v in cfg.items() if isinstance(v, list)]
-    if not sweep_keys:
-        return [validate_config(cfg)]
-    # Cartesian product
-    combos = itertools.product(*[cfg[k] for k in sweep_keys])
-    configs: List[Dict[str, Any]] = []
-    for combo in combos:
-        concrete = dict(cfg)
-        for k, v in zip(sweep_keys, combo):
+    Both forms may be combined: a top-level list (e.g. ``seeds: [1,2,3]``) is
+    swept alongside the ``sweep`` mapping rather than being passed through as a
+    list, which downstream ``RunStartRequest`` rejects.
+    """
+    # Collect sweep dimensions from both syntaxes. The 'sweep' mapping and any
+    # list-valued top-level keys are merged so neither is silently ignored.
+    sweep_map: Dict[str, List[Any]] = {}
+    base: Dict[str, Any] = {}
+    explicit = cfg.get("sweep") if isinstance(cfg.get("sweep"), dict) else None
+    for k, v in cfg.items():
+        if k == "sweep":
+            continue
+        if isinstance(v, list):
+            sweep_map[k] = v
+        else:
+            base[k] = v
+    if explicit:
+        for k, v in explicit.items():
+            sweep_map[k] = _ensure_list(v)
+
+    # An empty dimension would make itertools.product yield nothing, so a
+    # two-aggregator sweep would silently expand to zero configs and the runner
+    # would loop over nothing and exit 0. Fail loudly instead.
+    for k, v in sweep_map.items():
+        if len(v) == 0:
+            raise ValueError(
+                f"Sweep dimension '{k}' is an empty list; that expands to 0 configs. "
+                f"Remove the key or give it at least one value."
+            )
+
+    if not sweep_map:
+        return [validate_config(base)]
+
+    keys = list(sweep_map.keys())
+    out: List[Dict[str, Any]] = []
+    for combo in itertools.product(*[sweep_map[k] for k in keys]):
+        concrete = dict(base)
+        for k, v in zip(keys, combo):
             concrete[k] = v
-        configs.append(validate_config(concrete))
-    return configs
+        out.append(validate_config(concrete))
+    return out
 
 
 def config_to_run_start(cfg: Dict[str, Any]) -> Dict[str, Any]:

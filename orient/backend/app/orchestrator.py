@@ -107,6 +107,10 @@ class Federation:
         self._global_bytes: bytes = b""
         self._global_sha: str = ""
         self._initial_state: Optional[Dict[str, torch.Tensor]] = None
+        # Minimum number of client updates the chosen aggregator may be fed.
+        # Set per run in start_run(); robust aggregators need more than 2.
+        self._min_aggregation_k: int = MIN_CLIENTS_PER_ROUND
+        self._min_k_reason: str = f"at least {MIN_CLIENTS_PER_ROUND} clients are required"
 
     # ------------------------------------------------------------------ registry
     def register(self, reg: ClientRegistration) -> ClientInfo:
@@ -312,16 +316,35 @@ class Federation:
             # For scaffold, include local_epochs in params for control update scaling
             agg_params = dict(req.aggregator_params)
             agg_params.setdefault("local_epochs", int(req.local_epochs))
-            # Robust aggregator minimum-K guards (prevent silent poisoning)
-            _k_for_check = len(expected) if expected else len(self.live_client_ids(req.problem))
+            # Robust aggregator minimum-K guards (prevent silent poisoning).
+            # The documented flow (README / tests/test_e2e.py) starts the run
+            # BEFORE any client registers, so K is often unknown here. Record the
+            # requirement and enforce it where K is actually known - in
+            # assignment() (clients wait) and _aggregate() (hard stop) - instead
+            # of rejecting a perfectly good run at start-up.
             if aggregator_name == "krum":
-                f = int(agg_params.get("n_byzantine", 1) or 1)
-                need = 2 * f + 3
-                if _k_for_check < need:
-                    raise ValueError(f"krum requires K >= 2*f+3 = {need} (f=n_byzantine={f}), got K={_k_for_check}. Increase clients or reduce f.")
+                _f = int(agg_params.get("n_byzantine", 1) or 1)
+                self._min_aggregation_k = max(MIN_CLIENTS_PER_ROUND, 2 * _f + 3)
+                self._min_k_reason = (
+                    f"krum requires K >= 2*f+3 = {self._min_aggregation_k} (f=n_byzantine={_f})"
+                )
             elif aggregator_name in ("median", "trimmed_mean"):
-                if _k_for_check < 3:
-                    raise ValueError(f"{aggregator_name} requires K >= 3, got {_k_for_check}")
+                self._min_aggregation_k = max(MIN_CLIENTS_PER_ROUND, 3)
+                self._min_k_reason = f"{aggregator_name} requires K >= 3"
+            else:
+                # Plain and server-adaptive aggregators have no robustness minimum.
+                # MIN_CLIENTS_PER_ROUND is a floor on how many clients a round
+                # *samples* (see _sample_clients), not a validity condition: a round
+                # with a single participating client is uninteresting but perfectly
+                # legal, and rejecting it here breaks the single-client flow.
+                # Only median/trimmed_mean/krum have a real minimum, because below it
+                # the robustness guarantee silently evaporates.
+                self._min_aggregation_k = 1
+                self._min_k_reason = "at least 1 client is required"
+            _k_for_check = len(expected) if expected else len(self.live_client_ids(req.problem))
+            if expected and _k_for_check < self._min_aggregation_k:
+                # K is known and definitively too small - fail now, not mid-run.
+                raise ValueError(f"{self._min_k_reason}, got K={_k_for_check}. Increase clients or reduce f.")
             self._global_bytes = state_dict_to_bytes(model.state_dict())
             self._global_sha = sha256_hex(self._global_bytes)
             self._initial_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
@@ -421,13 +444,13 @@ class Federation:
                     message="Not selected for this round (joined late or different problem). Waiting for the next round.",
                 )
 
-            if len(self.run.expected) < MIN_CLIENTS_PER_ROUND:
+            if len(self.run.expected) < self._min_aggregation_k:
                 return AssignmentResponse(
                     status="wait",
                     round=self.run.round,
                     total_rounds=self.run.total_rounds,
                     message=(
-                        f"Waiting for at least {MIN_CLIENTS_PER_ROUND} clients before training; "
+                        f"Waiting for more clients before training; {self._min_k_reason}, "
                         f"currently have {len(self.run.expected)}."
                     ),
                 )
@@ -460,6 +483,9 @@ class Federation:
                 clip_value=self.run.clip_value,
                 noise_mode=self.run.noise_mode,
                 heterogeneity=self.run.heterogeneity,
+                # FR-AGG-12: only hold data back when 'quality' weighting will
+                # actually use the val_loss.
+                val_holdout_frac=0.2 if (self.run.weighting or "").lower() == "quality" else 0.0,
                 compression=self.run.compression,
                 topk_ratio=self.run.topk_ratio,
                 dp_noise_multiplier=self.run.dp_noise_multiplier,
@@ -481,6 +507,7 @@ class Federation:
         n_samples: int,
         local_loss: float,
         data: bytes,
+        steps: int = 0,
     ) -> AssignmentResponse:
         with self._lock:
             # Body size guard (DoS)
@@ -529,7 +556,9 @@ class Federation:
 
             # Validate the payload deserializes, is finite, and matches the global shapes.
             try:
-                state = bytes_to_state_dict(data)
+                # A topk-compressed payload is a sparse UPDATE relative to the global
+                # weights of this round, so decode it against that same reference.
+                state = bytes_to_state_dict(data, reference=self._global_model.state_dict())
                 expected_shapes = {k: tuple(v.shape) for k, v in self._global_model.state_dict().items()}
                 got_shapes = {k: tuple(v.shape) for k, v in state.items()}
                 if got_shapes != expected_shapes:
@@ -547,8 +576,21 @@ class Federation:
             self.run.update_meta[client_id] = {
                 "n_samples": int(n_samples),
                 "local_loss": float(local_loss),
+                # real number of local gradient steps, used for DP accounting
+                "steps": int(steps or 0),
             }
-            self._maybe_complete_round()
+            try:
+                self._maybe_complete_round()
+            except ValueError as exc:
+                # The aggregator's minimum-K requirement is no longer satisfiable
+                # (clients dropped out). Report it instead of surfacing a 500.
+                self.run.excluded_log.append({
+                    "round": self.run.round, "client_id": client_id,
+                    "reason": f"aggregation_refused: {exc}", "timestamp": time.time(),
+                })
+                if self.storage:
+                    self.storage.log_round({"event": "aggregation_refused", "round": self.run.round, "reason": str(exc)})
+                return AssignmentResponse(status="error", round=self.run.round, message=str(exc))
             return AssignmentResponse(
                 status="wait",
                 round=self.run.round,
@@ -598,7 +640,19 @@ class Federation:
             return self.status()
 
     def _dp_epsilon(self, steps: int, noise_multiplier: float, delta: float, sample_rate: float = 1.0) -> float:
-        """RDP epsilon for Gaussian mechanism (approx). Tries opacus if available."""
+        """RDP epsilon for the Gaussian mechanism (Mironov 2017), composed over ``steps``.
+
+        ``sample_rate`` is accepted for signature compatibility but deliberately
+        NOT used to shrink the result: the previous implementation multiplied the
+        final epsilon by the sampling rate, which is not a valid RDP subsampling
+        amplification and understated the privacy loss (it also used
+        ``client_fraction`` - the fraction of *clients* per round - as if it were
+        the per-step record sampling rate). Ignoring amplification yields a
+        conservative, i.e. larger, epsilon.
+
+        ``steps`` must be the real number of local gradient steps; the caller
+        takes it from what clients report.
+        """
         if noise_multiplier <= 0 or steps <= 0:
             return 0.0
         try:
@@ -619,19 +673,30 @@ class Federation:
             eps = steps * rdp + __import__("math").log(1 / delta) / (alpha - 1)
             if eps < best:
                 best = eps
-        if sample_rate < 1.0:
-            best *= float(sample_rate)
         return float(best) if __import__("math").isfinite(best) else 0.0
 
     def _aggregate(self) -> None:
         order = [c for c in self.run.expected if c in self.run.updates]
+        # Hard stop: a round can shrink after start_run() validated K (clients get
+        # reaped when they stop polling). Feeding a robust aggregator fewer updates
+        # than it needs is worse than failing - median over 2 updates is an
+        # element-wise MIN, so one Byzantine client becomes the global model.
+        if len(order) < self._min_aggregation_k:
+            raise ValueError(
+                f"Refusing to aggregate {len(order)} update(s): {self._min_k_reason}. "
+                f"Clients that dropped out: "
+                f"{[c for c in self.run.expected if c not in self.run.updates]}"
+            )
         if len(order) < MIN_CLIENTS_PER_ROUND:
             raise ValueError(f"Need at least {MIN_CLIENTS_PER_ROUND} client updates to aggregate")
 
         # Framework v2: track communication cost (bytes per round) before decompression
+        # The global weights of THIS round are the reference for any delta-encoded
+        # (topk) payload; they are only replaced once aggregation succeeds.
+        ref_state = {k: v.detach().cpu() for k, v in self._global_model.state_dict().items()}
         total_bytes = sum(len(self.run.updates[c]) for c in order)
         try:
-            probe = bytes_to_state_dict(self.run.updates[order[0]])
+            probe = bytes_to_state_dict(self.run.updates[order[0]], reference=ref_state)
             # accurate raw size includes safetensors header
             raw_bytes_per_client = len(state_dict_to_bytes(probe, compression="none"))
             raw_bytes_est = raw_bytes_per_client * len(order)
@@ -640,7 +705,7 @@ class Federation:
             raw_bytes_est = None
             comp_ratio = 0.0
 
-        states = [bytes_to_state_dict(self.run.updates[c]) for c in order]
+        states = [bytes_to_state_dict(self.run.updates[c], reference=ref_state) for c in order]
         n_samples = [self.run.update_meta[c]["n_samples"] for c in order]
         losses = [self.run.update_meta[c]["local_loss"] for c in order]
 
@@ -665,6 +730,7 @@ class Federation:
             self._global_model.state_dict(),
             self.run.aggregator_params,
             self.server_opt,
+            client_ids=order,
         )
         self._global_model.load_state_dict(result.state_dict)
         self._global_bytes = state_dict_to_bytes(self._global_model.state_dict())
@@ -684,8 +750,11 @@ class Federation:
         # Framework v2: DP epsilon (RDP) and communication cost
         dp_eps = 0.0
         if self.run.dp_noise_multiplier > 0:
-            # steps ~= rounds * local_epochs (approx gradient steps per client)
-            steps = int(self.run.round * self.run.local_epochs)
+            # Real gradient steps: clients report how many local steps they took.
+            # Fall back to local_epochs per round only if nothing was reported.
+            reported = [int(m.get("steps", 0) or 0) for m in self.run.update_meta.values()]
+            per_round = max(reported) if any(reported) else int(self.run.local_epochs)
+            steps = int(self.run.round * max(1, per_round))
             dp_eps = self._dp_epsilon(steps, self.run.dp_noise_multiplier, self.run.dp_delta, sample_rate=self.run.client_fraction)
         record: Dict[str, Any] = {
             "round": self.run.round,

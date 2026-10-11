@@ -170,6 +170,7 @@ class LocalTrainer:
         clip_value: float = 0.5,
         dp_noise_multiplier: float = 0.0,
         dp_delta: float = 1e-5,
+        val_holdout_frac: float = 0.0,
     ) -> Dict[str, Any]:
         """Run ``epochs`` local epochs and return ``{\"loss\": ..., \"val_loss\": ..., \"steps\": ...}``.
 
@@ -190,8 +191,15 @@ class LocalTrainer:
             clip_mode = "norm"
             max_norm = float(grad_clip)
 
-        # SRS FR-AGG-12: split 80/20 for quality weighting validation loss
-        train_arrays, val_arrays = self._split_train_val(arrays, 0.2)
+        # SRS FR-AGG-12: hold out a shard for the quality-weighting val_loss ONLY
+        # when the server asked for one. It used to be an unconditional 80/20
+        # split, so every client silently trained on 80% of its data even for
+        # fedavg/data_size runs where nothing consumed the val_loss (FR-CLIENT-2).
+        holdout = float(val_holdout_frac or 0.0)
+        if holdout > 0.0:
+            train_arrays, val_arrays = self._split_train_val(arrays, holdout)
+        else:
+            train_arrays, val_arrays = arrays, None
 
         self.model.train()
         steps = _steps_per_epoch(train_arrays, batch_size)

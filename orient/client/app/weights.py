@@ -23,15 +23,34 @@ from safetensors.torch import load_file, save as st_save, save_file
 COMPRESSION_MODES = ("none", "int8", "topk", "int8_topk")
 
 
-def _compress_tensor(tensor: torch.Tensor, mode: str, topk_ratio: float) -> Dict[str, torch.Tensor]:
+def _compress_tensor(
+    tensor: torch.Tensor,
+    mode: str,
+    topk_ratio: float,
+    ref: torch.Tensor | None = None,
+) -> Dict[str, torch.Tensor]:
     """Compress a single tensor -> dict of tensors to store (per-key shards).
 
     int8: per-tensor scale, quantized int8
     topk: sparse indices + values (float32)
     int8_topk: sparse + int8 quantized values + scale
     Returns dict with keys suffixes; caller prefixes with original key.
+
+    For the topk modes, ``ref`` (the previous global weights) must be given:
+    top-k sparsification is applied to the *update* ``tensor - ref``, not to the
+    absolute weights. Sparsifying the absolute weights zeroes 1-topk_ratio of
+    the model (99% at the default ratio 0.01), so the server would aggregate a
+    mostly-zero model.
     """
+    if mode in ("topk", "int8_topk") and ref is None:
+        raise ValueError(
+            f"compression '{mode}' needs the previous global weights as `reference` "
+            f"so it can encode a sparse update; sparsifying absolute weights would "
+            f"zero out the model."
+        )
     t = tensor.detach().to("cpu").float().contiguous()
+    if ref is not None and mode in ("topk", "int8_topk"):
+        t = t - ref.detach().to("cpu").float().contiguous()
     shape = torch.tensor(list(t.shape), dtype=torch.int32)
     numel = t.numel()
     if mode == "none" or numel == 0:
@@ -99,21 +118,36 @@ def compress_state_dict(
     state_dict: Dict[str, torch.Tensor],
     mode: str = "none",
     topk_ratio: float = 0.01,
+    reference: Dict[str, torch.Tensor] | None = None,
 ) -> Dict[str, torch.Tensor]:
-    """Compress a full state_dict into a flat dict of shards (still tensors)."""
+    """Compress a full state_dict into a flat dict of shards (still tensors).
+
+    ``reference`` (the previous global weights) is required for the topk modes,
+    which encode a sparse *update* relative to it. ``int8`` quantizes the
+    absolute weights and does not need it.
+    """
     mode = (mode or "none").lower().strip()
     if mode not in COMPRESSION_MODES:
         raise ValueError(f"Unknown compression '{mode}'. Options: {COMPRESSION_MODES}")
     if mode == "none":
         return {k: v.detach().to("cpu").contiguous() for k, v in state_dict.items()}
+    is_delta = mode in ("topk", "int8_topk")
     compressed: Dict[str, torch.Tensor] = {}
     for key, tensor in state_dict.items():
-        shards = _compress_tensor(tensor, mode, topk_ratio)
+        ref = reference[key] if (is_delta and reference is not None) else None
+        shards = _compress_tensor(tensor, mode, topk_ratio, ref)
         for suffix, shard in shards.items():
             comp_key = f"{key}{suffix}" if suffix else key
             compressed[comp_key] = shard
     # metadata tensor to allow auto-detection on load
-    meta = json.dumps({"compression": mode, "topk_ratio": float(topk_ratio), "keys": list(state_dict.keys())})
+    meta = json.dumps({
+        "compression": mode,
+        "topk_ratio": float(topk_ratio),
+        "keys": list(state_dict.keys()),
+        # True when the stored values are (weights - reference), so the decoder
+        # must add `reference` back.
+        "delta": is_delta,
+    })
     # store as uint8 bytes tensor (safetensors has no string, so encode as int8 array)
     # Instead, store as a float tensor with a special key and use JSON side-channel via safetensors metadata not reliable,
     # so we store a 1-element tensor whose bytes we decode: we will store meta as a tensor of uint8
@@ -122,8 +156,15 @@ def compress_state_dict(
     return compressed
 
 
-def decompress_state_dict(flat_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-    """Inverse of compress_state_dict — auto-detects via __meta__ or heuristic."""
+def decompress_state_dict(
+    flat_dict: Dict[str, torch.Tensor],
+    reference: Dict[str, torch.Tensor] | None = None,
+) -> Dict[str, torch.Tensor]:
+    """Inverse of compress_state_dict — auto-detects via __meta__ or heuristic.
+
+    ``reference`` (the previous global weights) is required for delta-encoded
+    payloads, i.e. the topk modes.
+    """
     if "__meta__" not in flat_dict:
         # also heuristic: if any key contains __int8/__indices, try to reconstruct
         has_compressed = any("__" in k for k in flat_dict.keys() if k != "__meta__")
@@ -154,9 +195,15 @@ def decompress_state_dict(flat_dict: Dict[str, torch.Tensor]) -> Dict[str, torch
     mode = meta.get("compression", "none")
     topk_ratio = meta.get("topk_ratio", 0.01)
     keys = meta.get("keys", [])
+    is_delta = bool(meta.get("delta", False))
     # if mode none, just return without meta
     if mode == "none":
         return {k: v for k, v in flat_dict.items() if not k.startswith("__")}
+    if is_delta and reference is None:
+        raise ValueError(
+            f"payload uses compression '{mode}' with a sparse delta encoding; "
+            f"pass `reference` (the previous global weights) to reconstruct it."
+        )
     out: Dict[str, torch.Tensor] = {}
     for key in keys:
         # collect shards for this key
@@ -174,6 +221,8 @@ def decompress_state_dict(flat_dict: Dict[str, torch.Tensor]) -> Dict[str, torch
                 "__shape": flat_dict[f"{key}__shape"],
             }
             out[key] = _decompress_tensor(shards, mode)
+            if is_delta:
+                out[key] = out[key] + reference[key].detach().to("cpu").float()
         elif mode == "int8_topk":
             shards = {
                 "__indices": flat_dict[f"{key}__indices"],
@@ -182,6 +231,8 @@ def decompress_state_dict(flat_dict: Dict[str, torch.Tensor]) -> Dict[str, torch
                 "__shape": flat_dict[f"{key}__shape"],
             }
             out[key] = _decompress_tensor(shards, mode)
+            if is_delta:
+                out[key] = out[key] + reference[key].detach().to("cpu").float()
         else:
             # fallback int8 case
             out[key] = flat_dict[key]
@@ -222,11 +273,19 @@ def _decompress_without_meta(flat_dict: Dict[str, torch.Tensor], base_keys) -> D
     return out
 
 
-def state_dict_to_bytes(state_dict: Dict[str, torch.Tensor], compression: str = "none", topk_ratio: float = 0.01) -> bytes:
+def state_dict_to_bytes(
+    state_dict: Dict[str, torch.Tensor],
+    compression: str = "none",
+    topk_ratio: float = 0.01,
+    reference: Dict[str, torch.Tensor] | None = None,
+) -> bytes:
     """Serialize a state_dict to safetensors bytes (CPU, contiguous, detached).
 
     Framework v2: optional compression (int8 / topk / int8_topk) for comm vs L2.
-    Use compression='int8_topk' + topk_ratio=0.01 for ~10x saving.
+
+    ``reference`` is the previous global weights and is REQUIRED for the topk
+    modes, which encode a sparse *update* relative to it. Without a reference,
+    top-k would zero out 1-topk_ratio of the model itself.
     """
     mode = (compression or "none").lower().strip()
     if mode not in COMPRESSION_MODES:
@@ -235,24 +294,41 @@ def state_dict_to_bytes(state_dict: Dict[str, torch.Tensor], compression: str = 
         clean = {k: v.detach().to("cpu").contiguous() for k, v in state_dict.items()}
         return st_save(clean)
     # compressed path
-    comp = compress_state_dict(state_dict, mode=mode, topk_ratio=topk_ratio)
+    comp = compress_state_dict(state_dict, mode=mode, topk_ratio=topk_ratio, reference=reference)
     return st_save(comp)
 
 
-def bytes_to_state_dict(data: bytes) -> Dict[str, torch.Tensor]:
-    """Deserialize safetensors bytes into a CPU state_dict (auto-decompresses)."""
+def bytes_to_state_dict(
+    data: bytes,
+    reference: Dict[str, torch.Tensor] | None = None,
+) -> Dict[str, torch.Tensor]:
+    """Deserialize safetensors bytes into a CPU state_dict (auto-decompresses).
+
+    ``reference`` (the previous global weights) must be supplied to decode a
+    delta-encoded payload, i.e. one produced with topk compression.
+    """
     flat = st_load(data)
     if "__meta__" in flat or any("__" in k for k in flat.keys() if isinstance(k, str)):
+        # A delta-encoded (topk) payload MUST NOT be silently returned as raw
+        # shards: let the error surface instead of handing back garbage.
+        meta_delta = False
+        if "__meta__" in flat:
+            try:
+                meta_delta = bool(json.loads(bytes(flat["__meta__"].tolist()).decode("utf-8")).get("delta", False))
+            except Exception:
+                meta_delta = False
+        if meta_delta:
+            return decompress_state_dict(flat, reference=reference)
         # try decompress if it looks compressed
         # check if keys contain compression shards
         if any(k.endswith("__int8") or k.endswith("__indices") for k in flat.keys()):
             try:
-                return decompress_state_dict(flat)
+                return decompress_state_dict(flat, reference=reference)
             except Exception:
                 return flat
         if "__meta__" in flat:
             try:
-                return decompress_state_dict(flat)
+                return decompress_state_dict(flat, reference=reference)
             except Exception:
                 return flat
     return flat

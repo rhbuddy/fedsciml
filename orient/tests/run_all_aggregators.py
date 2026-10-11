@@ -23,6 +23,13 @@ PROBLEM = os.environ.get("E2E_PROBLEM", "gramacy_lee")
 # Server-side adaptive optimizers take a normalized step of ~server_lr per round, so
 # they need more rounds AND a bigger server_lr than plain averaging to make progress.
 # Krum needs K >= 2f+3 clients to be meaningful.
+#
+# median needs K >= 3: coordinate-wise median at even K takes the lower of the two
+# central values, i.e. an element-wise min, so a single Byzantine client would own
+# the round. The server records that minimum and makes clients WAIT in assignment()
+# until it is met, so a 2-client median plan would hang forever rather than fail.
+# trimmed_mean gets 3 for symmetry; note trim_ratio=0.1 trims floor(K*0.1)=0 per
+# side for any K < 10, so it is effectively FedAvg here and now logs that.
 PLANS = {
     "fedavg": {"rounds": 12, "epochs": 5, "server_lr": 0.3, "clients": 2},
     "fedprox": {"rounds": 12, "epochs": 5, "server_lr": 0.3, "clients": 2},
@@ -31,8 +38,8 @@ PLANS = {
     "fedyogi": {"rounds": 30, "epochs": 5, "server_lr": 1.0, "clients": 2},
     "scaffold": {"rounds": 15, "epochs": 5, "server_lr": 0.8, "clients": 2},
     "feddyn": {"rounds": 15, "epochs": 5, "server_lr": 1.0, "clients": 2},
-    "median": {"rounds": 12, "epochs": 5, "server_lr": 0.3, "clients": 2},
-    "trimmed_mean": {"rounds": 12, "epochs": 5, "server_lr": 0.3, "clients": 2},
+    "median": {"rounds": 12, "epochs": 5, "server_lr": 0.3, "clients": 3},
+    "trimmed_mean": {"rounds": 12, "epochs": 5, "server_lr": 0.3, "clients": 3},
     "krum": {"rounds": 12, "epochs": 5, "server_lr": 0.3, "clients": 5},
 }
 

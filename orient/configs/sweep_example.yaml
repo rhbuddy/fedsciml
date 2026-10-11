@@ -3,7 +3,11 @@ sweep:
   problem: [poisson, antiderivative, schaffer]
   aggregator: [fedavg, fedprox, krum]
   optimizer: [adam]
-  n_clients: 2
+  # krum requires K >= 2f+3, i.e. K >= 5 at the default f=n_byzantine=1. This
+  # file previously used n_clients: 2, so every krum cell failed validation
+  # while fedavg/fedprox ran - the sweep looked like it worked but a third of
+  # it never executed. Keep n_clients >= 5 while krum is in the aggregator list.
+  n_clients: 5
   heterogeneity:
     mode: 1d_partition
     n_pieces: 10

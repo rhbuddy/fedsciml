@@ -66,6 +66,10 @@ class AssignmentResponse(BaseModel):
     # heterogeneity / noise passthrough for logging
     noise_mode: str = "none"
     heterogeneity: Optional[Dict[str, Any]] = None
+    # FR-AGG-12: fraction of the local bundle to hold out for the val_loss used by
+    # 'quality' weighting. 0.0 means "train on the whole bundle" - holding data
+    # back when nobody consumes the val_loss would just waste 20% of every client.
+    val_holdout_frac: float = Field(default=0.0, ge=0.0, le=0.5)
     # Framework v2: compression & DP (told to client per round)
     compression: str = Field(default="none", description="none | int8 | topk | int8_topk")
     topk_ratio: float = Field(default=0.01, ge=0.0, le=1.0)

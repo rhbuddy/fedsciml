@@ -461,7 +461,18 @@ with tab_results:
     st.caption("Browse `results/` artifacts produced by the runner or the REST orchestrator (SRS §8.2). **All via browser** — current run + historical runs from filesystem. Click a run to download its files.")
     if metrics:
         df = pd.DataFrame(metrics)
-        st.write(f"**Current run**: `{status.get('problem')}/{status.get('aggregator')}` — {len(metrics)} rounds, best L2 `{df['l2_relative_error'].min():.4g}` at round {int(df.loc[df['l2_relative_error'].idxmin(), 'round'])}")
+        # Guard the "best L2" line: the column can be absent (rounds that never
+        # evaluated) or entirely non-finite, and idxmin() raises on both, which
+        # would take the whole Results tab down.
+        _l2 = df["l2_relative_error"] if "l2_relative_error" in df.columns else pd.Series(dtype=float)
+        _l2 = pd.to_numeric(_l2, errors="coerce").dropna() if len(_l2) else _l2
+        if len(_l2):
+            _bi = _l2.idxmin()
+            _rnd = int(df.loc[_bi, "round"]) if "round" in df.columns else int(_bi)
+            _summary = f"{len(metrics)} rounds, best L2 `{float(_l2.min()):.4g}` at round {_rnd}"
+        else:
+            _summary = f"{len(metrics)} rounds, no finite L2 recorded yet"
+        st.write(f"**Current run**: `{status.get('problem')}/{status.get('aggregator')}` \u2014 {_summary}")
         csv = df.to_csv(index=False).encode()
         st.download_button("⬇ Download current run metrics CSV", csv, "metrics.csv", "text/csv", key="dl_cur_csv")
     else:

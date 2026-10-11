@@ -147,7 +147,8 @@ def run_in_memory(cfg: Dict[str, Any], results_dir: str = "results") -> Dict[str
             trainer = trainers[cid]
             trainer.assert_spec_compatible(resp.model_spec)  # type: ignore[arg-type]
             raw = fed.get_global_bytes(resp.round)
-            trainer.load_weights(bytes_to_state_dict(raw))
+            prev_global = bytes_to_state_dict(raw)
+            trainer.load_weights(prev_global)
             ds = fed._client_datasets[cid]  # type: ignore[attr-defined]
             stats = trainer.train(
                 ds,
@@ -160,11 +161,20 @@ def run_in_memory(cfg: Dict[str, Any], results_dir: str = "results") -> Dict[str
                 clip_value=resp.clip_value,
                 dp_noise_multiplier=resp.dp_noise_multiplier,
                 dp_delta=resp.dp_delta,
+                val_holdout_frac=resp.val_holdout_frac,
             )
             local_loss = float(stats.get("val_loss", stats["loss"]))
-            # compression before upload
-            payload = state_dict_to_bytes(trainer.state_dict(), compression=resp.compression, topk_ratio=resp.topk_ratio)
-            fed.submit_update(cid, resp.round, len(next(iter(ds.values()))), local_loss, payload)
+            # compression before upload (topk encodes a sparse UPDATE vs prev_global)
+            payload = state_dict_to_bytes(
+                trainer.state_dict(),
+                compression=resp.compression,
+                topk_ratio=resp.topk_ratio,
+                reference=prev_global,
+            )
+            fed.submit_update(
+                cid, resp.round, len(next(iter(ds.values()))), local_loss, payload,
+                steps=int(stats.get("steps", 0) or 0),
+            )
         # after all submitted, federation auto-aggregates and advances; if not, force
         if fed.run.phase == "collecting" and fed.run.round == rnd and len(fed.run.updates) >= 2:
             fed.force_aggregate()
@@ -257,23 +267,82 @@ def run_via_http(cfg: Dict[str, Any], server_url: str) -> Dict[str, Any]:
 
 
 def run_configs(configs: List[Dict[str, Any]], results_dir: str, server_url: str | None) -> List[Dict[str, Any]]:
+    """Run each config, isolating failures so one bad config cannot abort the rest.
+
+    A sweep is a batch experiment: if config 3 of 9 is invalid (e.g. krum with
+    K=2, which needs K >= 2f+3), the other six still carry information and
+    should still run. Previously the first exception propagated out of the loop
+    and silently discarded every remaining config, so a single typo in a sweep
+    file threw away the whole experiment.
+
+    Failures are recorded in the returned results as ``{"error": ...}`` and
+    reported in the summary; the process exit code becomes 1 if any config
+    failed, so a broken sweep cannot masquerade as a successful one.
+    """
     results = []
     for idx, cfg in enumerate(configs, 1):
         _print(f"\n=== Config {idx}/{len(configs)} ===")
-        if server_url:
-            res = run_via_http(cfg, server_url)
-        else:
-            res = run_in_memory(cfg, results_dir=results_dir)
+        try:
+            if server_url:
+                res = run_via_http(cfg, server_url)
+            else:
+                res = run_in_memory(cfg, results_dir=results_dir)
+        except Exception as exc:
+            label = f"{cfg.get('problem', '?')}/{cfg.get('aggregator', '?')}"
+            _print(f"[runner] FAILED config {idx}/{len(configs)} ({label}): {type(exc).__name__}: {exc}")
+            res = {"config": cfg, "error": f"{type(exc).__name__}: {exc}"}
         results.append(res)
     return results
 
 
-def validation_gate(problem: str = "poisson", tolerance: float = 0.05) -> int:
-    """Reproduce FedAvg Poisson result within ±tolerance (SRS FR-RUN-5).
+def validation_gate(
+    problem: str = "poisson",
+    tolerance: float = 0.05,
+    expected_l2: float | None = None,
+    tolerance_mode: str = "relative",
+) -> int:
+    """Validation gate for FR-RUN-5: reproduce the paper's FedAvg result.
 
-    This gate must pass before other aggregators are enabled.
+    SRS FR-RUN-5 requires the gate to reproduce the paper's published Poisson
+    relative L2 "within +/-5% relative L2 error (absolute difference) of the
+    published value". That phrasing is self-contradictory - it asks for a
+    relative bound and calls it an absolute difference - so ``tolerance_mode``
+    selects which reading to apply:
+
+      * ``"relative"`` (default): fail when ``|best - published| / published``
+        exceeds ``tolerance``. This is the "+/-5%" reading.
+      * ``"absolute"``: fail when ``|best - published|`` exceeds ``tolerance``.
+        This is the "absolute difference" reading, and matches how a tolerance
+        on an already-relative L2 metric would normally be applied.
+
+    The comparison only happens when ``expected_l2`` is supplied - the SRS never
+    records the number (section 9.1: "the exact tolerance is set in Phase 1 from
+    the paper's reported result", and the Go/No-Go item is still unchecked), so
+    pass it via ``--expected-l2`` once it is known.
+
+    Without ``expected_l2`` the gate falls back to the weaker checks it can
+    actually make (FR-DATA-7 W1 self-check, finite, improvement over round 1)
+    and says so explicitly instead of printing a tolerance it never applied.
     """
     _print(f"[gate] Validating FedAvg on {problem} ...")
+
+    # FR-DATA-7: verify the W1 implementation against hand-computed values before
+    # trusting any heterogeneity number the run reports.
+    try:
+        from app.metrics import self_check_w1
+
+        w1_bad = 0
+        for _name, _ok, _detail in self_check_w1():
+            _print(f"[gate]   W1 self-check {'ok  ' if _ok else 'FAIL'} {_name}: {_detail}")
+            w1_bad += 0 if _ok else 1
+        if w1_bad:
+            _print(f"[gate] FAILED: {w1_bad} W1 self-check(s) disagree with manual calculation (FR-DATA-7)")
+            return 1
+        _print("[gate] FR-DATA-7 W1 self-check: all cases match manual calculation")
+    except ImportError as exc:
+        _print(f"[gate] FAILED: cannot import W1 self-check (FR-DATA-7): {exc}")
+        return 1
+
     # Use small but representative setting: 2 clients, 5 local epochs, 200 rounds for quick check
     # Paper's Poisson global_epochs 1000 local 5; we use reduced for gate speed but still check improvement
     cfg = {
@@ -296,15 +365,53 @@ def validation_gate(problem: str = "poisson", tolerance: float = 0.05) -> int:
     best = min(m.get("l2_relative_error", float("inf")) for m in metrics)
     last = metrics[-1].get("l2_relative_error")
     _print(f"[gate] L2 first={first:.4g} best={best:.4g} last={last:.4g}")
-    # Gate criteria: best must improve over first, and be finite; if tolerance given, check vs expected range
-    if not (best < first):
-        _print(f"[gate] FAILED: no improvement (best {best:.4g} >= first {first:.4g})")
-        return 1
+    # Gate criteria: finite, and must improve over the first round.
     if not np.isfinite(best):
         _print("[gate] FAILED: non-finite best")
         return 1
-    # Additional: check that federated is better than hypothetical extrapolation (we approximate)
-    _print(f"[gate] PASSED: FedAvg reproduced and improved ({(first-best)/first*100:.1f}% improvement) within tolerance {tolerance}")
+    if not (best < first):
+        _print(f"[gate] FAILED: no improvement (best {best:.4g} >= first {first:.4g})")
+        return 1
+
+    if expected_l2 is None:
+        # Weaker than FR-RUN-5: report exactly what was checked, and do not claim
+        # a tolerance that was never applied.
+        _print(
+            f"[gate] PASSED (WEAK): FedAvg improved {(first-best)/first*100:.1f}% "
+            f"({first:.4g} -> {best:.4g}). The FR-RUN-5 +/-{tolerance} comparison against the "
+            f"paper's published value was NOT applied - no expected_l2 supplied. "
+            f"Re-run with --expected-l2 <published> to close FR-RUN-5."
+        )
+        return 0
+
+    mode = (tolerance_mode or "relative").lower().strip()
+    if mode not in ("relative", "absolute"):
+        _print(f"[gate] FAILED: unknown tolerance_mode '{tolerance_mode}' (use 'relative' or 'absolute')")
+        return 1
+    published = float(expected_l2)
+    diff = abs(best - published)
+    if mode == "relative":
+        if published == 0.0:
+            _print("[gate] FAILED: relative tolerance is undefined for a published value of 0; use --gate-mode absolute")
+            return 1
+        margin = abs(diff / published)
+        limit = float(tolerance)
+        limit_txt = f"{limit*100:g}%"
+    else:
+        margin = diff
+        limit = float(tolerance)
+        limit_txt = f"{limit:g}"
+    if margin > limit:
+        _print(
+            f"[gate] FAILED: best L2 {best:.4g} vs published {published:.4g} "
+            f"({mode} deviation {margin:.4g} > {limit_txt}) (FR-RUN-5)"
+        )
+        return 1
+    _print(
+        f"[gate] PASSED: best L2 {best:.4g} vs published {published:.4g}, "
+        f"{mode} deviation {margin:.4g} <= {limit_txt} (FR-RUN-5); "
+        f"improvement {(first-best)/first*100:.1f}%"
+    )
     return 0
 
 
@@ -315,6 +422,16 @@ def main(argv: List[str] | None = None) -> int:
     parser.add_argument("--results-dir", type=str, default="results", help="Results root")
     parser.add_argument("--server", type=str, default=None, help="Server URL (if omitted, run in-memory)")
     parser.add_argument("--validation-gate", nargs="?", const="poisson", help="Run validation gate for problem (default poisson)")
+    parser.add_argument(
+        "--expected-l2", type=float, default=None,
+        help="Published relative L2 for the validation gate; enables the FR-RUN-5 +/-tolerance check",
+    )
+    parser.add_argument("--gate-tolerance", type=float, default=0.05, help="FR-RUN-5 tolerance (default 0.05)")
+    parser.add_argument(
+        "--gate-mode", type=str, default="relative", choices=["relative", "absolute"],
+        help="FR-RUN-5 tolerance reading: 'relative' = |best-published|/published (default, the "
+             "'+/-5%%' wording); 'absolute' = |best-published|",
+    )
     parser.add_argument("--list-problems", action="store_true", help="List available problems")
     args = parser.parse_args(argv)
 
@@ -324,7 +441,12 @@ def main(argv: List[str] | None = None) -> int:
 
     if args.validation_gate:
         prob = args.validation_gate if isinstance(args.validation_gate, str) else "poisson"
-        return validation_gate(prob)
+        return validation_gate(
+            prob,
+            tolerance=float(args.gate_tolerance),
+            expected_l2=args.expected_l2,
+            tolerance_mode=args.gate_mode,
+        )
 
     cfg_path = args.config or args.sweep
     if not cfg_path:
@@ -440,6 +562,17 @@ def main(argv: List[str] | None = None) -> int:
                 _print(f"[comm plot] warning: {e}")
         except Exception as e:
             _print(f"[trade-off] plot warning: {e}")
+
+    # A sweep where some configs failed must not report success: the remaining
+    # configs still ran and were written out, but the batch as a whole did not
+    # complete. List the failures so they are not lost in the log.
+    failed = [(i, r) for i, r in enumerate(results, 1) if r.get("error")]
+    if failed:
+        _print(f"\n[runner] {len(failed)} of {len(results)} config(s) FAILED:")
+        for i, r in failed:
+            c = r.get("config", {})
+            _print(f"  - config {i} ({c.get('problem','?')}/{c.get('aggregator','?')}): {r['error']}")
+        return 1
     return 0
 
 
