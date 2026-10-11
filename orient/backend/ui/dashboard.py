@@ -35,6 +35,24 @@ st.caption("Start a federated run, watch clients report in, and track the global
 
 # --------------------------------------------------------------------------- api
 server_url = st.sidebar.text_input("Server URL", "http://127.0.0.1:8000").rstrip("/")
+# SSRF guard: only allow http(s) to loopback; warn otherwise
+import re as _re_url
+from urllib.parse import urlparse as _up
+def _is_safe_dashboard_url(u: str) -> bool:
+    try:
+        pr = _up(u)
+        if pr.scheme not in ("http","https"):
+            return False
+        h = (pr.hostname or "").lower()
+        if h in ("127.0.0.1","localhost","::1"):
+            return True
+        # allow if it matches common dev hosts
+        return False
+    except Exception:
+        return False
+if not _is_safe_dashboard_url(server_url):
+    st.sidebar.warning(f"Blocked unsafe Server URL '{server_url}' — only localhost/127.0.0.1 allowed for demo. Resetting to http://127.0.0.1:8000")
+    server_url = "http://127.0.0.1:8000"
 auto_refresh = st.sidebar.toggle("Auto-refresh (every 2 s)", value=False)
 st.sidebar.divider()
 st.sidebar.caption("**SRS v1.4** · 10 problems · 10 aggregators · W1 heterogeneity · noisy/adversarial · scaffold/feddyn · async C + int8/topk + DP")
@@ -374,7 +392,12 @@ with tab_datasets:
     uploaded = p2.file_uploader("Upload YAML sweep", type=["yaml", "yml"], help="Or paste YAML below")
     yaml_text = ""
     if uploaded is not None:
-        yaml_text = uploaded.getvalue().decode("utf-8")
+        _raw = uploaded.getvalue()
+        if len(_raw) > 200_000:
+            st.error("Uploaded YAML too large (>200KB)")
+            yaml_text = ""
+        else:
+            yaml_text = _raw.decode("utf-8")
         st.code(yaml_text[:1200], language="yaml")
     elif preset_choice != "(custom upload)":
         try:
@@ -390,9 +413,13 @@ with tab_datasets:
         except Exception as e:
             st.warning(f"Cannot load preset: {e}")
     else:
-        yaml_text = st.text_area("Paste YAML sweep", height=180, placeholder="problem: poisson\naggregator: [fedavg, fedprox]\ntotal_rounds: 30\n...")
+        yaml_text = st.text_area("Paste YAML sweep", height=180, placeholder="problem: poisson\naggregator: [fedavg, fedprox]\ntotal_rounds: 30\n...", max_chars=200000)
     sweep_col1, sweep_col2 = st.columns([2, 2])
     sweep_results_dir = sweep_col1.text_input("Results dir", "results")
+    # jail check (defense in depth; server also jails)
+    if ".." in sweep_results_dir or sweep_results_dir.startswith("/") or sweep_results_dir.startswith("\\"):
+        st.warning("Results dir must be relative and not contain '..' — resetting to 'results'")
+        sweep_results_dir = "results"
     sweep_use_http = sweep_col2.checkbox("Drive live server (spawn demo clients)", value=False, help="If checked, sweep drives REST server and auto-spawns demo clients; else runs pure in-memory")
     if st.button("▶ Run sweep from UI", type="primary", use_container_width=True, disabled=not yaml_text.strip()):
         try:

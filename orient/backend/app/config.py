@@ -26,6 +26,9 @@ class Settings:
     client_ttl_seconds: int = field(
         default_factory=lambda: int(os.environ.get("ORIENT_CLIENT_TTL", "300"))
     )
+    # Optional API key for admin endpoints (if set, clients must send X-API-Key header).
+    # When empty, auth is disabled to keep local/dev and existing tests frictionless.
+    api_key: str = field(default_factory=lambda: os.environ.get("ORIENT_API_KEY", ""))
 
 
 settings = Settings()

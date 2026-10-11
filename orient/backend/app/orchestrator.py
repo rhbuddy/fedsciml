@@ -111,6 +111,10 @@ class Federation:
     # ------------------------------------------------------------------ registry
     def register(self, reg: ClientRegistration) -> ClientInfo:
         with self._lock:
+            # Extra allow-list for client_id even though Pydantic validates (defense in depth, log injection)
+            import re as _re
+            if not _re.match(r"^[a-zA-Z0-9_-]{1,64}$", reg.client_id):
+                raise ValueError("Invalid client_id")
             # Reject a client whose problem differs from the active run: it would be
             # added to `expected`, never produce a compatible update, and stall the
             # round for everyone else. Do this only while collecting; after a run is
@@ -270,6 +274,9 @@ class Federation:
             torch.manual_seed(run_seed)
             np.random.seed(run_seed % (2**32))
 
+            # Global client cap (DoS guard): refuse if too many registered clients
+            if len(self.clients) > 500:
+                raise ValueError("Too many registered clients (>500); refusing new run until TTL reaps")
             if req.expected_clients:
                 requested_clients = sorted(set(req.expected_clients))
                 unknown = [cid for cid in requested_clients if cid not in self.clients]
@@ -305,6 +312,16 @@ class Federation:
             # For scaffold, include local_epochs in params for control update scaling
             agg_params = dict(req.aggregator_params)
             agg_params.setdefault("local_epochs", int(req.local_epochs))
+            # Robust aggregator minimum-K guards (prevent silent poisoning)
+            _k_for_check = len(expected) if expected else len(self.live_client_ids(req.problem))
+            if aggregator_name == "krum":
+                f = int(agg_params.get("n_byzantine", 1) or 1)
+                need = 2 * f + 3
+                if _k_for_check < need:
+                    raise ValueError(f"krum requires K >= 2*f+3 = {need} (f=n_byzantine={f}), got K={_k_for_check}. Increase clients or reduce f.")
+            elif aggregator_name in ("median", "trimmed_mean"):
+                if _k_for_check < 3:
+                    raise ValueError(f"{aggregator_name} requires K >= 3, got {_k_for_check}")
             self._global_bytes = state_dict_to_bytes(model.state_dict())
             self._global_sha = sha256_hex(self._global_bytes)
             self._initial_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
@@ -466,6 +483,13 @@ class Federation:
         data: bytes,
     ) -> AssignmentResponse:
         with self._lock:
+            # Body size guard (DoS)
+            if len(data) > 50 * 1024 * 1024:  # 50 MB cap for safetensors payload
+                return AssignmentResponse(status="error", message="Weight payload too large (>50MB)")
+            # client_id sanity (log injection, path traversal)
+            import re as _re
+            if not _re.match(r"^[a-zA-Z0-9_-]{1,64}$", client_id):
+                return AssignmentResponse(status="error", message="Invalid client_id")
             if client_id not in self.clients:
                 return AssignmentResponse(status="error", message="Client not registered")
 

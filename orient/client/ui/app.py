@@ -62,7 +62,17 @@ st.caption("Privacy: dataset bundle stays local → only `safetensors` weights u
 with st.sidebar:
     st.header("Connection")
     server_url = st.text_input("Server URL", "http://127.0.0.1:8000")
+    # SSRF guard for hosted UI
+    from urllib.parse import urlparse as _up2
+    _pr = _up2(server_url)
+    if _pr.scheme not in ("http","https") or (_pr.hostname or "").lower() not in ("127.0.0.1","localhost","::1",""):
+        # allow any if user is local dev, but warn and keep; server validates again
+        if _pr.hostname and _pr.hostname.lower() not in ("127.0.0.1","localhost","::1"):
+            st.caption("⚠️ Using non-local server URL — ensure you trust the target.")
     client_id = st.text_input("Client ID", "client-1", help="Unique ID (client-1..K). For Krum: K≥5 recommended")
+    import re as _re_cid
+    if not _re_cid.match(r"^[a-zA-Z0-9_-]{1,64}$", client_id):
+        st.warning("Client ID must match ^[a-zA-Z0-9_-]{1,64}$")
 
     st.header("Local training")
     batch_size = st.number_input("Batch size", 16, 4096, 256, step=16)
@@ -105,9 +115,16 @@ with st.sidebar:
             else:
                 if not (manifest_file and arrays_file):
                     raise ValueError("Please upload both dataset.json and data.npz")
+                # Upload size guard (DoS)
+                if len(manifest_file.getvalue()) > 1_000_000 or len(arrays_file.getvalue()) > 50_000_000:
+                    raise ValueError("Upload too large (manifest >1MB or arrays >50MB)")
                 tmp = Path(tempfile.mkdtemp(prefix="orient-dataset-"))
                 (tmp / "dataset.json").write_bytes(manifest_file.getvalue())
                 (tmp / "data.npz").write_bytes(arrays_file.getvalue())
+                try:
+                    (tmp).chmod(0o700)
+                except Exception:
+                    pass
                 bundle = load_bundle(tmp)
             st.session_state.bundle = bundle
             st.session_state.logs = []

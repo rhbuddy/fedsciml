@@ -34,7 +34,7 @@ class ProblemSpec(BaseModel):
 
 
 class ClientRegistration(BaseModel):
-    client_id: str
+    client_id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,64}$")
     problem: str
     n_samples: int = 0
     domain: Optional[Dict[str, Any]] = None

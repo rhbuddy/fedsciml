@@ -66,14 +66,46 @@ class LocalClients:
             ]
 
     # ------------------------------------------------------------------- actions
+    def _is_safe_server_url(self, url: str) -> bool:
+        # SSRF guard: only allow http(s) to loopback or localhost when spawned locally
+        # Settings.public_url is trusted (env), but if caller supplies arbitrary URL
+        # we restrict to 127.0.0.1 / localhost to avoid probing internal metadata services
+        try:
+            from urllib.parse import urlparse
+            p = urlparse(url)
+            if p.scheme not in ("http", "https"):
+                return False
+            host = (p.hostname or "").lower()
+            # allow localhost and 127.0.0.1 and ::1
+            if host in ("127.0.0.1", "localhost", "::1"):
+                return True
+            # also allow if it exactly matches configured public_url host
+            from .config import settings as _s
+            from urllib.parse import urlparse as _up
+            try:
+                cfg_host = _up(_s.public_url).hostname or ""
+                if host == cfg_host.lower():
+                    return True
+            except Exception:
+                pass
+            return False
+        except Exception:
+            return False
+
     def spawn(self, count: int, problem: str, server_url: str) -> Dict[str, Any]:
         count = max(1, min(int(count), 32))
         started: List[str] = []
         errors: List[str] = []
+        # SSRF / injection guard
+        if not self._is_safe_server_url(server_url):
+            return {"started": [], "errors": [f"Blocked unsafe server_url '{server_url}' (only localhost/127.0.0.1 allowed)"], "running": self.list()}
 
         with self._lock:
             self._reap()
-            LOG_DIR.mkdir(parents=True, exist_ok=True)
+            # Global spawn cap: do not exceed 32 total concurrent demo clients
+            if len(self._clients) + count > 32:
+                return {"started": [], "errors": [f"Global demo limit 32 exceeded ({len(self._clients)} running + {count} requested)"], "running": self.list()}
+            LOG_DIR.mkdir(parents=True, exist_ok=True, mode=0o750)
 
             for index in range(1, count + 1):
                 client_id = f"client-{index}"

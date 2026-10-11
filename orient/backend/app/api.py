@@ -27,7 +27,11 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query, Request
+import logging
+import os
+import re
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -53,6 +57,62 @@ app = FastAPI(
     version="0.1.0",
     description="Federated SciML server: orchestrates rounds and aggregates client weights.",
 )
+
+logger = logging.getLogger("orient.api")
+
+# Security headers middleware (add CORS as permissive for local/dev; tighten via ORIENT_CORS_ORIGINS if needed)
+try:
+    from fastapi.middleware.cors import CORSMiddleware
+    _cors_origins = [o.strip() for o in os.environ.get("ORIENT_CORS_ORIGINS", "*").split(",") if o.strip()]
+    if _cors_origins == ["*"]:
+        # Wildcard origin must not allow credentials (otherwise reflects any Origin -> SSRF/CORS bypass)
+        app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
+    else:
+        app.add_middleware(CORSMiddleware, allow_origins=_cors_origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+except Exception:
+    pass
+
+
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    # HSTS only if https, but safe to send
+    resp.headers["X-XSS-Protection"] = "0"
+    return resp
+
+
+def _verify_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
+    # If ORIENT_API_KEY is empty, auth is disabled (dev / tests). Otherwise require match.
+    expected = settings.api_key or os.environ.get("ORIENT_API_KEY", "")
+    if not expected:
+        return
+    if x_api_key != expected:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
+
+
+def _validate_results_dir(results_dir: str) -> Path:
+    # Simple jail: only relative paths without traversal; absolute paths rejected
+    # This keeps default "results" working (cwd=backend) and prevents /etc overwrite
+    if not results_dir or results_dir.strip() == "":
+        results_dir = "results"
+    # Reject absolute paths entirely (principle of least surprise for UI)
+    if Path(results_dir).is_absolute():
+        raise HTTPException(status_code=400, detail="results_dir must be relative (not absolute)")
+    if ".." in Path(results_dir).parts:
+        raise HTTPException(status_code=400, detail="results_dir must not contain '..'")
+    # Disallow special chars that could be used for injection
+    if any(c in results_dir for c in ["\n", "\r", "\0"]):
+        raise HTTPException(status_code=400, detail="Invalid results_dir")
+    # Normalize and return as Path (relative to backend cwd as before)
+    # Do not create here — runner will mkdir with 0o750 via RunStorage
+    return Path(results_dir)
+
+
+_CLIENT_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+
 
 
 # ---- UI-only helpers (no CLI) ----
@@ -104,6 +164,8 @@ def clients() -> List[ClientInfo]:
 
 @app.get("/clients/{client_id}/assignment", response_model=AssignmentResponse)
 def assignment(client_id: str) -> AssignmentResponse:
+    if not _CLIENT_ID_RE.match(client_id):
+        raise HTTPException(status_code=400, detail="Invalid client_id")
     resp = federation.assignment(client_id)
     if resp.status == "error":
         raise HTTPException(status_code=404, detail=resp.message)
@@ -112,6 +174,8 @@ def assignment(client_id: str) -> AssignmentResponse:
 
 @app.get("/clients/{client_id}/weights")
 def weights(client_id: str, round_no: int = Query(..., alias="round")) -> Response:
+    if not _CLIENT_ID_RE.match(client_id):
+        raise HTTPException(status_code=400, detail="Invalid client_id")
     if not federation.is_registered(client_id):
         raise HTTPException(status_code=404, detail="Client not registered")
     try:
@@ -133,9 +197,14 @@ async def update(
     n_samples: int = Query(0),
     local_loss: float = Query(0.0),
 ) -> AssignmentResponse:
+    # Validate client_id format (prevent log injection / path traversal)
+    if not _CLIENT_ID_RE.match(client_id):
+        raise HTTPException(status_code=400, detail="Invalid client_id (must match ^[a-zA-Z0-9_-]{1,64}$)")
     payload = await request.body()
     if not payload:
         raise HTTPException(status_code=400, detail="Empty weight payload")
+    if len(payload) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Weight payload too large (>50MB)")
     resp = federation.submit_update(client_id, round_no, n_samples, local_loss, payload)
     if resp.status == "error":
         raise HTTPException(status_code=400, detail=resp.message)
@@ -148,7 +217,7 @@ def run_status() -> RunStatus:
 
 
 @app.post("/admin/run/start", response_model=RunStatus)
-def run_start(req: RunStartRequest) -> RunStatus:
+def run_start(req: RunStartRequest, _auth: None = Depends(_verify_api_key)) -> RunStatus:
     try:
         return federation.start_run(req)
     except (KeyError, ValueError) as exc:
@@ -156,12 +225,12 @@ def run_start(req: RunStartRequest) -> RunStatus:
 
 
 @app.post("/admin/run/stop", response_model=RunStatus)
-def run_stop() -> RunStatus:
+def run_stop(_auth: None = Depends(_verify_api_key)) -> RunStatus:
     return federation.stop_run()
 
 
 @app.post("/admin/run/force", response_model=RunStatus)
-def run_force() -> RunStatus:
+def run_force(_auth: None = Depends(_verify_api_key)) -> RunStatus:
     return federation.force_aggregate()
 
 
@@ -169,7 +238,7 @@ def run_force() -> RunStatus:
 # Development convenience: start/stop client processes on this machine so a whole
 # run can be driven from the dashboard. Real deployments start their own clients.
 @app.get("/admin/clients/local")
-def local_client_status() -> Dict[str, Any]:
+def local_client_status(_auth: None = Depends(_verify_api_key)) -> Dict[str, Any]:
     return {
         "running": local_clients.list(),
         "problems": local_clients.available_problems(),
@@ -178,7 +247,7 @@ def local_client_status() -> Dict[str, Any]:
 
 
 @app.post("/admin/clients/local/spawn")
-def local_client_spawn(req: SpawnClientsRequest) -> Dict[str, Any]:
+def local_client_spawn(req: SpawnClientsRequest, _auth: None = Depends(_verify_api_key)) -> Dict[str, Any]:
     if req.problem not in local_clients.available_problems():
         raise HTTPException(
             status_code=400,
@@ -191,23 +260,33 @@ def local_client_spawn(req: SpawnClientsRequest) -> Dict[str, Any]:
 
 
 @app.post("/admin/clients/local/stop")
-def local_client_stop() -> Dict[str, Any]:
+def local_client_stop(_auth: None = Depends(_verify_api_key)) -> Dict[str, Any]:
     return {"stopped": local_clients.stop_all(), "running": local_clients.list()}
 
 
 # ---- Dataset generation via UI (no CLI) ----
 @app.get("/admin/datasets/status")
-def dataset_status() -> Dict[str, Any]:
+def dataset_status(_auth: None = Depends(_verify_api_key)) -> Dict[str, Any]:
     from .local_clients import BUNDLES_DIR
     if not BUNDLES_DIR.exists():
-        return {"bundle_count": 0, "bundles": [], "problems": [], "out_dir": str(BUNDLES_DIR)}
+        # do not leak absolute path in prod; return relative
+        try:
+            rel = str(BUNDLES_DIR.relative_to(Path.cwd()))
+        except Exception:
+            rel = "client/examples/bundles"
+        return {"bundle_count": 0, "bundles": [], "problems": [], "out_dir": rel}
     bundles = sorted(p.name for p in BUNDLES_DIR.iterdir() if p.is_dir())
     probs = sorted({b.rsplit("_client", 1)[0] for b in bundles if "_client" in b})
-    return {"bundle_count": len(bundles), "bundles": bundles, "problems": probs, "out_dir": str(BUNDLES_DIR)}
+    # return relative to avoid FS disclosure; still useful for UI
+    try:
+        out_rel = str(BUNDLES_DIR.relative_to(Path.cwd()))
+    except Exception:
+        out_rel = str(BUNDLES_DIR.name)
+    return {"bundle_count": len(bundles), "bundles": bundles, "problems": probs, "out_dir": out_rel}
 
 
 @app.post("/admin/datasets/generate")
-def dataset_generate(req: DatasetGenerateRequest) -> Dict[str, Any]:
+def dataset_generate(req: DatasetGenerateRequest, _auth: None = Depends(_verify_api_key)) -> Dict[str, Any]:
     clients = max(1, min(int(req.clients), 16))
     samples = max(100, min(int(req.samples), 10000))
     problems = req.problems  # None or list
@@ -223,7 +302,7 @@ def dataset_generate(req: DatasetGenerateRequest) -> Dict[str, Any]:
         backend_dir = _P(__file__).resolve().parents[1]
         client_dir = backend_dir.parent / "client"
         out = client_dir / "examples" / "bundles"
-        out.mkdir(parents=True, exist_ok=True)
+        out.mkdir(parents=True, exist_ok=True, mode=0o750)
         # Clean previous bundles to match requested client count exactly:
         # remove all existing problem_client* dirs before regenerating
         # If selective problems, only clean those problems
@@ -245,23 +324,39 @@ def dataset_generate(req: DatasetGenerateRequest) -> Dict[str, Any]:
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
-        import traceback
-        raise HTTPException(status_code=500, detail=f"Generation failed: {exc}\n{traceback.format_exc()[-1000:]}") from exc
+        import traceback, uuid as _uuid
+        eid = _uuid.uuid4().hex[:8]
+        logger.exception(f"[gen:{eid}] failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Generation failed (id={eid}): {type(exc).__name__}") from exc
 
 
 @app.post("/admin/run/sweep")
-def run_sweep(req: SweepRequest) -> Dict[str, Any]:
+def run_sweep(req: SweepRequest, _auth: None = Depends(_verify_api_key)) -> Dict[str, Any]:
     # Run via subprocess to avoid import collision (runner imports client trainer)
-    import tempfile
+    import tempfile, os as _os
     import yaml as _yaml
+    # YAML size guard (bomb/DoS)
+    if len(req.yaml_text) > 200_000:
+        raise HTTPException(status_code=413, detail="YAML too large (>200KB)")
+    if req.yaml_text.count("\n") > 5000:
+        raise HTTPException(status_code=413, detail="YAML too many lines")
     try:
         data = _yaml.safe_load(req.yaml_text)
         if not isinstance(data, dict):
             raise ValueError("YAML must be a mapping")
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Invalid YAML: {exc}") from exc
-    tmp = Path(tempfile.mktemp(suffix=".yaml", dir="/tmp"))
-    tmp.write_text(req.yaml_text, encoding="utf-8")
+    # Secure temp file (mkstemp, not mktemp)
+    fd, tmppath = tempfile.mkstemp(suffix=".yaml", dir="/tmp")
+    try:
+        _os.write(fd, req.yaml_text.encode("utf-8"))
+    finally:
+        _os.close(fd)
+    tmp = Path(tmppath)
+    try:
+        _os.chmod(tmp, 0o600)
+    except Exception:
+        pass
     try:
         # Guard: estimate sweep size via expand_sweeps without running
         try:
@@ -276,7 +371,9 @@ def run_sweep(req: SweepRequest) -> Dict[str, Any]:
             raise
         except Exception:
             pass  # let runner handle validation
-        results_dir = req.results_dir or "results"
+        # Jail results_dir to prevent traversal
+        results_dir_path = _validate_results_dir(req.results_dir or "results")
+        results_dir = str(results_dir_path)
         # Use subprocess: python -m app.runner --config tmp --results-dir results_dir [--server url]
         cmd = [sys.executable, "-m", "app.runner", "--config", str(tmp), "--results-dir", results_dir]
         if req.use_http:
@@ -284,7 +381,8 @@ def run_sweep(req: SweepRequest) -> Dict[str, Any]:
             cmd += ["--server", f"http://{_settings.host}:{_settings.port}"]
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=str(Path(__file__).resolve().parents[1]))
         if proc.returncode != 0:
-            raise RuntimeError(f"Sweep failed (exit {proc.returncode}): {proc.stderr[-2000:]} {proc.stdout[-2000:]}")
+            logger.error(f"sweep failed exit {proc.returncode}: {proc.stderr[-500:]}")
+            raise RuntimeError(f"Sweep failed (exit {proc.returncode})")
         # Try to find summary json
         summary_path = Path(results_dir) / f"sweep_summary_{tmp.stem}.json"
         summary = []
@@ -297,10 +395,13 @@ def run_sweep(req: SweepRequest) -> Dict[str, Any]:
     except HTTPException:
         raise
     except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=500, detail="Sweep timed out after 300s. Use CLI for larger sweeps.")
+        logger.warning("sweep timed out after 300s")
+        raise HTTPException(status_code=504, detail="Sweep timed out after 300s. Use CLI for larger sweeps.")
     except Exception as exc:  # noqa: BLE001
-        import traceback
-        raise HTTPException(status_code=500, detail=f"Sweep failed: {exc}\n{traceback.format_exc()[-1500:]}") from exc
+        import traceback, uuid as _uuid2
+        eid2 = _uuid2.uuid4().hex[:8]
+        logger.exception(f"[sweep:{eid2}] failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Sweep failed (id={eid2}): {type(exc).__name__}") from exc
     finally:
         try:
             tmp.unlink(missing_ok=True)
@@ -309,14 +410,24 @@ def run_sweep(req: SweepRequest) -> Dict[str, Any]:
 
 
 @app.post("/admin/run/validation-gate")
-def validation_gate_api(problem: str = "poisson") -> Dict[str, Any]:
+def validation_gate_api(problem: str = "poisson", _auth: None = Depends(_verify_api_key)) -> Dict[str, Any]:
+    # Validate problem to prevent arg injection (e.g. "--help", "../", "; rm")
+    allowed = set(list_problems())
+    if problem not in allowed:
+        raise HTTPException(status_code=400, detail=f"Unknown problem '{problem}'. Options: {sorted(allowed)}")
+    # Extra regex guard
+    import re as _re2
+    if not _re2.match(r"^[a-zA-Z0-9_-]{1,32}$", problem):
+        raise HTTPException(status_code=400, detail="Invalid problem")
     try:
         cmd = [sys.executable, "-m", "app.runner", "--validation-gate", problem]
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120, cwd=str(Path(__file__).resolve().parents[1]))
         out = (proc.stdout + "\n" + proc.stderr)[-4000:]
         return {"ok": proc.returncode == 0, "exit_code": proc.returncode, "problem": problem, "output": out}
     except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=500, detail="Validation gate timed out")
+        raise HTTPException(status_code=504, detail="Validation gate timed out")
     except Exception as exc:  # noqa: BLE001
-        import traceback
-        raise HTTPException(status_code=500, detail=f"Gate failed: {exc}\n{traceback.format_exc()[-1000:]}") from exc
+        import traceback, uuid as _uuid3, logging as _lg
+        _lg.getLogger("orient.api").exception(f"[gate] failed: {exc}")
+        eid3 = _uuid3.uuid4().hex[:8]
+        raise HTTPException(status_code=500, detail=f"Gate failed (id={eid3}): {type(exc).__name__}") from exc

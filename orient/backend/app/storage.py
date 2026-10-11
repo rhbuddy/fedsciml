@@ -28,14 +28,33 @@ import yaml
 from .weights import save_state_dict
 
 
+def _sanitize_run_component(name: str) -> str:
+    # Allow only alphanumerics, dash, underscore; reject path traversal
+    import re
+    if not re.match(r"^[a-zA-Z0-9_-]{1,64}$", name):
+        raise ValueError(f"Invalid run component '{name}': must match ^[a-zA-Z0-9_-]+$")
+    if ".." in name or "/" in name or "\\" in name:
+        raise ValueError(f"Path traversal in '{name}'")
+    return name
+
+
 class RunStorage:
     def __init__(self, root: str | Path, problem: str, aggregator: str) -> None:
+        # Validate components to prevent path traversal (e.g. problem="../../etc")
+        _sanitize_run_component(problem)
+        _sanitize_run_component(aggregator)
+        # Jail root: resolve and ensure it does not escape a reasonable base.
+        # We allow absolute or relative `root`, but forbid `..` traversal.
+        root_path = Path(root)
+        if ".." in str(root_path):
+            # simple check, further jail in api.py for user-controlled results_dir
+            raise ValueError(f"Invalid results_dir '{root}': must not contain '..'")
         # Include a short random suffix so two runs started in the same second do
         # not collide and append metrics into the same directory.
         run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
-        self.root = Path(root)
+        self.root = root_path
         self.dir = self.root / problem / aggregator / run_id
-        self.dir.mkdir(parents=True, exist_ok=True)
+        self.dir.mkdir(parents=True, exist_ok=True, mode=0o750)
         self.metrics_path = self.dir / "metrics.jsonl"
         # best tracking for server_best.pth
         self._best_l2: float | None = None
