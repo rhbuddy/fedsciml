@@ -162,6 +162,7 @@ pip install -r client\requirements.txt
 ### 0b. Verify the build (optional but recommended)
 
 ```powershell
+.\.venv\Scripts\python.exe tests\test_full_suite.py       # everything below, one command
 .\.venv\Scripts\python.exe tests\test_static_imports.py   # import graph
 .\.venv\Scripts\python.exe tests\test_runtime.py          # aggregators, models, problems
 .\.venv\Scripts\python.exe tests\test_e2e.py              # real server + 2 real clients
@@ -352,6 +353,7 @@ bundle is rejected with a clear error before training starts.
 
 | Test | Covers |
 |---|---|
+| `tests/test_full_suite.py` | one-command runner: entry-point smoke + every suite below (fast→slow); `--fast` skips the live E2E |
 | `tests/test_static_imports.py` | 83 imports resolve; shared modules byte-identical |
 | `tests/test_runtime.py` | 40+ checks — safetensors round-trip, all **10 aggregators** (incl. scaffold, median/Krum rejecting Byzantine, adaptive converging), 3 weighting modes, all **10 problems**, Poisson hard constraints exact |
 | `tests/test_server_logic.py` | run-config validation, registration guards, seed reproducibility, round engine, weighting robustness, noise & clipping |
